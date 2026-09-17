@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "story-engine-bn2",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/server.mjs"],
+      "port": 8801
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+data/
+.tmp/
+*.tmp
+tools/node/
+tools/claude/
