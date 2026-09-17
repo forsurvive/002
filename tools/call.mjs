@@ -39,9 +39,9 @@ export function killAllCalls() {
 
 // 가짜 응답 — 시험이 자동 집필을 끝까지 돌 수 있도록 단계별 구조를 흉내낸다.
 // globalThis.__SE2_MOCK_FN 을 두면 시험이 단계별 응답을 직접 정한다.
-export function mockResponse({ mockKey, prompt }) {
+export function mockResponse({ mockKey, prompt, systemPrompt }) {
   if (typeof globalThis.__SE2_MOCK_FN === 'function') {
-    const r = globalThis.__SE2_MOCK_FN({ mockKey, prompt });
+    const r = globalThis.__SE2_MOCK_FN({ mockKey, prompt, systemPrompt });
     if (typeof r === 'string') return r;
   }
   const k = String(mockKey || 'mock');
@@ -65,7 +65,7 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal } = 
   if (MOCK) {
     await new Promise((r) => setTimeout(r, Number(process.env.SE2_MOCK_DELAY_MS) || 3));
     if (signal && signal.aborted) return fail('중지됨');
-    return { ok: true, text: mockResponse({ mockKey, prompt }), error: null, elapsedMs: Date.now() - started, usage: null };
+    return { ok: true, text: mockResponse({ mockKey, prompt, systemPrompt }), error: null, elapsedMs: Date.now() - started, usage: null };
   }
 
   let dir = null;

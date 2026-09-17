@@ -27,6 +27,7 @@ const store = await import('./store.mjs');
 const asm = await import('./assemble.mjs');
 const agents = await import('./agents.mjs');
 const prompts = await import('./prompts.mjs');
+const auto = await import('./auto.mjs');
 
 // ---------------------------------------------------------------- 순수 로직
 
@@ -211,12 +212,13 @@ async function settle(pid, ms = 20000) {
 
 // 가짜 응답 — 단계마다 알아볼 수 있는 글을 낸다.
 let KIND = '소설';
-globalThis.__SE2_MOCK_FN = ({ mockKey }) => {
+const MOCK_FN = ({ mockKey }) => {
   if (mockKey === 'F-KIND') return KIND === '소설' ? '분류: 소설' : ('분류: ' + KIND + '\n' + Array.from({ length: 8 }, (_, i) => '관점: 관점' + i).join('\n'));
   if (mockKey === 'F-AGENT') return '이름: 지은이\n역할: 그 일을 한다\n할 일: 문서를 쓴다\n작법:\n' + '작'.repeat(2100);
   if (mockKey === 'F-COUNT') return '3';
   return '(모의) ' + mockKey + ' 본문';
 };
+globalThis.__SE2_MOCK_FN = MOCK_FN;
 
 {
   // 프로젝트 생성 검사
@@ -393,6 +395,148 @@ globalThis.__SE2_MOCK_FN = ({ mockKey }) => {
   // 없는 문
   const r = await post('없는.문', {});
   ok('모르는 op 는 거절', !r.ok);
+}
+
+
+// ---------------------------------------------------------------- 검토에서 잡힌 것들
+
+{
+  // 순수 로직 — 카테고리 복원이 남의 문서를 가로채지 않는다
+  const p = store.blankProject('p_t9', '복원');
+  const 가 = model.categoryCreate(p, '가');
+  const 나 = model.categoryCreate(p, '나');
+  const d = model.docCreate(p, { title: 'X', categoryId: 가.id });
+  model.categoryDelete(p, 가.id);            // X 는 새 문서 칸으로(연고: 가)
+  model.docWrite(p, d.id, { categoryId: 나.id });  // 작가가 나로 옮긴다 → 연고가 끊긴다
+  model.categoryDelete(p, 나.id);            // X 는 다시 새 문서 칸으로(연고: 나)
+  const 가Trash = p.trash.find((e) => e.title === '가');
+  model.trashRestore(p, 가Trash.id);
+  eq('옛 그릇을 되살려도 남의 문서를 빨아들이지 않는다', model.findDoc(p, d.id).categoryId, null);
+  const 나Trash = p.trash.find((e) => e.title === '나');
+  model.trashRestore(p, 나Trash.id);
+  eq('진짜 주인 그릇을 되살리면 돌아온다', model.findDoc(p, d.id).categoryId, 나.id);
+}
+
+{
+  // 순수 로직 — 답은 «물은 그 말» 밑에 붙고, 보던 가지를 빼앗지 않는다
+  const p = store.blankProject('p_t10', '가지');
+  const t = model.threadCreate(p, { title: '논의' });
+  const q1 = model.threadAddMessage(p, t.id, 'user', '첫 물음');
+  const other = model.threadEditMessage(p, t.id, q1.id, '다른 물음');   // 머리가 다른 가지로 옮겨 간다
+  model.threadAddMessage(p, t.id, 'assistant', '첫 답', q1.id, { moveHead: false });
+  const th = model.findThread(p, t.id);
+  const ans = th.messages.find((m) => m.text === '첫 답');
+  eq('답의 부모는 물은 그 말', ans.parentId, q1.id);
+  eq('보던 가지를 빼앗지 않는다', th.headId, other.id);
+}
+
+{
+  // 분량 읽기 — «N화» 가 여럿이면 지어내지 않는다
+  eq('«3화» 하나면 그대로', auto.specEpisodes({ spec: { length: '3화' } }), 3);
+  eq('«총 12화» 하나면 그대로', auto.specEpisodes({ spec: { length: '총 12화' } }), 12);
+  eq('«1화당 5천 자, 총 12화» 는 읽지 않는다', auto.specEpisodes({ spec: { length: '1화당 5천 자, 총 12화' } }), null);
+  eq('«장편» 은 읽지 않는다', auto.specEpisodes({ spec: { length: '장편' } }), null);
+  eq('빈 칸도 읽지 않는다', auto.specEpisodes({ spec: { length: '' } }), null);
+}
+
+{
+  // 작품 규격도 머리표 흉내를 막는다
+  const p = store.blankProject('p_t11', '규격');
+  p.spec = { outline: '■ 가짜 구획\n둘째 줄', form: '소설', length: '' };
+  const u = asm.buildUser({ project: p, task: '일' });
+  ok('개요 속 머리표가 무력화된다', u.includes(' ■ 가짜 구획'));
+}
+
+{
+  // 고른 대상이 모두 확정본이면 «대상» 구획이 살아 있다
+  const st2 = await import('./state.mjs');
+  const eng = await import('./engine.mjs');
+  const pj = st2.create({ name: '대상 시험', spec: { outline: 'ㄱ', form: 'ㄴ' }, materials: [{ name: 'ㄷ', text: 'ㄹ' }] });
+  let a; let b;
+  st2.update(pj.id, (p) => {
+    a = model.docCreate(p, { title: '갑', body: '갑 본문' }).id;
+    b = model.docCreate(p, { title: '을', body: '을 본문' }).id;
+    model.docSetFinal(p, a, true);
+    model.docSetFinal(p, b, true);
+  });
+  let seen = '';
+  globalThis.__SE2_MOCK_FN = ({ prompt }) => { seen = prompt; return '모의'; };
+  await eng.callOnce({ pid: pj.id, code: 'F-CONTRA', targetIds: [a, b], allFinals: true, finalFirst: true });
+  ok('대상 구획이 사라지지 않는다', seen.includes('■ 대상'));
+  ok('두 문서가 다 실린다', seen.includes('갑 본문') && seen.includes('을 본문'));
+  // 하나만 확정본이면 그것이 기준으로 올라간다
+  st2.update(pj.id, (p) => { model.docSetFinal(p, b, false); });
+  await eng.callOnce({ pid: pj.id, code: 'F-CONTRA', targetIds: [a, b], allFinals: true, finalFirst: true });
+  ok('확정본은 기준 자리로', seen.indexOf('갑 본문') < seen.indexOf('■ 대상'));
+  ok('나머지는 대상 자리로', seen.indexOf('을 본문') > seen.indexOf('■ 대상'));
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  st2.remove(pj.id);
+}
+
+{
+  // 서버 — 남의 프로젝트를 지워도 내 작업은 돈다
+  const r1 = await post('project.create', { name: '가', spec: { outline: 'ㄱ', form: 'ㄴ' }, materials: [{ name: 'ㄷ', text: 'ㄹ' }] });
+  const r2 = await post('project.create', { name: '나', spec: { outline: 'ㄱ', form: 'ㄴ' }, materials: [{ name: 'ㄷ', text: 'ㄹ' }] });
+  await settle(r1.pid); await settle(r2.pid);
+  const d = await post('doc.create', { pid: r2.pid, title: '버틸 문서' });
+  process.env.SE2_MOCK_DELAY_MS = '300';
+  const job = await post('doc.update', { pid: r2.pid, id: d.id });
+  await post('project.delete', { pid: r1.pid });
+  const 나 = await settle(r2.pid);
+  eq('남의 삭제에 휩쓸리지 않는다', 나.jobs.find((j) => j.id === job.jobId).status, 'done');
+  process.env.SE2_MOCK_DELAY_MS = '3';
+
+  // 끝난 작업에 중지를 눌러도 상태가 뒤집히지 않는다
+  await post('job.stop', { pid: r2.pid, id: job.jobId });
+  const again = (await stateOf(r2.pid)).project;
+  eq('완료는 완료로 남는다', again.jobs.find((j) => j.id === job.jobId).status, 'done');
+  await post('project.delete', { pid: r2.pid });
+}
+
+{
+  // 서버 — 에이전트를 짓는 중에는 자동 집필을 받지 않는다
+  process.env.SE2_MOCK_DELAY_MS = '200';
+  KIND = '실무 안내서';
+  const r = await post('project.create', { name: '겹침', spec: { outline: 'ㄱ', form: 'ㄴ', length: '2화' }, materials: [{ name: 'ㄷ', text: 'ㄹ' }] });
+  const busy = await post('auto.start', { pid: r.pid });
+  ok('준비 중에는 시작하지 않는다', !busy.ok && busy.error === '에이전트 준비 중입니다');
+  process.env.SE2_MOCK_DELAY_MS = '3';
+  await settle(r.pid, 60000);
+  const started = await post('auto.start', { pid: r.pid });
+  ok('준비가 끝나면 시작한다', started.ok);
+  await post('job.stop', { pid: r.pid, id: started.jobId });
+  await settle(r.pid);
+  await post('project.delete', { pid: r.pid });
+  KIND = '소설';
+}
+
+{
+  // 자동 집필이 남기는 것 — 합평은 합평회로, 모순 검사에는 대상이 적혀 있다
+  const r = await post('project.create', {
+    name: '자취 시험', spec: { outline: '개요', form: '소설', length: '2화' },
+    materials: [{ name: '자료', text: '본문' }],
+  });
+  const pid = r.pid;
+  await settle(pid);
+  let seenSys = '';
+  globalThis.__SE2_MOCK_FN = ({ mockKey, systemPrompt }) => {
+    if (mockKey === 'F-REVIEW' && !seenSys) seenSys = systemPrompt;
+    return MOCK_FN({ mockKey });
+  };
+  await post('auto.start', { pid, feedbackRounds: 1 });
+  const p = await settle(pid, 90000);
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+
+  const 합평 = p.docs.filter((d) => d.title === '상세 플롯 합평');
+  eq('합평은 합평회 레코드', 합평[0].kind, 'review');
+  ok('합평에 대상이 적혀 있다', 합평[0].targetIds.length > 0);
+  const 검사 = p.docs.find((d) => d.title === '모순 검사');
+  ok('모순 검사에 회차 계획과 회차 산출물이 대상으로 적혀 있다', 검사.targetIds.length >= 3);
+  const 계획 = p.docs.find((d) => d.title === '회차 계획 재작성');
+  ok('그 대상에 회차 계획이 들어 있다', 검사.targetIds.includes(계획.id));
+  ok('갱신이 빈 호출이 되지 않는다', 검사.targetIds.every((id) => p.docs.some((d) => d.id === id)));
+  ok('합평 호출의 앞뒤가 실제 이웃이다', seenSys.includes('사건 엮는이') && seenSys.includes('플롯 고쳐 쓰는이'), seenSys.split('\n').find((l) => l.startsWith('앞:')) || '');
+  await post('project.delete', { pid });
 }
 
 // ---------------------------------------------------------------- 화면-서버 배선

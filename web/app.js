@@ -16,6 +16,10 @@ const S = {
   autoSeen: {},    // 자동 집필 작업 상태(종료 알림용)
   doneWaiting: false,
   typed: {},       // 아직 저장되지 않은 입력값 — 다시 그려도 사라지지 않게 여기 둔다
+  flag: {},        // 아직 저장되지 않은 켜짐/꺼짐(본문 집필 제외 같은 것)
+  newCat: false,   // 카테고리 이름을 그 자리에서 받는 중
+  focusNext: '',   // 다시 그린 뒤 이 칸에 커서를 둔다
+  redrawing: false,// 다시 그리는 중 — 그때 떨어지는 포커스는 저장이 아니다
   last: '',
 };
 
@@ -57,6 +61,13 @@ function inputOf(tag, id, attrs = {}) {
   });
 }
 const textbox = (id, placeholder, value, attrs) => inputOf('input', id, { type: 'text', placeholder, value, ...attrs });
+function flagVal(id, fallback) { return id in S.flag ? S.flag[id] : !!fallback; }
+function flagBox(id, fallback, label) {
+  const flip = () => { S.flag[id] = !flagVal(id, fallback); render(); };
+  return h('div', { class: 'line', style: 'cursor:pointer', onclick: flip },
+    h('button', { class: 'ck' + (flagVal(id, fallback) ? ' on' : '') }),
+    h('span', { text: label }));
+}
 const area = (id, placeholder, value, attrs) => inputOf('textarea', id, { placeholder, value, ...attrs });
 const stop = (e) => { e.stopPropagation(); };
 const when = (t) => new Date(t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -106,26 +117,35 @@ function checkAutoDone() {
 // ---------------------------------------------------------------- 그리기
 
 // 다시 그려도 보던 자리와 치던 자리를 지킨다 — 1.5초마다 도는 갱신이 화면을 흔들지 않도록.
-const SCROLLERS = ['.main', '#layer1 .panel-body', '#layer2 .panel-body'];
+const SCROLLERS = ['.main', '#layer1 .panel-body', '#layer2 .panel-body', '#d-body'];
 
 function render() {
   const focus = document.activeElement;
   const keep = focus && focus.id ? { id: focus.id, value: focus.value, s: focus.selectionStart, e: focus.selectionEnd } : null;
   const tops = SCROLLERS.map((sel) => { const n = document.querySelector(sel); return n ? n.scrollTop : 0; });
 
+  S.redrawing = true;
   $('root').replaceChildren(S.pid && S.project ? app() : projectList());
   $('layer1').replaceChildren(...(S.open ? [layerOne()] : []));
   $('layer2').replaceChildren(...(S.pick ? [pickLayer()] : S.confirm ? [confirmLayer()] : []));
+  S.redrawing = false;
 
   SCROLLERS.forEach((sel, i) => { const n = document.querySelector(sel); if (n && tops[i]) n.scrollTop = tops[i]; });
 
   if (keep) {
     const n = $(keep.id);
     if (n && 'value' in n) {
-      n.value = keep.value;
+      // 사람이 친 글만 되살린다. 손대지 않은 칸은 서버에서 온 새 글이 이긴다
+      // (커서를 두고 있었다는 이유로 갱신 결과가 가로막히면 안 된다).
+      if (keep.id in S.typed) n.value = keep.value;
       n.focus();
       try { n.setSelectionRange(keep.s, keep.e); } catch {}
     }
+  }
+  if (S.focusNext) {
+    const n = $(S.focusNext);
+    S.focusNext = '';
+    if (n && n.focus) n.focus();
   }
 }
 
@@ -204,6 +224,16 @@ function workshop() {
       h('button', { class: 'plus', text: '+', onclick: (e) => { stop(e); S.menu = !S.menu; render(); } })),
     S.menu ? plusMenu() : null,
     cats.map((c) => catSection(c, byId)),
+    S.newCat ? h('div', { class: 'sec' }, h('div', { class: 'sec-head' }, textbox('nc-name', '이름', '', {
+      onkeydown: async (e) => {
+        if (e.key === 'Enter' && e.target.value.trim()) {
+          const v = e.target.value;
+          clearTyped('nc-name'); S.newCat = false;
+          await api('cat.create', { name: v });
+        } else if (e.key === 'Escape') { clearTyped('nc-name'); S.newCat = false; render(); }
+      },
+      onblur: () => { if (S.redrawing) return; if (!$('nc-name') || !$('nc-name').value.trim()) { S.newCat = false; clearTyped('nc-name'); render(); } },
+    }))) : null,
     p.threads.length ? threadSection() : null);
 }
 
@@ -211,7 +241,7 @@ function plusMenu() {
   const go = (fn) => { S.menu = false; fn(); };
   return h('div', { class: 'menu' },
     h('button', { text: '문서', onclick: () => go(() => { S.open = { type: 'newdoc' }; render(); }) }),
-    h('button', { text: '카테고리', onclick: () => go(() => { S.open = { type: 'newcat' }; render(); }) }),
+    h('button', { text: '카테고리', onclick: () => go(() => { S.newCat = true; S.focusNext = 'nc-name'; render(); }) }),
     h('button', { text: '논의 스레드', onclick: () => go(async () => { const r = await api('thread.create', { title: '논의' }); if (r.ok) { S.open = { type: 'thread', id: r.id }; render(); } }) }),
     h('button', { text: '모순 검사', onclick: () => go(() => newCheck('check', '모순 검사')) }),
     h('button', { text: '합평회', onclick: () => go(() => newCheck('review', '합평회')) }));
@@ -235,7 +265,14 @@ function catSection(c, byId) {
     S.all[key] ? h('div', { class: 'bulk' },
       h('button', { class: 'btn-line', text: '확정본 지정', onclick: () => api('doc.final', { ids: [...sel], on: true }) }),
       h('button', { class: 'btn-line', text: '확정본 해제', onclick: () => api('doc.final', { ids: [...sel], on: false }) }),
-      h('button', { class: 'btn-line', text: '다운로드', onclick: () => [...sel].forEach((id, i) => setTimeout(() => download('doc', id), i * 120)) }),
+      h('button', {
+        class: 'btn-line', text: '다운로드',
+        onclick: () => {
+          // 그 카테고리를 통째로 골랐으면 한 파일로, 골라 담았으면 문서마다 한 파일로.
+          if (c.docIds.length && c.docIds.every((id) => sel.has(id))) download('cat', c.id);
+          else [...sel].forEach((id, i) => setTimeout(() => download('doc', id), i * 120));
+        },
+      }),
       h('button', { class: 'btn-red', text: '삭제', onclick: () => api('doc.delete', { ids: [...sel] }) })) : null,
     folded ? null : docs.map((d) => h('div', {
       class: 'row' + (d.isFinal ? ' final' : ''),
@@ -271,11 +308,14 @@ function threadSection() {
 function settings() {
   const p = S.project;
   const save = async () => {
+    if (S.redrawing) return;
+    const keys = ['set-name', 'set-standard', 'set-request', 'set-outline', 'set-form', 'set-length'];
+    if (!keys.some((k) => k in S.typed)) return;   // 손대지 않았으면 쓰지 않는다
     const body = {
       name: $('set-name').value, standard: $('set-standard').value, request: $('set-request').value,
       spec: { outline: $('set-outline').value, form: $('set-form').value, length: $('set-length').value },
     };
-    clearTyped('set-name', 'set-standard', 'set-request', 'set-outline', 'set-form', 'set-length');
+    clearTyped(...keys);
     await api('project.spec', body);
   };
   const field = (id, label, value, big) => h('div', null,
@@ -349,19 +389,22 @@ function trash() {
 
 // ---------------------------------------------------------------- 1겹 창
 
+function closeLayer() {
+  S.open = S.doneWaiting ? { type: 'done' } : null;
+  S.doneWaiting = false;
+  S.editMsg = null;
+  S.typed = {};
+  S.flag = {};
+  render();
+}
+
 function layerOne() {
   const t = S.open.type;
-  const close = () => {
-    S.open = S.doneWaiting ? { type: 'done' } : null;
-    S.doneWaiting = false;
-    S.editMsg = null; S.typed = {};
-    render();
-  };
+  const close = closeLayer;
   const panel = t === 'doc' ? docPanel(close)
     : t === 'thread' ? threadPanel(close)
       : t === 'newproject' ? newProjectPanel(close)
         : t === 'newdoc' ? newDocPanel(close)
-          : t === 'newcat' ? newCatPanel(close)
             : t === 'auto' ? autoPanel(close)
               : donePanel(close);
   return h('div', { class: 'layer', onclick: (e) => { if (e.target.classList.contains('layer')) close(); } }, panel);
@@ -372,8 +415,13 @@ function docPanel(close) {
   if (!d) return h('div', { class: 'panel narrow' }, h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '없음' }), h('button', { class: 'x', text: '×', onclick: close })));
   const byId = new Map(S.project.docs.map((x) => [x.id, x]));
   const saveFields = async () => {
-    const body = { id: d.id, title: $('d-title').value, body: $('d-body').value, request: $('d-req').value };
+    if (S.redrawing) return;
+    const body = { id: d.id };
+    if ('d-title' in S.typed) body.title = $('d-title').value;
+    if ('d-body' in S.typed) body.body = $('d-body').value;
+    if ('d-req' in S.typed) body.request = $('d-req').value;
     clearTyped('d-title', 'd-body', 'd-req');
+    if (Object.keys(body).length === 1) return;   // 손대지 않았으면 쓰지 않는다
     await api('doc.write', body);
   };
 
@@ -406,12 +454,12 @@ function docPanel(close) {
 function catPicker(d) {
   const cats = [{ id: INBOX, name: '새로 추가된 문서' }, ...S.project.categories.filter((c) => !c.virtual)];
   const cur = d.categoryId || INBOX;
-  return cats.map((c) => h('label', { class: 'line', style: 'gap:6px;cursor:pointer' },
-    h('button', {
-      class: 'ck' + (cur === c.id ? ' on' : ''),
-      onclick: () => api('doc.write', { id: d.id, categoryId: c.id === INBOX ? null : c.id }),
-    }),
-    h('span', { text: c.name })));
+  return cats.map((c) => {
+    const pick = () => api('doc.write', { id: d.id, categoryId: c.id === INBOX ? null : c.id });
+    return h('div', { class: 'line', style: 'gap:6px;cursor:pointer', onclick: pick },
+      h('button', { class: 'ck' + (cur === c.id ? ' on' : '') }),
+      h('span', { text: c.name }));
+  });
 }
 
 function refLine(label, ids, byId, save, selfId) {
@@ -424,7 +472,7 @@ function refLine(label, ids, byId, save, selfId) {
           h('span', { text: t ? t.title : '없음' }),
           h('button', { text: '×', onclick: () => save((ids || []).filter((x) => x !== id)) }));
       }),
-      h('button', { class: 'plus', style: 'width:26px;height:26px;font-size:16px', text: '+', onclick: () => { S.pick = { ids: (ids || []).slice(), save, selfId }; render(); } })));
+      h('button', { class: 'plus', style: 'width:26px;height:26px;font-size:16px', text: '+', onclick: () => { S.pick = { ids: (ids || []).slice(), save, selfId, label }; render(); } })));
 }
 
 function threadPanel(close) {
@@ -441,13 +489,14 @@ function threadPanel(close) {
       flow.push(h('div', { class: 'branches' }, sibs.map((s2) => h('div', {
         class: 'branch' + (s2.id === id ? ' on' : ''), onclick: () => api('thread.head', { id: t.id, messageId: s2.id }),
       },
+      h('button', { class: 'ck' + (s2.id === id ? ' on' : ''), onclick: (e) => { stop(e); api('thread.head', { id: t.id, messageId: s2.id }); } }),
       h('span', { text: (s2.text || '').slice(0, 14) || '빈 말' })))));
     }
     if (m.role === 'user') {
       flow.push(S.editMsg === m.id
         ? h('div', { class: 'send', style: 'align-self:stretch' },
-          area('m-edit', '', m.text),
-          h('button', { class: 'btn', text: '보내기', onclick: async () => { const v = $('m-edit').value; S.editMsg = null; clearTyped('m-edit'); await api('thread.edit', { id: t.id, messageId: m.id, text: v }); } }))
+          area('m-edit-' + m.id, '', m.text),
+          h('button', { class: 'btn', text: '보내기', onclick: async () => { const v = $('m-edit-' + m.id).value; S.editMsg = null; clearTyped('m-edit-' + m.id); await api('thread.edit', { id: t.id, messageId: m.id, text: v }); } }))
         : h('div', { class: 'msg me', text: m.text, onclick: () => { S.editMsg = m.id; render(); } }));
     } else {
       flow.push(h('div', { class: 'msg ai', text: m.text }));
@@ -525,16 +574,6 @@ function newDocPanel(close) {
         }))));
 }
 
-function newCatPanel(close) {
-  return h('div', { class: 'panel narrow' },
-    h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '카테고리' }), h('button', { class: 'x', text: '×', onclick: close })),
-    h('div', { class: 'panel-body' },
-      textbox('nc-name', '이름', '', {
-        onkeydown: async (e) => { if (e.key === 'Enter' && e.target.value.trim()) { await api('cat.create', { name: e.target.value }); close(); } },
-      }),
-      h('button', { class: 'btn', text: '생성', onclick: async () => { if ($('nc-name').value.trim()) { await api('cat.create', { name: $('nc-name').value }); close(); } } })));
-}
-
 function autoPanel(close) {
   const p = S.project;
   const ready = p.name && p.spec.outline && p.spec.form && p.materials.length;
@@ -543,14 +582,12 @@ function autoPanel(close) {
     h('div', { class: 'panel-body' },
       h('div', null, h('div', { class: 'lab', text: '피드백 횟수' }),
         textbox('a-rounds', '피드백 횟수', String(p.auto.feedbackRounds || 1))),
-      h('label', { class: 'line', style: 'cursor:pointer' },
-        h('button', { class: 'ck' + (p.auto.skipProse ? ' on' : ''), id: 'a-skip', onclick: (e) => { e.preventDefault(); e.currentTarget.classList.toggle('on'); } }),
-        h('span', { text: '본문 집필 제외' })),
+      flagBox('a-skip', p.auto.skipProse, '본문 집필 제외'),
       ready ? null : h('div', { class: 'notice', text: '작품 규격과 자료 필요' }),
       h('button', {
         class: 'btn', text: '시작', disabled: !ready,
         onclick: async () => {
-          await api('auto.start', { feedbackRounds: Number($('a-rounds').value) || 1, skipProse: $('a-skip').classList.contains('on') });
+          await api('auto.start', { feedbackRounds: Number($('a-rounds').value) || 1, skipProse: flagVal('a-skip', p.auto.skipProse) });
           close();
         },
       })));
@@ -570,7 +607,7 @@ function pickLayer() {
   const close = () => { S.pick = null; render(); };
   return h('div', { class: 'layer two', onclick: (e) => { if (e.target.classList.contains('layer')) close(); } },
     h('div', { class: 'panel' },
-      h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '참조' }), h('button', { class: 'x', text: '×', onclick: close })),
+      h('div', { class: 'panel-head' }, h('div', { class: 'name', text: S.pick.label || '참조' }), h('button', { class: 'x', text: '×', onclick: close })),
       h('div', { class: 'panel-body' }, p.categories.map((c) => {
         const ids = c.docIds.filter((id) => id !== S.pick.selfId);
         if (!ids.length) return null;
@@ -607,7 +644,7 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (S.pick) { S.pick = null; render(); } else if (S.confirm) { S.confirm = null; render(); } else if (S.open) { S.open = null; S.editMsg = null; render(); }
+  if (S.pick) { S.pick = null; render(); } else if (S.confirm) { S.confirm = null; render(); } else if (S.open) closeLayer();
 });
 
 pull(true);

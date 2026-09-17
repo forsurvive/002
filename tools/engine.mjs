@@ -55,7 +55,9 @@ export async function callOnce({
   const finalsAll = allFinals ? finalDocs(project) : finalDocs(project, { onlyIds: [...refIds, ...targetIds] });
   const taken = new Set();
   let finals; let targets;
-  if (finalFirst) {
+  // 고른 대상이 모두 확정본이면 기준으로 뺄 것이 없다 — 그때는 대상 자리에 그대로 둔다(구획이 사라지면 지시가 가리킬 곳이 없다).
+  const allTargetsFinal = targetIds.length > 0 && targetIds.every((id) => finalsAll.some((d) => d.id === id));
+  if (finalFirst && !allTargetsFinal) {
     finals = finalsAll;
     finals.forEach((d) => taken.add(d.id));
     targets = docsByIds(project, targetIds).filter((d) => !taken.has(d.id));
@@ -124,19 +126,25 @@ export async function runUpdate(pid, docId, ctx) {
 // 논의 한 마디 — 작가의 말을 얹고, 답을 받아 얹는다.
 // text 가 null 이면 말은 이미 얹힌 것이다(과거 메시지를 고쳐 가지가 갈라진 자리).
 export async function runTalk(pid, threadId, text, ctx) {
+  let askedId = null;
   if (text != null) {
-    let userMsgId = null;
     state.update(pid, (p) => {
       const m = model.threadAddMessage(p, threadId, 'user', text);
-      if (m) userMsgId = m.id;
+      if (m) askedId = m.id;
     });
-    if (!userMsgId) return { ok: false, error: '스레드를 찾을 수 없습니다' };
+    if (!askedId) return { ok: false, error: '스레드를 찾을 수 없습니다' };
+  } else {
+    const p0 = state.get(pid);
+    const t0 = p0 && model.findThread(p0, threadId);
+    if (!t0) return { ok: false, error: '스레드를 찾을 수 없습니다' };
+    askedId = t0.headId;
   }
 
   const project = state.get(pid);
   const t = model.findThread(project, threadId);
   if (ctx) ctx.step(t.title);
-  const path = model.threadPath(t);
+  // 대화는 «물은 그 자리»까지만 싣는다(기다리는 동안 작가가 다른 가지로 옮겨 가도 흔들리지 않는다).
+  const path = model.threadPath(t, askedId);
   const talk = path.map((m) => ({ name: m.role === 'user' ? '작가' : '너', text: m.text }));
 
   const r = await callWithRetry({
@@ -145,7 +153,13 @@ export async function runTalk(pid, threadId, text, ctx) {
   });
   if (!r.ok) return r;
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
-  state.update(pid, (p) => { model.threadAddMessage(p, threadId, 'assistant', r.text); });
+  // 답은 «물은 그 말» 밑에 붙는다 — 기다리는 사이 머리가 옮겨 가도 엉뚱한 가지로 새지 않는다.
+  // 그동안 작가가 다른 가지로 옮겨 갔으면 보던 자리를 빼앗지 않는다.
+  state.update(pid, (p) => {
+    const th = model.findThread(p, threadId);
+    const stay = th && th.headId === askedId;
+    model.threadAddMessage(p, threadId, 'assistant', r.text, askedId, { moveHead: stay });
+  });
   return { ok: true };
 }
 

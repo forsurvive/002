@@ -23,17 +23,20 @@ export function canStart(project) {
   return { ok: true };
 }
 
-// 분량에 «N화» 가 적혀 있으면 그 수를 그대로 쓴다(상한을 걸지 않는다).
+// 분량에 «N화» 가 **하나만** 적혀 있을 때만 그것을 회차 수로 본다.
+// «1화당 5천 자, 모두 12화» 처럼 여럿이면 어느 쪽인지 지어내지 않고 물어본다.
 export function specEpisodes(project) {
-  const m = String((project.spec || {}).length || '').match(/(\d+)\s*화/);
-  if (!m) return null;
-  const n = Number(m[1]);
+  const all = String((project.spec || {}).length || '').match(/(\d+)\s*화/g);
+  if (!all || all.length !== 1) return null;
+  const n = Number(all[0].match(/\d+/)[0]);
   return n >= 1 ? n : null;
 }
 
-function neighborNames(project, code) {
-  const i = AGENT_SLOTS.indexOf(code);
+// 앞뒤 이름은 «실제로 앞뒤에 선 자리»에서 온다. 합평·모순 검사처럼 여러 자리에서 불리는 것은 부르는 쪽이 알려 준다.
+function neighborNames(project, code, prevCode, nextCode) {
   const nameOf = (c) => (c ? promptFor(project, c).name : '');
+  if (prevCode || nextCode) return { prev: nameOf(prevCode), next: nameOf(nextCode) };
+  const i = AGENT_SLOTS.indexOf(code);
   return { prev: nameOf(AGENT_SLOTS[i - 1]), next: nameOf(AGENT_SLOTS[i + 1]) };
 }
 
@@ -45,11 +48,11 @@ export async function runAuto(pid, ctx) {
   const ids = (keys) => keys.map((k) => made.get(k)).filter(Boolean);
 
   // 단계 하나 = 호출 하나 = 문서 하나
-  async function write(key, { code, title, refs = [], targets = [], taskExtra = '', materials = false, finalFirst = false }) {
+  async function write(key, { code, title, refs = [], targets = [], taskExtra = '', materials = false, finalFirst = false, kind = 'doc', prevCode = '', nextCode = '' }) {
     if (stopped()) return { ok: false, error: '중지됨' };
     if (ctx) ctx.step(title);
     const project = state.get(pid);
-    const { prev, next } = neighborNames(project, code);
+    const { prev, next } = neighborNames(project, code, prevCode, nextCode);
     const r = await callWithRetry({
       pid, code,
       refIds: ids(refs), targetIds: ids(targets),
@@ -59,7 +62,9 @@ export async function runAuto(pid, ctx) {
     if (!r.ok) return r;
     if (stopped()) return { ok: false, error: '중지됨' };
     let docId = null;
-    state.update(pid, (p) => { docId = model.docCreate(p, { title, body: r.text }).id; });
+    state.update(pid, (p) => {
+      docId = model.docCreate(p, { kind, title, body: r.text, refIds: ids(refs), targetIds: ids(targets) }).id;
+    });
     made.set(key, docId);
     order.push(docId);
     if (ctx) ctx.addDoc(docId);
@@ -124,10 +129,10 @@ export async function runAuto(pid, ctx) {
   let plotKey = 'S12';
   for (let round = 1; round <= K; round++) {
     const rev = 'S13-' + round;
-    r = await write(rev, { code: 'F-REVIEW', title: '상세 플롯 합평', targets: [plotKey], refs: ['S11'] });
+    r = await write(rev, { code: 'F-REVIEW', kind: 'review', title: '상세 플롯 합평', targets: [plotKey], refs: ['S11'], prevCode: 'S12', nextCode: 'S14' });
     if (!r.ok) return r;
     const next = 'S14-' + round;
-    r = await write(next, { code: 'S14', title: '상세 플롯 재작성', targets: [plotKey], refs: [rev, 'S11'] });
+    r = await write(next, { code: 'S14', title: '상세 플롯 재작성', targets: [plotKey], refs: [rev, 'S11'], prevCode: 'F-REVIEW', nextCode: 'S15' });
     if (!r.ok) return r;
     plotKey = next;
   }
@@ -144,11 +149,11 @@ export async function runAuto(pid, ctx) {
   let epKey = 'S15';
   for (let round = 1; round <= K; round++) {
     const rev = 'S16-' + round;
-    r = await write(rev, { code: 'F-REVIEW', title: '회차 계획 합평', targets: [epKey], refs: [plotKey] });
+    r = await write(rev, { code: 'F-REVIEW', kind: 'review', title: '회차 계획 합평', targets: [epKey], refs: [plotKey], prevCode: 'S15', nextCode: 'S17' });
     if (!r.ok) return r;
     const next = 'S17-' + round;
     r = await write(next, {
-      code: 'S17', title: '회차 계획 재작성', targets: [epKey], refs: [rev, plotKey],
+      code: 'S17', title: '회차 계획 재작성', targets: [epKey], refs: [rev, plotKey], prevCode: 'F-REVIEW', nextCode: 'S18A',
       taskExtra: specN ? ('회차 수는 ' + specN + '화로 고정한다.') : '',
     });
     if (!r.ok) return r;
@@ -203,10 +208,10 @@ export async function runAuto(pid, ctx) {
     if (ctx) ctx.step('모순 검사 — ' + e + '화');
     const targetKey = skipProse ? 'S18-' + e + '-B' : 'S18-' + e + '-C';
     const project = state.get(pid);
-    const { prev, next } = neighborNames(project, 'F-CONTRA');
+    const { prev, next } = neighborNames(project, 'F-CONTRA', skipProse ? 'S18B' : 'S18C', '');
     const cr = await callWithRetry({
       pid, code: 'F-CONTRA',
-      refIds: [], targetIds: ids([targetKey]),
+      refIds: [], targetIds: [planId, ...ids([targetKey])],
       allFinals: true, finalFirst: true, prev, next,
       taskExtra: '이번 회차: ' + e + '화',
       signal: ctx && ctx.signal,
@@ -216,7 +221,17 @@ export async function runAuto(pid, ctx) {
   }
   if (parts.length) {
     let contraId = null;
-    state.update(pid, (p) => { contraId = model.docCreate(p, { kind: 'check', title: '모순 검사', body: parts.join('\n\n'), targetIds: [] }).id; });
+    const checked = [];
+    for (let e = 1; e <= N; e++) {
+      const id = made.get(skipProse ? 'S18-' + e + '-B' : 'S18-' + e + '-C');
+      if (id) checked.push(id);
+    }
+    state.update(pid, (p) => {
+      contraId = model.docCreate(p, {
+        kind: 'check', title: '모순 검사', body: parts.join('\n\n'),
+        targetIds: [planId, ...checked],
+      }).id;
+    });
     made.set('S19', contraId);
     order.push(contraId);
     if (ctx) ctx.addDoc(contraId);

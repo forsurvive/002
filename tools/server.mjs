@@ -46,8 +46,6 @@ const OPS = {
     return ok({ pid: p.id });
   },
 
-  'project.rename': (b) => state.update(b.pid, (p) => { p.name = String(b.name || '').trim() || p.name; }),
-
   'project.spec': (b) => state.update(b.pid, (p) => {
     if (b.name != null) p.name = String(b.name).trim() || p.name;
     if (b.spec) p.spec = { ...p.spec, ...b.spec };
@@ -56,7 +54,7 @@ const OPS = {
   }),
 
   'project.delete': (b) => {
-    jobs.stopAll();
+    jobs.stopProject(b.pid);
     return state.remove(b.pid) ? ok() : bad('프로젝트를 찾을 수 없습니다');
   },
 
@@ -152,6 +150,7 @@ const OPS = {
     const gate = canStart(p);
     if (!gate.ok) return gate;
     if (jobs.isAutoRunning(b.pid)) return bad('이미 도는 중입니다');
+    if (jobs.isKindRunning(b.pid, 'agents')) return bad('에이전트 준비 중입니다');
     state.update(b.pid, (pr) => {
       pr.auto.feedbackRounds = Math.min(3, Math.max(1, Number(b.feedbackRounds) || 1));
       pr.auto.skipProse = !!b.skipProse;
@@ -267,11 +266,18 @@ export const server = createServer(async (req, res) => {
 
 export function boot(port = PORT) {
   for (const p of state.list()) jobs.healStale(p.id);
-  return new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve(server)));
+  return new Promise((resolve, reject) => {
+    server.once('error', (e) => {
+      if (e && e.code === 'EADDRINUSE') console.log('  [ERROR] port ' + port + ' is already in use. Close the other window first.');
+      else console.log('  [ERROR] ' + ((e && e.message) || e));
+      reject(e);
+    });
+    server.listen(port, '127.0.0.1', () => resolve(server));
+  });
 }
 
 if (process.argv[1] && process.argv[1].endsWith('server.mjs')) {
-  await boot(PORT);
+  try { await boot(PORT); } catch { process.exit(1); }
   const addr = 'http://127.0.0.1:' + PORT;
   console.log('  Story Engine : ' + addr);
   if (process.env.SE2_OPEN_BROWSER === '1') {

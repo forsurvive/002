@@ -51,7 +51,10 @@ export function docWrite(p, id, next = {}, { keepHistory = true } = {}) {
   if (next.request != null) d.request = str(next.request);
   if (next.refIds != null) d.refIds = next.refIds.slice();
   if (next.targetIds != null) d.targetIds = next.targetIds.slice();
-  if (next.categoryId !== undefined) d.categoryId = next.categoryId && findCategory(p, next.categoryId) ? next.categoryId : null;
+  if (next.categoryId !== undefined) {
+    d.categoryId = next.categoryId && findCategory(p, next.categoryId) ? next.categoryId : null;
+    d.orphanFrom = null; // 손으로 옮긴 순간 옛 그릇과의 연고가 끊긴다
+  }
   if (changed) d.updatedAt = now();
   return d;
 }
@@ -93,7 +96,7 @@ export function categoryDelete(p, id) {
   if (i < 0) return null;
   const [c] = p.categories.splice(i, 1);
   const memberIds = [];
-  for (const d of p.docs) if (d.categoryId === id) { memberIds.push(d.id); d.categoryId = null; }
+  for (const d of p.docs) if (d.categoryId === id) { memberIds.push(d.id); d.categoryId = null; d.orphanFrom = id; }
   p.trash.push({ id: newId('t'), at: now(), kind: 'category', from: '카테고리', title: c.name, payload: c, memberIds });
   return c;
 }
@@ -130,7 +133,7 @@ export function threadCreate(p, fields = {}) {
   return t;
 }
 
-export function threadAddMessage(p, id, role, text, parentId) {
+export function threadAddMessage(p, id, role, text, parentId, { moveHead = true } = {}) {
   const t = findThread(p, id);
   if (!t) return null;
   const m = {
@@ -141,7 +144,7 @@ export function threadAddMessage(p, id, role, text, parentId) {
     at: now(),
   };
   t.messages.push(m);
-  t.headId = m.id;
+  if (moveHead) t.headId = m.id;
   t.updatedAt = now();
   return m;
 }
@@ -233,7 +236,8 @@ export function trashRestore(p, trashId) {
     p.categories.push(e.payload);
     for (const did of e.memberIds || []) {
       const d = findDoc(p, did);
-      if (d && !d.categoryId) d.categoryId = e.payload.id;
+      // 그 사이 다른 그릇을 거쳐 온 문서는 도로 빨아들이지 않는다.
+      if (d && !d.categoryId && d.orphanFrom === e.payload.id) { d.categoryId = e.payload.id; d.orphanFrom = null; }
     }
   } else if (e.kind === 'thread') {
     p.threads.push(e.payload);

@@ -9,6 +9,9 @@ import * as state from './state.mjs';
 
 export const CRAFT_MIN = 2000; // 기획서가 못 박은 하한. 위쪽 상한은 두지 않는다.
 
+// 같은 프로젝트를 두 벌로 짓지 않는다(구독 사용량이 두 배로 나가고 나중 것이 앞 것을 덮는다).
+const building = new Set();
+
 function ctl(code, extraTask, project, { materials = true, refs = [] } = {}) {
   const pr = BUILTIN[code];
   return {
@@ -77,6 +80,16 @@ export function agentsReady(project) {
 export async function prepareAgents(pid, ctx) {
   const project = state.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
+  if (building.has(pid)) return { ok: true, already: true };
+  building.add(pid);
+  try {
+    return await prepareAgentsInner(pid, ctx, project);
+  } finally {
+    building.delete(pid);
+  }
+}
+
+async function prepareAgentsInner(pid, ctx, project) {
   if (ctx) ctx.step('에이전트 준비');
 
   // 판정은 프로젝트마다 한 번뿐이다 — 이미 내린 판정이 있으면 그대로 잇는다.
@@ -111,15 +124,19 @@ export async function prepareAgents(pid, ctx) {
 
     const prev = AGENT_SLOTS[i - 1];
     const next = AGENT_SLOTS[i + 1];
-    const nameOf = (c) => {
+    const sideOf = (c) => {
       if (!c) return '없음';
       const made = (state.get(pid).agents || {})[c];
-      return (made && made.name) || (BUILTIN[c] && BUILTIN[c].name) || c;
+      const nm = (made && made.name) || (BUILTIN[c] && BUILTIN[c].name) || c;
+      const role = (made && made.role) || (BUILTIN[c] && BUILTIN[c].role) || '';
+      const duty = SLOT_DUTY[c] || '';
+      return c + ' ' + nm + (role ? ' — ' + role : '') + (duty ? '\n    하는 일: ' + duty : '');
     };
     const extra = [
       '이 프로젝트가 쓰려는 글의 종류: ' + kindName,
       '지금 만들 자리: ' + code + ' — ' + (SLOT_DUTY[code] || ''),
-      '앞자리: ' + (prev ? prev + ' ' + nameOf(prev) : '없음') + ' / 뒷자리: ' + (next ? next + ' ' + nameOf(next) : '없음'),
+      '앞자리: ' + sideOf(prev),
+      '뒷자리: ' + sideOf(next),
       '이 글의 종류에 맞는 실제 작법을 써라. 소설 작법을 그대로 옮기지 마라.',
     ].join('\n');
 

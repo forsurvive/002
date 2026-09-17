@@ -74,8 +74,23 @@ export function start(pid, { kind = 'call', title = '작업', run }) {
 export function stop(pid, jobId) {
   const h = live.get(jobId);
   if (h) h.controller.abort();
-  put(pid, jobId, { status: 'stopped', endedAt: Date.now(), step: '' });
+  // 이미 끝난 작업의 «완료»·«실패»를 «중지됨»으로 뒤집지 않는다.
+  state.update(pid, (p) => {
+    const j = p.jobs.find((x) => x.id === jobId);
+    if (j && j.status === 'running') { j.status = 'stopped'; j.endedAt = Date.now(); j.step = ''; }
+  });
   return { ok: true };
+}
+
+// 그 프로젝트의 작업만 멈춘다 — 남의 프로젝트는 건드리지 않는다.
+export function stopProject(pid) {
+  for (const [id, h] of [...live]) if (h.pid === pid) { h.controller.abort(); live.delete(id); }
+  return { ok: true };
+}
+
+export function isKindRunning(pid, kind) {
+  const p = state.get(pid);
+  return !!(p && p.jobs.some((j) => j.kind === kind && j.status === 'running'));
 }
 
 // 목록에서 지운다. 돌고 있으면 먼저 멈춘다. 산출 문서는 건드리지 않는다.
