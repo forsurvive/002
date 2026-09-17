@@ -2,7 +2,7 @@
 // **프로젝트를 만든 직후** 그 프로젝트가 어떤 글을 쓰려는지 판단하고, 비소설이면 자리마다 프롬프트를 새로 짓는다.
 // 소설이면 아무것도 만들지 않고 내장 세트를 쓴다. 이미 지어 둔 자리는 다시 짓지 않는다(자동 집필이 다시 불러도 건너뛴다).
 
-import { BUILTIN, AGENT_SLOTS, SLOT_DUTY, PERSPECTIVES } from './prompts.mjs';
+import { BUILTIN, AGENT_SLOTS, SLOT_DUTY, PERSPECTIVES, NEIGHBORS } from './prompts.mjs';
 import { buildSystem, buildUser, cleanResponse } from './assemble.mjs';
 import { runClaudeCall } from './call.mjs';
 import * as state from './state.mjs';
@@ -10,7 +10,8 @@ import * as state from './state.mjs';
 export const CRAFT_MIN = 2000; // 기획서가 못 박은 하한. 위쪽 상한은 두지 않는다.
 
 // 같은 프로젝트를 두 벌로 짓지 않는다(구독 사용량이 두 배로 나가고 나중 것이 앞 것을 덮는다).
-const building = new Set();
+// 이미 짓는 중이면 그 일이 끝나기를 기다렸다가 그 결과를 같이 쓴다.
+const building = new Map();
 
 function ctl(code, extraTask, project, { materials = true, refs = [] } = {}) {
   const pr = BUILTIN[code];
@@ -80,13 +81,13 @@ export function agentsReady(project) {
 export async function prepareAgents(pid, ctx) {
   const project = state.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
-  if (building.has(pid)) return { ok: true, already: true };
-  building.add(pid);
-  try {
-    return await prepareAgentsInner(pid, ctx, project);
-  } finally {
-    building.delete(pid);
+  if (building.has(pid)) {
+    if (ctx) ctx.step('에이전트 준비');
+    return building.get(pid);
   }
+  const work = prepareAgentsInner(pid, ctx, project).finally(() => building.delete(pid));
+  building.set(pid, work);
+  return work;
 }
 
 async function prepareAgentsInner(pid, ctx, project) {
@@ -122,15 +123,16 @@ async function prepareAgentsInner(pid, ctx, project) {
     const cur = state.get(pid).agents || {};
     if (cur[code] && cur[code].craft) continue; // 이미 지은 자리는 건너뛴다
 
-    const prev = AGENT_SLOTS[i - 1];
-    const next = AGENT_SLOTS[i + 1];
+    const pair = NEIGHBORS[code] || ['', ''];
+    const prev = pair[0];
+    const next = pair[1];
     const sideOf = (c) => {
       if (!c) return '없음';
       const made = (state.get(pid).agents || {})[c];
-      const nm = (made && made.name) || (BUILTIN[c] && BUILTIN[c].name) || c;
-      const role = (made && made.role) || (BUILTIN[c] && BUILTIN[c].role) || '';
       const duty = SLOT_DUTY[c] || '';
-      return c + ' ' + nm + (role ? ' — ' + role : '') + (duty ? '\n    하는 일: ' + duty : '');
+      // 아직 짓지 않은 자리에 소설용 이름을 실으면 «이 프로젝트만의 에이전트»가 아니게 된다.
+      const who = made && made.name ? made.name + (made.role ? ' — ' + made.role : '') : '(아직 짓지 않았다)';
+      return c + ' ' + who + (duty ? '\n    하는 일: ' + duty : '');
     };
     const extra = [
       '이 프로젝트가 쓰려는 글의 종류: ' + kindName,
@@ -138,12 +140,13 @@ async function prepareAgentsInner(pid, ctx, project) {
       '앞자리: ' + sideOf(prev),
       '뒷자리: ' + sideOf(next),
       '이 글의 종류에 맞는 실제 작법을 써라. 소설 작법을 그대로 옮기지 마라.',
+      '작법 본문은 최소 ' + CRAFT_MIN + '자 이상이어야 한다. 넉넉히 써라.',
     ].join('\n');
 
     if (ctx) ctx.step('에이전트 준비 — ' + code);
     let made = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const c = ctl('F-AGENT', extra, state.get(pid));
+      const c = ctl('F-AGENT', extra + (attempt ? '\n앞서 받은 작법이 ' + CRAFT_MIN + '자에 못 미쳤다. 훨씬 더 길고 촘촘하게 다시 써라.' : ''), state.get(pid));
       const r = await runClaudeCall({ ...c, mockKey: 'F-AGENT', signal: ctx && ctx.signal });
       if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
       if (!r.ok) { if (attempt) return { ok: false, error: r.error }; continue; }

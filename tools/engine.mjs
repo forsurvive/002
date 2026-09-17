@@ -157,8 +157,12 @@ export async function runTalk(pid, threadId, text, ctx) {
   // 그동안 작가가 다른 가지로 옮겨 갔으면 보던 자리를 빼앗지 않는다.
   state.update(pid, (p) => {
     const th = model.findThread(p, threadId);
-    const stay = th && th.headId === askedId;
-    model.threadAddMessage(p, threadId, 'assistant', r.text, askedId, { moveHead: stay });
+    if (!th) return;
+    // 기다리는 사이 같은 줄에서 말을 더 이었으면 그 줄 끝에 답한다(가지를 쪼개지 않는다).
+    // 아주 다른 가지로 옮겨 갔을 때만 물은 자리 밑에 조용히 붙인다.
+    const onSameLine = model.threadPath(th, th.headId).some((m) => m.id === askedId);
+    const parent = onSameLine ? th.headId : askedId;
+    model.threadAddMessage(p, threadId, 'assistant', r.text, parent, { moveHead: onSameLine });
   });
   return { ok: true };
 }

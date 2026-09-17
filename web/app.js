@@ -18,6 +18,8 @@ const S = {
   typed: {},       // 아직 저장되지 않은 입력값 — 다시 그려도 사라지지 않게 여기 둔다
   flag: {},        // 아직 저장되지 않은 켜짐/꺼짐(본문 집필 제외 같은 것)
   newCat: false,   // 카테고리 이름을 그 자리에서 받는 중
+  peek: null,      // 지금 들여다보는 옛 판 { docId, i }
+  saveOpen: null,  // 지금 열린 창이 «닫기 전에 저장할 것»을 여기 걸어 둔다
   focusNext: '',   // 다시 그린 뒤 이 칸에 커서를 둔다
   redrawing: false,// 다시 그리는 중 — 그때 떨어지는 포커스는 저장이 아니다
   last: '',
@@ -71,6 +73,7 @@ function flagBox(id, fallback, label) {
 const area = (id, placeholder, value, attrs) => inputOf('textarea', id, { placeholder, value, ...attrs });
 const stop = (e) => { e.stopPropagation(); };
 const when = (t) => new Date(t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const firstLine = (text) => (String(text || '').split('\n').map((l) => l.trim()).find((l) => l) || '붙여 넣은 글').slice(0, 24);
 
 async function api(op, body = {}) {
   const r = await fetch('/api', {
@@ -103,14 +106,27 @@ async function pull(force) {
   render();
 }
 
+// 알림은 자동 집필 한 번에 한 번만 — 그 사이 창을 닫아 두었어도 다음에 열 때 뜬다.
+function seenDone(id) {
+  try { return (localStorage.getItem('se2-done') || '').split(',').includes(id); } catch { return false; }
+}
+function markDone(id) {
+  try {
+    const list = (localStorage.getItem('se2-done') || '').split(',').filter(Boolean);
+    list.push(id);
+    localStorage.setItem('se2-done', list.slice(-50).join(','));
+  } catch { /* 저장소를 못 써도 알림은 뜬다 */ }
+}
+
 function checkAutoDone() {
   const p = S.project;
   if (!p) return;
   for (const j of p.jobs || []) {
     if (j.kind !== 'auto') continue;
-    const before = S.autoSeen[j.id];
     S.autoSeen[j.id] = j.status;
-    if (before === 'running' && j.status === 'done') { if (S.open) S.doneWaiting = true; else S.open = { type: 'done' }; }
+    if (j.status !== 'done' || seenDone(j.id)) continue;
+    markDone(j.id);
+    if (S.open) S.doneWaiting = true; else S.open = { type: 'done' };
   }
 }
 
@@ -124,6 +140,7 @@ function render() {
   const keep = focus && focus.id ? { id: focus.id, value: focus.value, s: focus.selectionStart, e: focus.selectionEnd } : null;
   const tops = SCROLLERS.map((sel) => { const n = document.querySelector(sel); return n ? n.scrollTop : 0; });
 
+  S.saveOpen = null;
   S.redrawing = true;
   $('root').replaceChildren(S.pid && S.project ? app() : projectList());
   $('layer1').replaceChildren(...(S.open ? [layerOne()] : []));
@@ -232,7 +249,13 @@ function workshop() {
           await api('cat.create', { name: v });
         } else if (e.key === 'Escape') { clearTyped('nc-name'); S.newCat = false; render(); }
       },
-      onblur: () => { if (S.redrawing) return; if (!$('nc-name') || !$('nc-name').value.trim()) { S.newCat = false; clearTyped('nc-name'); render(); } },
+      onblur: async () => {
+        if (S.redrawing) return;
+        const v = $('nc-name') ? $('nc-name').value.trim() : '';
+        S.newCat = false;
+        clearTyped('nc-name');
+        if (v) await api('cat.create', { name: v }); else render();
+      },
     }))) : null,
     p.threads.length ? threadSection() : null);
 }
@@ -333,13 +356,14 @@ function settings() {
       h('div', { class: 'lab', text: '자료' }),
       p.materials.map((m) => h('div', { class: 'mat' },
         h('div', { class: 'name', text: m.name }),
+        h('div', { class: 'when', text: String(m.chars) }),
         h('button', { class: 'btn-text red', text: '삭제', onclick: () => api('material.delete', { ids: [m.id] }) }))),
       h('div', { style: 'margin-top:10px' },
         area('set-mat', '자료'),
         h('div', { class: 'line', style: 'margin-top:8px' },
           h('button', {
             class: 'btn-line', text: '추가',
-            onclick: () => { const t = $('set-mat').value; if (t.trim()) { clearTyped('set-mat'); api('material.add', { name: '붙여 넣은 글', text: t }); } },
+            onclick: () => { const t = $('set-mat').value; if (t.trim()) { clearTyped('set-mat'); api('material.add', { text: t }); } },
           }),
           fileButton((name, text) => api('material.add', { name, text }))))),
     h('div', { style: 'padding-top:20px' },
@@ -389,11 +413,21 @@ function trash() {
 
 // ---------------------------------------------------------------- 1겹 창
 
+// 겹창이 쓰는 입력 열쇠 — 닫을 때 이것만 지운다(작업실·설정에 치던 글은 그대로 둔다).
+const LAYER_KEYS = ['d-title', 'd-body', 'd-req', 't-say', 'nd-name', 'a-rounds',
+  'n-name', 'n-form', 'n-outline', 'n-length', 'n-standard', 'n-request', 'n-mat'];
+
 function closeLayer() {
+  // 닫기 전에 저장을 먼저 부른다 — Esc·×·바깥 클릭이 모두 같은 길을 지난다.
+  // (창이 사라지며 나는 blur 에 기대면 창 바깥을 누른 때와 Esc 를 누른 때가 갈린다.)
+  const save = S.saveOpen;
+  if (save) { try { save(); } catch { /* 저장이 미끄러져도 창은 닫는다 */ } }
   S.open = S.doneWaiting ? { type: 'done' } : null;
   S.doneWaiting = false;
   S.editMsg = null;
-  S.typed = {};
+  S.peek = null;
+  clearTyped(...LAYER_KEYS);
+  for (const k of Object.keys(S.typed)) if (k.startsWith('m-edit-')) delete S.typed[k];
   S.flag = {};
   render();
 }
@@ -414,8 +448,12 @@ function docPanel(close) {
   const d = (S.project.docs || []).find((x) => x.id === S.open.id);
   if (!d) return h('div', { class: 'panel narrow' }, h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '없음' }), h('button', { class: 'x', text: '×', onclick: close })));
   const byId = new Map(S.project.docs.map((x) => [x.id, x]));
+  const peeking = S.peek && S.peek.docId === d.id ? d.versions.find((v) => v.i === S.peek.i) : null;
+  const busy = (S.project.jobs || []).some((j) => j.status === 'running' && j.targetId === d.id);
+  // 이 창이 닫힐 때 저장할 것
   const saveFields = async () => {
     if (S.redrawing) return;
+    S.saveOpen = null;
     const body = { id: d.id };
     if ('d-title' in S.typed) body.title = $('d-title').value;
     if ('d-body' in S.typed) body.body = $('d-body').value;
@@ -424,6 +462,8 @@ function docPanel(close) {
     if (Object.keys(body).length === 1) return;   // 손대지 않았으면 쓰지 않는다
     await api('doc.write', body);
   };
+
+  S.saveOpen = saveFields;
 
   return h('div', { class: 'panel' },
     h('div', { class: 'panel-head' },
@@ -435,20 +475,30 @@ function docPanel(close) {
       h('button', { class: 'btn-text red', text: '삭제', onclick: async () => { await api('doc.delete', { ids: [d.id] }); close(); } }),
       h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
-      area('d-body', '', d.body, { class: 'body-edit', onblur: saveFields }),
+      peeking ? h('textarea', { id: 'd-body', class: 'body-edit', value: peeking.body, readonly: 'readonly' })
+        : area('d-body', '', d.body, { class: 'body-edit', onblur: saveFields }),
       h('div', null, h('div', { class: 'lab', text: '카테고리' }), h('div', { class: 'line' }, catPicker(d))),
       h('div', null, h('div', { class: 'lab', text: '요청사항' }), area('d-req', '요청사항', d.request, { onblur: saveFields })),
       d.kind === 'doc' ? null : refLine('대상', d.targetIds, byId, (ids) => api('doc.write', { id: d.id, targetIds: ids }), d.id),
       refLine('참조', d.refIds, byId, (ids) => api('doc.write', { id: d.id, refIds: ids }), d.id),
       h('div', null, h('button', {
-        class: 'btn', text: '갱신',
+        class: 'btn', text: busy ? '갱신 중' : '갱신', disabled: busy,
         onclick: async () => { await saveFields(); await api('doc.update', { id: d.id }); },
       })),
-      d.versions.length ? h('details', null,
-        h('summary', { text: '이력' }),
-        d.versions.slice().reverse().map((v) => h('div', { class: 'ver' },
-          h('div', { class: 'when', text: when(v.at) + ' · ' + v.title }),
-          h('button', { class: 'btn-text', text: '복원', onclick: () => api('doc.restoreVersion', { id: d.id, index: v.i }) })))) : null));
+      d.versions.length ? h('details', { open: S.fold['hist:' + d.id] ? 'open' : null },
+        h('summary', {
+          text: '이력',
+          onclick: () => { S.fold['hist:' + d.id] = !S.fold['hist:' + d.id]; },
+        }),
+        (peeking ? [h('div', { class: 'ver' },
+          h('div', { class: 'when', text: '지금 판' }),
+          h('button', { class: 'btn-text', text: '닫기', onclick: () => { S.peek = null; render(); } }))] : []),
+        d.versions.slice().reverse().map((v) => h('div', { class: 'ver' + (peeking && peeking.i === v.i ? ' on' : '') },
+          h('div', {
+            class: 'when', text: when(v.at) + ' · ' + v.title, style: 'cursor:pointer',
+            onclick: () => { S.peek = { docId: d.id, i: v.i }; render(); },
+          }),
+          h('button', { class: 'btn-text', text: '복원', onclick: () => { S.peek = null; api('doc.restoreVersion', { id: d.id, index: v.i }); } })))) : null));
 }
 
 function catPicker(d) {
@@ -504,7 +554,14 @@ function threadPanel(close) {
   }
   return h('div', { class: 'panel' },
     h('div', { class: 'panel-head' },
-      h('div', { class: 'name', text: t.title }),
+      textbox('t-title-' + t.id, '이름', t.title, {
+        onblur: () => {
+          if (S.redrawing || !(('t-title-' + t.id) in S.typed)) return;
+          const v = $('t-title-' + t.id).value;
+          clearTyped('t-title-' + t.id);
+          api('thread.title', { id: t.id, title: v });
+        },
+      }),
       h('button', { class: 'btn-text', text: '다운로드', onclick: () => download('thread', t.id) }),
       h('button', { class: 'btn-text red', text: '삭제', onclick: async () => { await api('thread.delete', { ids: [t.id] }); close(); } }),
       h('button', { class: 'x', text: '×', onclick: close })),
@@ -518,7 +575,7 @@ function threadPanel(close) {
 }
 
 function newProjectPanel(close) {
-  const add = (name, text) => { if (String(text || '').trim()) { S.draft.push({ name, text }); render(); } };
+  const add = (name, text) => { if (String(text || '').trim()) { S.draft.push({ name: name || firstLine(text), text }); render(); } };
   return h('div', { class: 'panel' },
     h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '새 작품' }), h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
@@ -538,15 +595,16 @@ function newProjectPanel(close) {
           h('button', { class: 'btn-text red', text: '삭제', onclick: () => { S.draft.splice(i, 1); render(); } }))),
         area('n-mat', '자료'),
         h('div', { class: 'line', style: 'margin-top:8px' },
-          h('button', { class: 'btn-line', text: '추가', onclick: () => { const t = $('n-mat').value; clearTyped('n-mat'); add('붙여 넣은 글', t); } }),
+          h('button', { class: 'btn-line', text: '추가', onclick: () => { const t = $('n-mat').value; clearTyped('n-mat'); add('', t); } }),
           fileButton(add))),
       h('div', { style: 'padding-top:6px' }, h('button', {
         class: 'btn', text: '생성',
         onclick: async () => {
+          const rest = $('n-mat') ? $('n-mat').value : '';
           const body = {
             name: $('n-name').value, standard: $('n-standard').value, request: $('n-request').value,
             spec: { outline: $('n-outline').value, form: $('n-form').value, length: $('n-length').value },
-            materials: S.draft.slice(),
+            materials: rest.trim() ? [...S.draft, { name: '', text: rest }] : S.draft.slice(),
           };
           const r = await api('project.create', body);
           if (r.ok) { S.pid = r.pid; S.draft = []; S.open = null; S.project = null; S.typed = {}; pull(true); }
@@ -587,10 +645,12 @@ function autoPanel(close) {
       h('button', {
         class: 'btn', text: '시작', disabled: !ready,
         onclick: async () => {
-          await api('auto.start', { feedbackRounds: Number($('a-rounds').value) || 1, skipProse: flagVal('a-skip', p.auto.skipProse) });
-          close();
+          const r = await api('auto.start', { feedbackRounds: Number($('a-rounds').value) || 1, skipProse: flagVal('a-skip', p.auto.skipProse) });
+          if (r.ok) close();
+          else { S.open = { type: 'auto', err: r.error }; render(); }
         },
-      })));
+      }),
+      S.open.err ? h('div', { class: 'notice', text: S.open.err }) : null));
 }
 
 function donePanel(close) {

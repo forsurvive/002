@@ -37,6 +37,6 @@
 ## 손보는 사람을 위해
 
 - 정본: `기획서.md`(사용자 원문) · `DESIGN.md`(구현 계약).
-- 시험: `SE2_MOCK=1 node tools/test.mjs` — 호출 없이 251건.
+- 시험: `SE2_MOCK=1 node tools/test.mjs` — 호출 없이 274건.
 - 모의 실행(구독 소모 없음): `SE2_MOCK=1 SE2_PORT=8811 SE2_DATA_DIR=.tmp/모의상자 node tools/server.mjs`
 - 자료는 `data/projects/<프로젝트>.json` 파일 하나에 들어 있다.

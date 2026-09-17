@@ -208,6 +208,12 @@ export function threadDelete(p, id) {
 
 // ---------------------------------------------------------------- 자료
 
+// 붙여 넣은 글에 이름이 없으면 첫 줄 앞부분을 이름으로 삼는다(여럿이 같은 이름이 되지 않게).
+export function firstLineName(text) {
+  const first = str(text).split('\n').map((l) => l.trim()).find((l) => l) || '';
+  return first.slice(0, 24) || '붙여 넣은 글';
+}
+
 export function materialAdd(p, name, text) {
   const t = str(text);
   if (!t.trim()) return null;

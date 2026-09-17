@@ -494,18 +494,19 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
-  // 서버 — 에이전트를 짓는 중에는 자동 집필을 받지 않는다
-  process.env.SE2_MOCK_DELAY_MS = '200';
+  // 서버 — 에이전트를 짓는 중에 자동 집필을 걸면 기다렸다 이어 간다(두 벌로 짓지 않는다)
+  process.env.SE2_MOCK_DELAY_MS = '60';
   KIND = '실무 안내서';
+  let agentCalls = 0;
+  globalThis.__SE2_MOCK_FN = (args) => { if (args.mockKey === 'F-AGENT') agentCalls++; return MOCK_FN(args); };
   const r = await post('project.create', { name: '겹침', spec: { outline: 'ㄱ', form: 'ㄴ', length: '2화' }, materials: [{ name: 'ㄷ', text: 'ㄹ' }] });
-  const busy = await post('auto.start', { pid: r.pid });
-  ok('준비 중에는 시작하지 않는다', !busy.ok && busy.error === '에이전트 준비 중입니다');
-  process.env.SE2_MOCK_DELAY_MS = '3';
-  await settle(r.pid, 60000);
   const started = await post('auto.start', { pid: r.pid });
-  ok('준비가 끝나면 시작한다', started.ok);
-  await post('job.stop', { pid: r.pid, id: started.jobId });
-  await settle(r.pid);
+  ok('준비 중에도 시작을 받는다', started.ok);
+  const p = await settle(r.pid, 120000);
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  process.env.SE2_MOCK_DELAY_MS = '3';
+  eq('자동 집필이 완주한다', p.jobs.find((j) => j.kind === 'auto').status, 'done');
+  eq('자리 수만큼만 지었다(두 벌이 아니다)', agentCalls, prompts.AGENT_SLOTS.length);
   await post('project.delete', { pid: r.pid });
   KIND = '소설';
 }
@@ -536,6 +537,116 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('그 대상에 회차 계획이 들어 있다', 검사.targetIds.includes(계획.id));
   ok('갱신이 빈 호출이 되지 않는다', 검사.targetIds.every((id) => p.docs.some((d) => d.id === id)));
   ok('합평 호출의 앞뒤가 실제 이웃이다', seenSys.includes('사건 엮는이') && seenSys.includes('플롯 고쳐 쓰는이'), seenSys.split('\n').find((l) => l.startsWith('앞:')) || '');
+  await post('project.delete', { pid });
+}
+
+
+// ---------------------------------------------------------------- 되짚기에서 잡힌 것들
+
+{
+  // 답을 기다리는 사이 한 마디 더 보내면 그 줄 끝에 이어 붙는다(가지를 쪼개지 않는다)
+  const st2 = await import('./state.mjs');
+  const eng = await import('./engine.mjs');
+  const pj = st2.create({ name: '이어 붙이기', spec: { outline: 'ㄱ', form: 'ㄴ' }, materials: [{ name: 'ㄷ', text: 'ㄹ' }] });
+  let tid = null;
+  st2.update(pj.id, (p) => { tid = model.threadCreate(p, { title: '논의' }).id; });
+
+  // «첫 물음»을 보내는 중에 «둘째 물음»이 먼저 얹힌 상황을 흉내 낸다
+  let asked = null;
+  st2.update(pj.id, (p) => { asked = model.threadAddMessage(p, tid, 'user', '첫 물음').id; });
+  st2.update(pj.id, (p) => { model.threadAddMessage(p, tid, 'user', '둘째 물음'); });
+  await eng.runTalk(pj.id, tid, null, null);
+  let th = model.findThread(st2.get(pj.id), tid);
+  const ans = th.messages[th.messages.length - 1];
+  eq('답이 그 줄 끝에 붙는다', ans.parentId, th.messages[1].id);
+  ok('현재 가지에 답이 보인다', model.threadPath(th).some((m) => m.id === ans.id));
+  eq('가지가 갈라지지 않는다', model.threadSiblings(th, asked).length, 1);
+
+  // 답을 기다리는 사이 작가가 다른 가지로 옮겨 가면, 답은 물은 자리 밑에 조용히 붙는다
+  process.env.SE2_MOCK_DELAY_MS = '250';
+  const flying = eng.runTalk(pj.id, tid, '셋째 물음', null);   // 아직 돌고 있다
+  await sleep(40);
+  let askedAgain = null;
+  st2.update(pj.id, (p) => {
+    const t2 = model.findThread(p, tid);
+    askedAgain = t2.headId;                                     // 방금 얹힌 «셋째 물음»
+    model.threadEditMessage(p, tid, asked, '다른 물음');          // 작가가 다른 가지로 옮겨 간다
+  });
+  const before = model.findThread(st2.get(pj.id), tid).headId;
+  await flying;
+  process.env.SE2_MOCK_DELAY_MS = '3';
+  th = model.findThread(st2.get(pj.id), tid);
+  eq('보던 가지를 빼앗지 않는다', th.headId, before);
+  const late = th.messages.filter((m) => m.role === 'assistant').pop();
+  eq('답은 물은 자리 밑에 있다', late.parentId, askedAgain);
+  st2.remove(pj.id);
+}
+
+{
+  // 앞뒤는 실제 파이프라인의 이웃이다
+  eq('본문 뒤에 합평이 서지 않는다', prompts.NEIGHBORS.S18C[1], 'F-CONTRA');
+  eq('상세 플롯 뒤는 합평', prompts.NEIGHBORS.S12[1], 'F-REVIEW');
+  eq('합평 뒤는 재작성', prompts.NEIGHBORS['F-REVIEW'][1], 'S14');
+  ok('모든 자리에 이웃이 적혀 있다', prompts.AGENT_SLOTS.every((c) => prompts.NEIGHBORS[c]));
+}
+
+{
+  // 자료 이름은 첫 줄에서 딴다
+  eq('첫 줄이 이름이 된다', model.firstLineName('  등대 자료\n둘째 줄'), '등대 자료');
+  eq('빈 글이면 기본 이름', model.firstLineName('   '), '붙여 넣은 글');
+}
+
+{
+  // 서버 — 이력이 옛 본문을 함께 보여 준다 · 같은 문서에 갱신을 두 번 걸지 않는다 · 스레드 이름 고치기
+  const r = await post('project.create', { name: '되짚기', spec: { outline: 'ㄱ', form: 'ㄴ', length: '2화' }, materials: [{ name: 'ㄷ', text: 'ㄹ' }] });
+  const pid = r.pid;
+  await settle(pid);
+
+  const d = await post('doc.create', { pid, title: '문서' });
+  await post('doc.write', { pid, id: d.id, body: '처음 본문' });
+  await post('doc.write', { pid, id: d.id, body: '나중 본문' });
+  const p1 = (await stateOf(pid)).project.docs.find((x) => x.id === d.id);
+  eq('판이 쌓인다', p1.versions.length, 2);
+  eq('옛 본문을 볼 수 있다', p1.versions[1].body, '처음 본문');
+
+  process.env.SE2_MOCK_DELAY_MS = '300';
+  const first = await post('doc.update', { pid, id: d.id });
+  const second = await post('doc.update', { pid, id: d.id });
+  ok('갱신을 두 번 걸지 않는다', first.ok && !second.ok);
+  await settle(pid);
+  process.env.SE2_MOCK_DELAY_MS = '3';
+
+  const t = await post('thread.create', { pid, title: '논의' });
+  await post('thread.title', { pid, id: t.id, title: '주인공 고르기' });
+  eq('스레드 이름을 고친다', (await stateOf(pid)).project.threads[0].title, '주인공 고르기');
+
+  await post('material.add', { pid, text: '새 자료 첫 줄\n둘째 줄' });
+  const mats = (await stateOf(pid)).project.materials;
+  eq('붙여 넣은 자료의 이름', mats[mats.length - 1].name, '새 자료 첫 줄');
+  ok('글자 수가 함께 온다', mats[mats.length - 1].chars > 0);
+  await post('project.delete', { pid });
+}
+
+{
+  // 자동 집필을 두 번 돌리면 지난 확정본이 내려간다(옛 판이 새 판을 지배하지 않게)
+  const r = await post('project.create', { name: '두 번', spec: { outline: 'ㄱ', form: 'ㄴ', length: '1화' }, materials: [{ name: 'ㄷ', text: 'ㄹ' }] });
+  const pid = r.pid;
+  await settle(pid);
+  await post('auto.start', { pid, feedbackRounds: 1, skipProse: true });
+  let p = await settle(pid, 90000);
+  const firstFinal = p.docs.filter((x) => x.isFinal);
+  eq('첫 실행의 확정본은 하나', firstFinal.length, 1);
+
+  // 작가가 손으로 켠 확정본은 건드리지 않는다
+  const mine = await post('doc.create', { pid, title: '내가 켠 확정본' });
+  await post('doc.final', { pid, ids: [mine.id], on: true });
+
+  await post('auto.start', { pid, feedbackRounds: 1, skipProse: true });
+  p = await settle(pid, 90000);
+  const finals = p.docs.filter((x) => x.isFinal);
+  eq('지난 실행의 확정본은 내려간다', finals.filter((x) => x.title === '회차 계획 재작성').length, 1);
+  ok('작가가 켠 확정본은 그대로', finals.some((x) => x.id === mine.id));
+  eq('켜져 있는 확정본은 둘뿐', finals.length, 2);
   await post('project.delete', { pid });
 }
 

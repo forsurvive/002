@@ -2,7 +2,7 @@
 // 단계마다 «반드시 참조할 문서»가 정해져 있고(참조 행렬), 러너는 그 표대로만 싣는다.
 // 러너가 스스로 켜는 확정본은 마지막 회차 계획 재작성 하나뿐이다.
 
-import { BUILTIN, AGENT_SLOTS } from './prompts.mjs';
+import { BUILTIN, AGENT_SLOTS, NEIGHBORS } from './prompts.mjs';
 import { callWithRetry, promptFor } from './engine.mjs';
 import { prepareAgents, perspectivesOf } from './agents.mjs';
 import { buildSystem, buildUser, cleanResponse } from './assemble.mjs';
@@ -35,9 +35,8 @@ export function specEpisodes(project) {
 // 앞뒤 이름은 «실제로 앞뒤에 선 자리»에서 온다. 합평·모순 검사처럼 여러 자리에서 불리는 것은 부르는 쪽이 알려 준다.
 function neighborNames(project, code, prevCode, nextCode) {
   const nameOf = (c) => (c ? promptFor(project, c).name : '');
-  if (prevCode || nextCode) return { prev: nameOf(prevCode), next: nameOf(nextCode) };
-  const i = AGENT_SLOTS.indexOf(code);
-  return { prev: nameOf(AGENT_SLOTS[i - 1]), next: nameOf(AGENT_SLOTS[i + 1]) };
+  const pair = NEIGHBORS[code] || ['', ''];
+  return { prev: nameOf(prevCode || pair[0]), next: nameOf(nextCode || pair[1]) };
 }
 
 export async function runAuto(pid, ctx) {
@@ -160,7 +159,12 @@ export async function runAuto(pid, ctx) {
     epKey = next;
   }
   const planId = made.get(epKey);
-  state.update(pid, (p) => { model.docSetFinal(p, planId, true); });
+  state.update(pid, (p) => {
+    // 지난 자동 실행이 켜 둔 확정본은 내린다 — 작가가 손으로 켠 것은 그대로 둔다.
+    for (const d of p.docs) if (d.autoFinal && d.id !== planId) { d.isFinal = false; d.autoFinal = false; }
+    const d = model.docSetFinal(p, planId, true);
+    if (d) d.autoFinal = true;
+  });
 
   // ---- 회차 수 확정 — 분량에 적혀 있으면 그대로, 아니면 물어본다(본문을 뒤져 추정하지 않는다)
   let N = specN;
@@ -181,6 +185,7 @@ export async function runAuto(pid, ctx) {
       code: 'S18A', title: e + '화 집필 계획',
       refs: [epKey, 'S11', 'S07', ...(prevTail ? [prevTail] : [])],
       taskExtra: '이번 회차: ' + e + '화',
+      prevCode: e === 1 ? 'S17' : (skipProse ? 'S18B' : 'S18C'),
     });
     if (!r.ok) return r;
 
@@ -188,6 +193,7 @@ export async function runAuto(pid, ctx) {
     r = await write(bKey, {
       code: 'S18B', title: e + '화 집필 계획 세부', refs: [aKey, epKey, 'S11'],
       taskExtra: '이번 회차: ' + e + '화',
+      nextCode: skipProse ? (e < N ? 'S18A' : 'F-CONTRA') : 'S18C',
     });
     if (!r.ok) return r;
 
@@ -196,6 +202,7 @@ export async function runAuto(pid, ctx) {
       r = await write(cKey, {
         code: 'S18C', title: e + '화', refs: [bKey, 'S11'],
         taskExtra: '이번 회차: ' + e + '화',
+        nextCode: e < N ? 'S18A' : 'F-CONTRA',
       });
       if (!r.ok) return r;
     }

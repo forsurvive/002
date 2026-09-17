@@ -26,14 +26,14 @@ export function isAutoRunning(pid) {
  * run(ctx) 를 띄우고 곧바로 jobId 를 돌려준다(기다리지 않는다).
  * ctx = { pid, signal, step(name), addDoc(id) }
  */
-export function start(pid, { kind = 'call', title = '작업', run }) {
+export function start(pid, { kind = 'call', title = '작업', targetId = '', run }) {
   const p = state.get(pid);
   if (!p) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
   if (kind === 'auto' && isAutoRunning(pid)) return { ok: false, error: '이미 도는 중입니다' };
 
   const id = newId('j');
   const job = {
-    id, kind, title,
+    id, kind, title, targetId,
     status: 'running', step: '', error: '',
     startedAt: Date.now(), endedAt: 0, docIds: [],
   };
@@ -86,6 +86,11 @@ export function stop(pid, jobId) {
 export function stopProject(pid) {
   for (const [id, h] of [...live]) if (h.pid === pid) { h.controller.abort(); live.delete(id); }
   return { ok: true };
+}
+
+export function isTargetRunning(pid, targetId) {
+  const p = state.get(pid);
+  return !!(p && p.jobs.some((j) => j.status === 'running' && j.targetId === targetId));
 }
 
 export function isKindRunning(pid, kind) {

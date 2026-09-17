@@ -59,7 +59,7 @@ const OPS = {
   },
 
   // ---------------- 자료
-  'material.add': (b) => state.update(b.pid, (p) => { model.materialAdd(p, b.name, b.text); }),
+  'material.add': (b) => state.update(b.pid, (p) => { model.materialAdd(p, b.name || model.firstLineName(b.text), b.text); }),
   'material.delete': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.materialDelete(p, id); }),
 
   // ---------------- 문서 · 모순 검사 · 합평회
@@ -89,7 +89,8 @@ const OPS = {
     const p = state.get(b.pid);
     const d = p && model.findDoc(p, b.id);
     if (!d) return bad('문서를 찾을 수 없습니다');
-    return jobs.start(b.pid, { kind: 'update', title: d.title, run: (ctx) => engine.runUpdate(b.pid, b.id, ctx) });
+    if (jobs.isTargetRunning(b.pid, d.id)) return bad('이미 도는 중입니다');
+    return jobs.start(b.pid, { kind: 'update', title: d.title, targetId: d.id, run: (ctx) => engine.runUpdate(b.pid, b.id, ctx) });
   },
 
   // ---------------- 카테고리
@@ -115,7 +116,7 @@ const OPS = {
     const t = p && model.findThread(p, b.id);
     if (!t) return bad('스레드를 찾을 수 없습니다');
     if (!String(b.text || '').trim()) return bad('빈 말');
-    return jobs.start(b.pid, { kind: 'talk', title: t.title, run: (ctx) => engine.runTalk(b.pid, b.id, String(b.text), ctx) });
+    return jobs.start(b.pid, { kind: 'talk', title: t.title, targetId: t.id, run: (ctx) => engine.runTalk(b.pid, b.id, String(b.text), ctx) });
   },
   'thread.edit': (b) => {
     const p = state.get(b.pid);
@@ -124,8 +125,12 @@ const OPS = {
     let made = null;
     state.update(b.pid, (pr) => { made = model.threadEditMessage(pr, b.id, b.messageId, b.text); });
     if (!made) return bad('메시지를 찾을 수 없습니다');
-    return jobs.start(b.pid, { kind: 'talk', title: t.title, run: (ctx) => engine.runTalk(b.pid, b.id, null, ctx) });
+    return jobs.start(b.pid, { kind: 'talk', title: t.title, targetId: t.id, run: (ctx) => engine.runTalk(b.pid, b.id, null, ctx) });
   },
+  'thread.title': (b) => state.update(b.pid, (p) => {
+    const t = model.findThread(p, b.id);
+    if (t) t.title = String(b.title || '').trim() || t.title;
+  }),
   'thread.head': (b) => state.update(b.pid, (p) => { model.threadSetHead(p, b.id, b.messageId); }),
   'thread.doc': (b) => {
     const p = state.get(b.pid);
@@ -150,7 +155,6 @@ const OPS = {
     const gate = canStart(p);
     if (!gate.ok) return gate;
     if (jobs.isAutoRunning(b.pid)) return bad('이미 도는 중입니다');
-    if (jobs.isKindRunning(b.pid, 'agents')) return bad('에이전트 준비 중입니다');
     state.update(b.pid, (pr) => {
       pr.auto.feedbackRounds = Math.min(3, Math.max(1, Number(b.feedbackRounds) || 1));
       pr.auto.skipProse = !!b.skipProse;
@@ -173,7 +177,7 @@ function stateOf(pid) {
     docs: p.docs.map((d) => ({
       id: d.id, kind: d.kind, title: d.title, body: d.body, isFinal: d.isFinal,
       categoryId: d.categoryId, request: d.request, refIds: d.refIds, targetIds: d.targetIds,
-      versions: (d.versions || []).map((v, i) => ({ i, at: v.at, title: v.title })),
+      versions: (d.versions || []).map((v, i) => ({ i, at: v.at, title: v.title, body: v.body })),
       updatedAt: d.updatedAt,
     })),
     threads: p.threads.map((t) => ({
