@@ -26,11 +26,27 @@ function projPath(id) {
   return join(PROJ_DIR, id + '.json');
 }
 
+// 윈도우에서는 방금 쓴 파일을 백신·색인기가 잠시 붙들고 있어 rename 이 EPERM 으로 튕기는 일이 있다.
+// 실측(자동 집필처럼 빠르게 잇달아 저장할 때)에서 실제로 나왔다 — 몇 번 다시 시도하고,
+// 그래도 안 되면 제자리에 그대로 쓴다(원자성을 잃더라도 작업을 잃지 않는 편이 낫다).
 export function writeJson(file, value) {
   mkdirSync(dirname(file), { recursive: true });
+  const text = JSON.stringify(value, null, 1);
   const tmp = file + '.' + process.pid + '.tmp';
-  writeFileSync(tmp, JSON.stringify(value, null, 1), 'utf8');
-  try { renameSync(tmp, file); } catch (e) { try { rmSync(tmp, { force: true }); } catch {} throw e; }
+  writeFileSync(tmp, text, 'utf8');
+  let last = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try { renameSync(tmp, file); return; } catch (e) { last = e; sleepBriefly(6 + attempt * 8); }
+  }
+  try { rmSync(tmp, { force: true }); } catch {}
+  try { writeFileSync(file, text, 'utf8'); return; } catch {}
+  throw last;
+}
+
+// 잠깐 멈춘다 — 이 자리는 동기 코드라 타이머를 쓸 수 없다.
+function sleepBriefly(ms) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) { /* 기다린다 */ }
 }
 
 export function readJson(file, fallback = null) {
