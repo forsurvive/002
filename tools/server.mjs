@@ -93,6 +93,15 @@ const OPS = {
   'material.add': (b) => state.update(b.pid, (p) => { model.materialAdd(p, b.name || model.firstLineName(b.text), b.text); }),
   'material.delete': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.materialDelete(p, id); }),
 
+  // ---------------- 에이전트 (작가가 짓는다)
+  'agent.create': (b) => {
+    let id = null;
+    const r = state.update(b.pid, (p) => { id = model.agentCreate(p, b).id; });
+    return r.ok === false ? r : ok({ id });
+  },
+  'agent.write': (b) => state.update(b.pid, (p) => { model.agentWrite(p, b.id, b); }),
+  'agent.delete': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.agentDelete(p, id); }),
+
   // ---------------- 문서 · 모순 검사 · 합평회
   'doc.create': (b) => {
     let id = null;
@@ -105,7 +114,7 @@ const OPS = {
   'doc.write': (b) => state.update(b.pid, (p) => {
     model.docWrite(p, b.id, {
       title: b.title, body: b.body, request: b.request,
-      refIds: b.refIds, targetIds: b.targetIds,
+      refIds: b.refIds, targetIds: b.targetIds, agentIds: b.agentIds,
       categoryId: b.categoryId === undefined ? undefined : b.categoryId,
     });
   }),
@@ -207,9 +216,11 @@ function stateOf(pid) {
     id: p.id, name: p.name, spec: p.spec, standard: p.standard, request: p.request,
     materials: (p.materials || []).map((m) => ({ id: m.id, name: m.name, chars: String(m.text || '').length })),
     categories: model.categoriesView(p),
+    crew: (p.crew || []).map((a) => ({ id: a.id, name: a.name, role: a.role, craft: a.craft })),
     docs: p.docs.map((d) => ({
       id: d.id, kind: d.kind, title: d.title, body: d.body, isFinal: d.isFinal,
       categoryId: d.categoryId, request: d.request, refIds: d.refIds, targetIds: d.targetIds,
+      agentIds: d.agentIds || [],
       versions: (d.versions || []).map((v, i) => ({ i, at: v.at, title: v.title, body: v.body })),
       updatedAt: d.updatedAt,
     })),

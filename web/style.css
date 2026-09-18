@@ -28,10 +28,13 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 
 .side { background: var(--ink); color: var(--paper); display: flex; flex-direction: column; overflow: hidden; }
 .side-top { padding: 22px 18px 10px; }
+/* 이름표이자 집으로 가는 문 — 좁은 창에서는 숨으므로 위쪽 띠의 «‹» 가 대신한다. */
 .side-title {
+  display: block; text-align: left;
   font-size: 13px; letter-spacing: .14em; color: rgba(255, 255, 255, .5);
   text-transform: uppercase; margin-bottom: 14px;
 }
+.side-title:hover { color: var(--paper); }
 .tab {
   display: block; width: 100%; text-align: left; padding: 9px 18px; font-size: 15px;
   color: rgba(255, 255, 255, .72); border-left: 3px solid transparent;
@@ -56,8 +59,13 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
   padding: 16px 34px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--paper); z-index: 5;
 }
-.top-name { font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
+.top-name { font-size: 17px; font-weight: 700; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .top-name:hover { color: var(--blue); }
+.back { width: 26px; height: 26px; flex: none; display: grid; place-items: center; font-size: 21px; line-height: 1; border-radius: 3px; color: var(--dim); }
+.back:hover { color: var(--blue); background: var(--hover); }
+/* 긴 이름은 «‹» 를 밀어내지도, 오른쪽 단추를 두 줄로 접지도 못한다 — 이름만 말줄임으로 깎인다. */
+.top > .line { flex: 1; min-width: 0; gap: 6px; flex-wrap: nowrap; }
+.top > button { flex: none; white-space: nowrap; }
 .body { padding: 26px 34px 90px; max-width: 1020px; }
 
 /* ---------------------------------------------------------------- 조각 */
@@ -178,6 +186,9 @@ details summary:hover { color: var(--ink); }
 .send textarea { min-height: 62px; }
 
 .notice { font-size: 13.5px; color: var(--red); }
+.guide-step { padding: 9px 0; border-bottom: 1px solid var(--line-soft); }
+.guide-step .name { font-weight: 700; font-size: 14px; }
+.guide-step .txt { margin-top: 3px; font-size: 13.5px; color: var(--dim); }
 .mat { display: flex; align-items: center; gap: 10px; padding: 7px 2px; border-bottom: 1px solid var(--line-soft); font-size: 14px; }
 .mat .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grid2 { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }

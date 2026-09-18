@@ -35,12 +35,22 @@ function itemsOf(list) {
 
 // ---------------------------------------------------------------- 시스템 프롬프트
 
-export function buildSystem({ prompt, prev, next, withFinalRule = true, withNoCount = true } = {}) {
+// crew 는 작가가 지어 이 호출에 건 에이전트들 [{ name, role, craft }].
+// 걸린 사람이 있으면 그들이 «누가 쓰는가»를 대신한다. 자리의 작법은 그대로 두고 그 밑에 각자의 작법을 잇는다.
+export function buildSystem({ prompt, prev, next, crew = [], withFinalRule = true, withNoCount = true } = {}) {
   const p = prompt || {};
+  const hands = (crew || []).filter((c) => c && (s(c.name).trim() || s(c.role).trim() || s(c.craft).trim()));
   const parts = [];
-  parts.push('■ 에이전트\n' + s(p.name) + ' — ' + s(p.role));
+  const head = hands.length
+    ? hands.map((c) => neutralize(s(c.name) + ' — ' + s(c.role))).join('\n')
+    : s(p.name) + ' — ' + s(p.role);
+  parts.push('■ 에이전트\n' + head + (hands.length > 1 ? '\n이 글은 위 사람들이 함께 쓴다.' : ''));
   if (prev || next) parts.push('■ 앞뒤\n앞: ' + (s(prev) || '없음') + ' / 뒤: ' + (s(next) || '없음'));
-  if (s(p.craft)) parts.push('■ 작법\n' + s(p.craft));
+  const craft = [
+    s(p.craft).trim(),
+    ...hands.filter((c) => s(c.craft).trim()).map((c) => '▶ ' + neutralize(s(c.name) + '\n' + s(c.craft))),
+  ].filter(Boolean).join('\n\n');
+  if (craft) parts.push('■ 작법\n' + craft);
   if (withFinalRule) parts.push('■ 확정본 규칙\n' + FINAL_RULE);
   if (withNoCount) parts.push('■ 쓰지 않는 말\n' + NO_COUNT);
   parts.push('■ 응답 형식\n' + RESPONSE_RULE);

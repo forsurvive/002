@@ -32,6 +32,7 @@ export function docCreate(p, fields = {}) {
     request: str(fields.request),
     refIds: Array.isArray(fields.refIds) ? fields.refIds.slice() : [],
     targetIds: Array.isArray(fields.targetIds) ? fields.targetIds.slice() : [],
+    agentIds: Array.isArray(fields.agentIds) ? fields.agentIds.slice() : [],
     versions: [],
     createdAt: now(),
     updatedAt: now(),
@@ -44,18 +45,24 @@ export function docCreate(p, fields = {}) {
 export function docWrite(p, id, next = {}, { keepHistory = true } = {}) {
   const d = findDoc(p, id);
   if (!d) return null;
+  // 이력에 판을 남길 만한 바뀜은 제목·본문뿐이다.
   const changed = (next.title != null && str(next.title) !== d.title) || (next.body != null && str(next.body) !== d.body);
   if (changed && keepHistory) d.versions.push({ at: d.updatedAt || d.createdAt, title: d.title, body: d.body });
+  // «언제 손댔는가»는 참조·대상·에이전트·요청사항·그릇까지 센다.
+  // 폰은 이 시각이 그대로면 문서를 다시 받아 오지 않는다 — 여기서 안 찍으면 폰 화면이 옛 값에 머문다.
+  const before = JSON.stringify([d.request, d.refIds, d.targetIds, d.agentIds, d.categoryId]);
   if (next.title != null) d.title = str(next.title).trim() || '제목 없음';
   if (next.body != null) d.body = str(next.body);
   if (next.request != null) d.request = str(next.request);
   if (next.refIds != null) d.refIds = next.refIds.slice();
   if (next.targetIds != null) d.targetIds = next.targetIds.slice();
+  if (next.agentIds != null) d.agentIds = next.agentIds.slice();
   if (next.categoryId !== undefined) {
     d.categoryId = next.categoryId && findCategory(p, next.categoryId) ? next.categoryId : null;
     d.orphanFrom = null; // 손으로 옮긴 순간 옛 그릇과의 연고가 끊긴다
   }
-  if (changed) d.updatedAt = now();
+  const touched = JSON.stringify([d.request, d.refIds, d.targetIds, d.agentIds, d.categoryId]) !== before;
+  if (changed || touched) d.updatedAt = now();
   return d;
 }
 
@@ -228,6 +235,55 @@ export function materialDelete(p, id) {
   return p.materials.splice(i, 1)[0];
 }
 
+// ---------------------------------------------------------------- 에이전트 (작가가 짓는다)
+//
+// 자리마다 붙어 있는 작법 프롬프트와는 다른 것이다. 이쪽은 «누가 쓰는가»이고,
+// 문서에 걸어 두면 그 문서를 짓고 고칠 때마다 그 사람이 쓴다.
+
+export function agentCreate(p, fields = {}) {
+  p.crew = p.crew || [];
+  const a = {
+    id: newId('g'),
+    name: str(fields.name).trim() || '이름 없음',
+    role: str(fields.role),
+    craft: str(fields.craft),
+    createdAt: now(),
+  };
+  p.crew.push(a);
+  return a;
+}
+
+export function findAgent(p, id) { return (p.crew || []).find((a) => a.id === id) || null; }
+
+export function agentWrite(p, id, next = {}) {
+  const a = findAgent(p, id);
+  if (!a) return null;
+  if (next.name != null) a.name = str(next.name).trim() || a.name;
+  if (next.role != null) a.role = str(next.role);
+  if (next.craft != null) a.craft = str(next.craft);
+  return a;
+}
+
+// 지운 사람은 문서에서도 떨어진다 — 걸어 둔 자리가 허공을 가리키지 않게.
+export function agentDelete(p, id) {
+  const i = (p.crew || []).findIndex((a) => a.id === id);
+  if (i < 0) return null;
+  const [a] = p.crew.splice(i, 1);
+  for (const d of p.docs) {
+    if (Array.isArray(d.agentIds) && d.agentIds.includes(id)) d.agentIds = d.agentIds.filter((x) => x !== id);
+  }
+  return a;
+}
+
+export function agentsByIds(p, ids = []) {
+  const out = [];
+  for (const id of ids) {
+    const a = findAgent(p, id);
+    if (a) out.push({ id: a.id, name: a.name, role: a.role, craft: a.craft });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- 휴지통
 
 export function trashRestore(p, trashId) {
@@ -237,6 +293,8 @@ export function trashRestore(p, trashId) {
   if (e.kind === 'doc') {
     const d = e.payload;
     if (d.categoryId && !findCategory(p, d.categoryId)) d.categoryId = null;
+    // 담겨 있는 동안 지워진 사람은 떨어뜨린다(허공을 가리키는 칩을 세우지 않는다).
+    if (Array.isArray(d.agentIds)) d.agentIds = d.agentIds.filter((id) => findAgent(p, id));
     p.docs.push(d);
   } else if (e.kind === 'category') {
     p.categories.push(e.payload);

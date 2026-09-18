@@ -68,7 +68,7 @@ export function materialsByIds(project, ids = []) {
  * refIds/targetIds 는 문서 id. finals 를 따로 넘기면 그것을 쓰고, 아니면 고른 참조 중 확정본을 옮긴다.
  */
 export async function callOnce({
-  pid, code, refIds = [], targetIds = [], request = '', taskExtra = '',
+  pid, code, refIds = [], targetIds = [], agentIds = [], request = '', taskExtra = '',
   materials = false, allFinals = false, talk = [], prev = '', next = '',
   signal = null, noCount = true, finalFirst = false,
 }) {
@@ -102,7 +102,9 @@ export async function callOnce({
   const refs = docsByIds(project, docRefIds).filter((d) => !taken.has(d.id));
 
   const task = [pr.task, taskExtra].filter((x) => String(x || '').trim()).join('\n');
-  const systemPrompt = buildSystem({ prompt: pr, prev, next, withFinalRule: finals.length > 0, withNoCount: noCount });
+  // 작가가 이 문서에 걸어 둔 사람들 — 있으면 이들이 «누가 쓰는가»를 대신한다.
+  const crew = model.agentsByIds(project, agentIds);
+  const systemPrompt = buildSystem({ prompt: pr, prev, next, crew, withFinalRule: finals.length > 0, withNoCount: noCount });
   const prompt = buildUser({
     project,
     // 자동 집필의 자료 단계는 자료를 통째로, 손으로 여는 자리는 «고른 자료»만 싣는다.
@@ -143,7 +145,7 @@ export async function runUpdate(pid, docId, ctx) {
 
   const r = await callWithRetry({
     pid, code: KIND_CODE[d.kind] || 'F-UPDATE',
-    refIds, targetIds, request: d.request || '',
+    refIds, targetIds, agentIds: (d.agentIds || []).slice(), request: d.request || '',
     finalFirst: d.kind === 'check',
     signal: ctx && ctx.signal,
   });
