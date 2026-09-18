@@ -1,49 +1,18 @@
 // 작업 실행기 — 좌측 메뉴 하단에 쌓이는 그 작업들.
-// 한 번에 여러 작업이 돌 수 있다. 자동 집필만 프로젝트당 하나로 묶인다.
-// 진행 표시는 «지금 하는 일의 이름» 한 줄뿐이다(막대·백분율 없음).
+// 한 번에 여러 작업이 돌 수 있다. 진행 표시는 «지금 하는 일 · 지난 시간» 한 줄뿐이다(막대·백분율 없음).
 
 import { newId } from './store.mjs';
 import * as state from './state.mjs';
 
-const live = new Map(); // jobId → { controller, pid, paused, wake }
+const live = new Map(); // jobId → { controller, pid }
 
-export const STATUS = { running: '진행 중', paused: '멈춤', done: '완료', stopped: '중지됨', failed: '실패' };
+export const STATUS = { running: '진행 중', done: '완료', stopped: '중지됨', failed: '실패' };
 
 function put(pid, jobId, patch) {
   state.update(pid, (p) => {
     const j = p.jobs.find((x) => x.id === jobId);
     if (j) Object.assign(j, patch);
   });
-}
-
-export function isAutoRunning(pid) {
-  const p = state.get(pid);
-  if (!p) return false;
-  return p.jobs.some((j) => j.kind === 'auto' && (j.status === 'running' || j.status === 'paused'));
-}
-
-// 멈춤 — 돌던 호출은 끝까지 두고, 다음 걸음 앞에서 선다.
-export function pause(pid, jobId) {
-  const h = live.get(jobId);
-  if (!h) return { ok: false, error: '도는 작업이 아닙니다' };
-  h.paused = true;
-  state.update(pid, (p) => {
-    const j = p.jobs.find((x) => x.id === jobId);
-    if (j && j.status === 'running') j.status = 'paused';
-  });
-  return { ok: true };
-}
-
-export function resume(pid, jobId) {
-  const h = live.get(jobId);
-  if (!h) return { ok: false, error: '도는 작업이 아닙니다' };
-  h.paused = false;
-  if (h.wake) { const w = h.wake; h.wake = null; w(); }
-  state.update(pid, (p) => {
-    const j = p.jobs.find((x) => x.id === jobId);
-    if (j && j.status === 'paused') { j.status = 'running'; j.stepAt = Date.now(); }
-  });
-  return { ok: true };
 }
 
 /**
@@ -53,7 +22,6 @@ export function resume(pid, jobId) {
 export function start(pid, { kind = 'call', title = '작업', targetId = '', run }) {
   const p = state.get(pid);
   if (!p) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
-  if (kind === 'auto' && isAutoRunning(pid)) return { ok: false, error: '이미 도는 중입니다' };
 
   const id = newId('j');
   const now = Date.now();
@@ -65,22 +33,13 @@ export function start(pid, { kind = 'call', title = '작업', targetId = '', run
   state.update(pid, (pr) => { pr.jobs.push(job); });
 
   const controller = new AbortController();
-  const handle = { controller, pid, paused: false, wake: null };
-  live.set(id, handle);
+  live.set(id, { controller, pid });
 
   const ctx = {
     pid,
     jobId: id,
     signal: controller.signal,
     step(name) { put(pid, id, { step: String(name || ''), stepAt: Date.now() }); },
-    // 걸음과 걸음 사이의 문지기 — 멈춰 두면 여기서 기다린다(돌던 호출 한 건은 끝까지 간다).
-    async gate() {
-      while (handle.paused && !controller.signal.aborted) {
-        await new Promise((resolve) => { handle.wake = resolve; });
-      }
-      return !controller.signal.aborted;
-    },
-    paused() { return handle.paused; },
     addDoc(docId) {
       state.update(pid, (pr) => {
         const j = pr.jobs.find((x) => x.id === id);
@@ -107,11 +66,7 @@ export function start(pid, { kind = 'call', title = '작업', targetId = '', run
 
 export function stop(pid, jobId) {
   const h = live.get(jobId);
-  if (h) {
-    h.controller.abort();
-    h.paused = false;
-    if (h.wake) { const w = h.wake; h.wake = null; w(); }
-  }
+  if (h) h.controller.abort();
   // 이미 끝난 작업의 «완료»·«실패»를 «중지됨»으로 뒤집지 않는다.
   state.update(pid, (p) => {
     const j = p.jobs.find((x) => x.id === jobId);
@@ -151,6 +106,7 @@ export function aborted(ctx) { return !!(ctx && ctx.signal && ctx.signal.aborted
 // 서버가 죽었다 살아나면 지난 실행의 «진행 중»은 거짓이다 — 중지됨으로 내린다.
 export function healStale(pid) {
   state.update(pid, (p) => {
+    // 'paused' 는 일시중지를 빼기 전에 저장된 옛 상태다 — 그대로 두면 화면이 «실패»라 쓴다.
     for (const j of p.jobs) if ((j.status === 'running' || j.status === 'paused') && !live.has(j.id)) { j.status = 'stopped'; j.endedAt = Date.now(); j.step = ''; }
   });
 }

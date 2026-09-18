@@ -68,7 +68,6 @@ export function blankProject(id, name) {
     threads: [],
     trash: [],
     jobs: [],
-    auto: { feedbackRounds: 1, skipProse: false, lastFinishedAt: 0 },
     model: '',        // 쓸 클로드 모델. 빈 값이면 실행기 기본값
     prompts: {},      // 작가가 고친 작법 프롬프트 (코드 → {name, role, task, craft})
     crew: [],         // 작가가 지은 에이전트 — 문서에 걸면 그 사람이 쓴다
@@ -100,7 +99,6 @@ export function loadProject(id) {
   return {
     ...base, ...p,
     spec: { ...base.spec, ...(p.spec || {}) },
-    auto: { ...base.auto, ...(p.auto || {}) },
     materials: p.materials || [],
     prompts: p.prompts || {},
     crew: p.crew || [],

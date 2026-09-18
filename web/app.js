@@ -13,10 +13,7 @@ const S = {
   fold: {},        // 접힌 구획
   editMsg: null,
   draft: [],       // 프로젝트 생성 창에서 모은 자료
-  autoSeen: {},    // 자동 집필 작업 상태(종료 알림용)
-  doneWaiting: false,
   typed: {},       // 아직 저장되지 않은 입력값 — 다시 그려도 사라지지 않게 여기 둔다
-  flag: {},        // 아직 저장되지 않은 켜짐/꺼짐(본문 집필 제외 같은 것)
   newCat: false,   // 카테고리 이름을 그 자리에서 받는 중
   peek: null,      // 지금 들여다보는 옛 판 { docId, i }
   saveOpen: null,  // 지금 열린 창이 «닫기 전에 저장할 것»을 여기 걸어 둔다
@@ -32,9 +29,9 @@ const BODY_HINT = '직접 입력하거나 아래의 요청사항을 작성해주
 // 처음 쓰는 사람을 위한 작업 순서 — 설정 탭에 접어 둔다.
 const GUIDE = [
   ['① 작품을 만든다', '첫 화면 오른쪽 위 [+]. 이름·형식과 자료만 있으면 됩니다(개요와 분량은 비워 두어도 됩니다). 만들고 나면 왼쪽 «에이전트 준비»가 돌며 자료를 한 번 읽어 «자료 분석»을 남깁니다.'],
-  ['② 자동 집필을 건다', '오른쪽 위 [자동 집필]. 기획과 세계관부터 회차 본문까지 차례로 돌며 문서를 쌓습니다. 왼쪽 작업 줄에서 [일시중지]·[이어 하기]·[중지]. 한 자리에 십 분 넘게 머물기도 하니 지난 시간을 보고 기다리십시오.'],
-  ['③ 손으로도 짓는다', '작업실 [+] → 문서. 이름만 짓고 [생성]을 누르면 요청사항과 참조를 보고 씁니다. 본문을 직접 치셔도 됩니다.'],
-  ['④ 참조를 건다', '문서 창의 «참조»에 자료와 다른 문서를 겁니다. 확정본(빨간 토글)을 켜 두면 그 문서가 «최우선 사실»로 실려 다른 글을 다스립니다.'],
+  ['② 문서를 짓는다', '작업실 [+] → 문서. 이름만 짓고 [생성]을 누르면 요청사항과 참조를 보고 씁니다. 본문을 직접 치셔도 됩니다. 한 호출이 십 분을 넘기기도 하니 작업 줄의 지난 시간을 보고 기다리십시오.'],
+  ['③ 참조를 건다', '문서 창의 «참조»에 자료와 다른 문서를 겁니다. 확정본(빨간 토글)을 켜 두면 그 문서가 «최우선 사실»로 실려 다른 글을 다스립니다.'],
+  ['④ 에이전트를 건다', '설정에서 이름·역할·작법·쓸 모델로 사람을 짓고, 문서 창의 «에이전트»에 걸어 둡니다. 그 문서를 짓고 고칠 때 그 사람이 씁니다.'],
   ['⑤ 고쳐 간다', '본문이나 요청사항을 고치고 [갱신]. 옛 판은 «이력»에 남아 언제든 되돌립니다.'],
   ['⑥ 검사하고 듣는다', '[+] → 모순 검사로 앞뒤를 맞추고, 합평회로 평을 듣습니다. 둘 다 «대상»에 볼 문서를 걸어 줍니다.'],
   ['⑦ 묻는다', '[+] → 논의 스레드. 답이 마음에 들면 [문서로 정리]를 누릅니다.'],
@@ -82,13 +79,6 @@ function inputOf(tag, id, attrs = {}) {
   });
 }
 const textbox = (id, placeholder, value, attrs) => inputOf('input', id, { type: 'text', placeholder, value, ...attrs });
-function flagVal(id, fallback) { return id in S.flag ? S.flag[id] : !!fallback; }
-function flagBox(id, fallback, label) {
-  const flip = () => { S.flag[id] = !flagVal(id, fallback); render(); };
-  return h('div', { class: 'line', style: 'cursor:pointer', onclick: flip },
-    h('button', { class: 'ck' + (flagVal(id, fallback) ? ' on' : '') }),
-    h('span', { text: label }));
-}
 const area = (id, placeholder, value, attrs) => inputOf('textarea', id, { placeholder, value, ...attrs });
 const stop = (e) => { e.stopPropagation(); };
 const when = (t) => new Date(t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -104,7 +94,6 @@ function since(t) {
 // 작업 한 줄이 말하는 것 — 그리기와 초침이 같은 글을 쓰도록 한 자리에 둔다.
 function jobLine(j) {
   if (j.status === 'running') return (j.step || '진행 중') + ' · ' + since(j.stepAt || j.startedAt);
-  if (j.status === 'paused') return '멈춤' + (j.step ? ' · ' + j.step : '');
   if (j.status === 'done') return '완료';
   if (j.status === 'stopped') return '중지됨';
   return j.error ? '실패 — ' + j.error.slice(0, 80) : '실패';
@@ -139,32 +128,7 @@ async function pull(force) {
   const sig = JSON.stringify([S.pid, S.projects, S.project]);
   if (!force && sig === S.last) return;
   S.last = sig;
-  checkAutoDone();
   render();
-}
-
-// 알림은 자동 집필 한 번에 한 번만 — 그 사이 창을 닫아 두었어도 다음에 열 때 뜬다.
-function seenDone(id) {
-  try { return (localStorage.getItem('se2-done') || '').split(',').includes(id); } catch { return false; }
-}
-function markDone(id) {
-  try {
-    const list = (localStorage.getItem('se2-done') || '').split(',').filter(Boolean);
-    list.push(id);
-    localStorage.setItem('se2-done', list.slice(-50).join(','));
-  } catch { /* 저장소를 못 써도 알림은 뜬다 */ }
-}
-
-function checkAutoDone() {
-  const p = S.project;
-  if (!p) return;
-  for (const j of p.jobs || []) {
-    if (j.kind !== 'auto') continue;
-    S.autoSeen[j.id] = j.status;
-    if (j.status !== 'done' || seenDone(j.id)) continue;
-    markDone(j.id);
-    if (S.open) S.doneWaiting = true; else S.open = { type: 'done' };
-  }
 }
 
 // ---------------------------------------------------------------- 그리기
@@ -223,8 +187,6 @@ function goHome() { S.pid = null; S.project = null; S.tab = '작업실'; pull(tr
 
 function app() {
   const p = S.project;
-  const running = (p.jobs || []).filter((j) => j.status === 'running');
-  const autoRunning = running.some((j) => j.kind === 'auto');
   return h('div', { class: 'shell' },
     h('div', { class: 'side' },
       h('div', { class: 'side-top' }, h('button', { class: 'side-title', text: 'STORY ENGINE', onclick: goHome })),
@@ -239,26 +201,16 @@ function app() {
       h('div', { class: 'top' },
         h('div', { class: 'line' },
           h('button', { class: 'back', text: '‹', title: '작품 목록', onclick: goHome }),
-          h('button', { class: 'top-name', text: p.name, onclick: goHome })),
-        autoRunning
-          ? h('button', { class: 'btn-red', text: '중지', onclick: () => api('job.stop', { id: running.find((j) => j.kind === 'auto').id }) })
-          : h('button', { class: 'btn', text: '자동 집필', onclick: () => { S.open = { type: 'auto' }; render(); } })),
+          h('button', { class: 'top-name', text: p.name, onclick: goHome }))),
       h('div', { class: 'body' }, S.tab === '작업실' ? workshop() : S.tab === '설정' ? settings() : trash())));
 }
 
 function jobRow(j) {
-  const live = j.status === 'running' || j.status === 'paused';
   return h('div', { class: 'job' },
     h('div', { class: 'job-name', text: j.title }),
     h('div', { class: 'job-step' + (j.status === 'failed' ? ' fail' : ''), id: 'jstep-' + j.id, text: jobLine(j) }),
     h('div', { class: 'job-acts' },
-      j.kind === 'auto' && live
-        ? h('button', {
-          text: j.status === 'paused' ? '이어 하기' : '일시중지',
-          onclick: () => api(j.status === 'paused' ? 'job.resume' : 'job.pause', { id: j.id }),
-        })
-        : null,
-      live ? h('button', { text: '중지', onclick: () => api('job.stop', { id: j.id }) }) : null,
+      j.status === 'running' ? h('button', { text: '중지', onclick: () => api('job.stop', { id: j.id }) }) : null,
       h('button', { text: '삭제', onclick: () => api('job.remove', { id: j.id }) })));
 }
 
@@ -429,18 +381,18 @@ function settings() {
       (p.crew || []).map((a) => h('div', { class: 'mat' },
         h('div', { class: 'name', text: a.name }),
         h('div', { class: 'when', text: a.role }),
+        a.model ? h('span', { class: 'mark', text: a.model }) : null,
         h('button', { class: 'btn-text', text: '고치기', onclick: () => openAgent(a.id) }),
         h('button', { class: 'btn-text red', text: '삭제', onclick: () => api('agent.delete', { ids: [a.id] }) }))),
-      h('div', { style: 'margin-top:8px' },
-        h('button', { class: 'btn-line', text: '추가', onclick: () => openAgent(null) }))),
+      h('div', { class: 'line', style: 'margin-top:8px' },
+        h('button', { class: 'btn-line', text: '추가', onclick: () => openAgent(null) }),
+        // 준비가 어긋났거나 끊겼을 때만 선다 — 누르면 종류 판정부터 자료 분석까지 다시 돈다.
+        p.prepared || (p.jobs || []).some((j) => j.kind === 'agents' && j.status === 'running')
+          ? null
+          : h('button', { class: 'btn-line', text: '에이전트 준비 다시', onclick: () => api('project.prepare') }))),
     h('div', null,
       h('div', { class: 'lab', text: '모델' }),
-      h('div', { class: 'line' }, (p.models || ['']).map((m) => h('div', {
-        class: 'line', style: 'gap:6px;cursor:pointer',
-        onclick: () => api('project.spec', { model: m }),
-      },
-      h('button', { class: 'ck' + ((p.model || '') === m ? ' on' : '') }),
-      h('span', { text: m || '기본값' }))))),
+      modelRow(p.models, p.model, (m) => api('project.spec', { model: m }), '기본값')),
     (p.prompts || []).length ? h('details', { open: S.fold['prompts'] ? 'open' : null },
       h('summary', { text: '작법 프롬프트', onclick: () => { S.fold['prompts'] = !S.fold['prompts']; } }),
       (p.prompts || []).map((pr) => h('div', {
@@ -456,11 +408,25 @@ function settings() {
       })));
 }
 
-function openAgent(id) { S.open = { type: 'agent', id }; clearTyped('ag-name', 'ag-role', 'ag-craft'); render(); }
+function openAgent(id) { S.open = { type: 'agent', id, model: null }; clearTyped('ag-name', 'ag-role', 'ag-craft'); render(); }
+
+// 쓸 모델 고르기 — 하나만 켜지는 네모. 프로젝트에도, 사람마다에도 같은 꼴로 쓴다.
+// 누름을 click 이 아니라 mousedown 으로 받는다: 바로 위 칸에 글을 치던 중이면 click 이 오기 전에
+// blur → 저장 → 다시 그리기가 지나가며 이 네모가 갈려 버려 첫 누름이 먹히지 않는다.
+function modelRow(list, cur, pick, firstLabel) {
+  return h('div', { class: 'line' }, (list || ['']).map((m) => h('div', {
+    class: 'line', style: 'gap:6px;cursor:pointer',
+    onmousedown: () => pick(m),
+  },
+  h('button', { class: 'ck' + ((cur || '') === m ? ' on' : '') }),
+  h('span', { text: m || firstLabel }))));
+}
 
 // 작가가 짓는 에이전트 — 이름·역할·작법 셋. 새로 지을 때만 단추가 있고, 고칠 때는 치는 대로 들어간다.
 function agentPanel(close) {
-  const a = S.open.id ? (S.project.crew || []).find((x) => x.id === S.open.id) : null;
+  const p = S.project;
+  if (!p) return h('div', { class: 'panel narrow' }, h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '…' }), h('button', { class: 'x', text: '×', onclick: close })));
+  const a = S.open.id ? (p.crew || []).find((x) => x.id === S.open.id) : null;
   const making = !S.open.id;
   const save = async () => {
     if (S.redrawing || making || !a) return;
@@ -468,7 +434,8 @@ function agentPanel(close) {
     const body = { id: a.id };
     let any = false;
     for (const [id, key] of [['ag-name', 'name'], ['ag-role', 'role'], ['ag-craft', 'craft']]) {
-      if (id in S.typed) { body[key] = $(id).value; any = true; }
+      const n = $(id);
+      if (n && id in S.typed) { body[key] = n.value; any = true; }
     }
     clearTyped('ag-name', 'ag-role', 'ag-craft');
     if (!any) return;
@@ -484,11 +451,16 @@ function agentPanel(close) {
     h('div', { class: 'panel-body' },
       h('div', null, h('div', { class: 'lab', text: '이름' }), textbox('ag-name', '이름', a ? a.name : '', { onblur: save })),
       h('div', null, h('div', { class: 'lab', text: '역할' }), textbox('ag-role', '역할', a ? a.role : '', { onblur: save })),
+      h('div', null,
+        h('div', { class: 'lab', text: '모델' }),
+        modelRow(p.models, making ? (S.open.model || '') : (a.model || ''),
+          (m) => { if (making) { S.open.model = m; render(); } else api('agent.write', { id: a.id, model: m }); },
+          '작품을 따름')),
       h('div', null, h('div', { class: 'lab', text: '작법' }), area('ag-craft', '작법', a ? a.craft : '', { class: 'body-edit', onblur: save })),
       making ? h('div', null, h('button', {
         class: 'btn', text: '만들기',
         onclick: async () => {
-          const body = { name: $('ag-name').value, role: $('ag-role').value, craft: $('ag-craft').value };
+          const body = { name: $('ag-name').value, role: $('ag-role').value, craft: $('ag-craft').value, model: S.open.model || '' };
           if (!String(body.name).trim()) return;
           clearTyped('ag-name', 'ag-role', 'ag-craft');
           await api('agent.create', body);
@@ -576,7 +548,7 @@ function trash() {
 // ---------------------------------------------------------------- 1겹 창
 
 // 겹창이 쓰는 입력 열쇠 — 닫을 때 이것만 지운다(작업실·설정에 치던 글은 그대로 둔다).
-const LAYER_KEYS = ['d-title', 'd-body', 'd-req', 't-say', 'nd-name', 'a-rounds',
+const LAYER_KEYS = ['d-title', 'd-body', 'd-req', 't-say', 'nd-name',
   'n-name', 'n-form', 'n-outline', 'n-length', 'n-standard', 'n-request', 'n-mat',
   'pr-name', 'pr-role', 'pr-task', 'pr-craft',
   'ag-name', 'ag-role', 'ag-craft'];
@@ -586,13 +558,11 @@ function closeLayer() {
   // (창이 사라지며 나는 blur 에 기대면 창 바깥을 누른 때와 Esc 를 누른 때가 갈린다.)
   const save = S.saveOpen;
   if (save) { try { save(); } catch { /* 저장이 미끄러져도 창은 닫는다 */ } }
-  S.open = S.doneWaiting ? { type: 'done' } : null;
-  S.doneWaiting = false;
+  S.open = null;
   S.editMsg = null;
   S.peek = null;
   clearTyped(...LAYER_KEYS);
   for (const k of Object.keys(S.typed)) if (k.startsWith('m-edit-')) delete S.typed[k];
-  S.flag = {};
   render();
 }
 
@@ -603,10 +573,8 @@ function layerOne() {
     : t === 'thread' ? threadPanel(close)
       : t === 'newproject' ? newProjectPanel(close)
         : t === 'newdoc' ? newDocPanel(close)
-            : t === 'auto' ? autoPanel(close)
-              : t === 'prompt' ? promptPanel(close)
-                : t === 'agent' ? agentPanel(close)
-                  : donePanel(close);
+            : t === 'prompt' ? promptPanel(close)
+              : agentPanel(close);
   return h('div', { class: 'layer', onclick: (e) => { if (e.target.classList.contains('layer')) close(); } }, panel);
 }
 
@@ -816,32 +784,6 @@ function newDocPanel(close) {
           const r = await api('doc.create', { title: name.replace(/\.[^.]+$/, ''), body: text });
           if (r.ok) { S.open = { type: 'doc', id: r.id }; render(); }
         }))));
-}
-
-function autoPanel(close) {
-  const p = S.project;
-  const ready = p.name && p.spec.form && p.materials.length;
-  return h('div', { class: 'panel narrow' },
-    h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '자동 집필' }), h('button', { class: 'x', text: '×', onclick: close })),
-    h('div', { class: 'panel-body' },
-      h('div', null, h('div', { class: 'lab', text: '피드백 횟수' }),
-        textbox('a-rounds', '피드백 횟수', String(p.auto.feedbackRounds || 1))),
-      flagBox('a-skip', p.auto.skipProse, '본문 집필 제외'),
-      ready ? null : h('div', { class: 'notice', text: '작품 규격과 자료 필요' }),
-      h('button', {
-        class: 'btn', text: '시작', disabled: !ready,
-        onclick: async () => {
-          const r = await api('auto.start', { feedbackRounds: Number($('a-rounds').value) || 1, skipProse: flagVal('a-skip', p.auto.skipProse) });
-          if (r.ok) close();
-          else { S.open = { type: 'auto', err: r.error }; render(); }
-        },
-      }),
-      S.open.err ? h('div', { class: 'notice', text: S.open.err }) : null));
-}
-
-function donePanel(close) {
-  return h('div', { class: 'panel narrow' },
-    h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '자동 집필 종료' }), h('button', { class: 'x', text: '×', onclick: close })));
 }
 
 // ---------------------------------------------------------------- 2겹 창

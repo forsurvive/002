@@ -1,12 +1,14 @@
 // 비소설 대응 — 프로젝트 전용 에이전트를 즉석으로 짓는다(기획서 중요사항 하나).
 // **프로젝트를 만든 직후** 그 프로젝트가 어떤 글을 쓰려는지 판단하고, 비소설이면 자리마다 프롬프트를 새로 짓는다.
-// 소설이면 아무것도 만들지 않고 내장 세트를 쓴다. 이미 지어 둔 자리는 다시 짓지 않는다(자동 집필이 다시 불러도 건너뛴다).
+// 소설이면 아무것도 만들지 않고 내장 세트를 쓴다. 이미 지어 둔 자리는 다시 짓지 않는다.
+// 프롬프트를 다 지으면 이어서 자료를 한 번 읽어 «자료 분석» 문서를 남긴다.
 
-import { BUILTIN, AGENT_SLOTS, SLOT_DUTY, PERSPECTIVES, NEIGHBORS } from './prompts.mjs';
+import { BUILTIN, AGENT_SLOTS, SLOT_DUTY, PERSPECTIVES } from './prompts.mjs';
 import { buildSystem, buildUser, cleanResponse } from './assemble.mjs';
 import { runClaudeCall } from './call.mjs';
-import { promptFor } from './engine.mjs';
+import { promptFor, callWithRetry } from './engine.mjs';
 import * as state from './state.mjs';
+import * as model from './model.mjs';
 
 export const CRAFT_MIN = 2000; // 기획서가 못 박은 하한. 위쪽 상한은 두지 않는다.
 
@@ -124,22 +126,9 @@ async function prepareAgentsInner(pid, ctx, project) {
     const cur = state.get(pid).agents || {};
     if (cur[code] && cur[code].craft) continue; // 이미 지은 자리는 건너뛴다
 
-    const pair = NEIGHBORS[code] || ['', ''];
-    const prev = pair[0];
-    const next = pair[1];
-    const sideOf = (c) => {
-      if (!c) return '없음';
-      const made = (state.get(pid).agents || {})[c];
-      const duty = SLOT_DUTY[c] || '';
-      // 아직 짓지 않은 자리에 소설용 이름을 실으면 «이 프로젝트만의 에이전트»가 아니게 된다.
-      const who = made && made.name ? made.name + (made.role ? ' — ' + made.role : '') : '(아직 짓지 않았다)';
-      return c + ' ' + who + (duty ? '\n    하는 일: ' + duty : '');
-    };
     const extra = [
       '이 프로젝트가 쓰려는 글의 종류: ' + kindName,
       '지금 만들 자리: ' + code + ' — ' + (SLOT_DUTY[code] || ''),
-      '앞자리: ' + sideOf(prev),
-      '뒷자리: ' + sideOf(next),
       '이 글의 종류에 맞는 실제 작법을 써라. 소설 작법을 그대로 옮기지 마라.',
       '작법 본문은 최소 ' + CRAFT_MIN + '자 이상이어야 한다. 넉넉히 써라.',
     ].join('\n');
@@ -164,4 +153,28 @@ async function prepareAgentsInner(pid, ctx, project) {
 export function perspectivesOf(project) {
   const v = project && project.agents && project.agents.__views;
   return Array.isArray(v) && v.length === PERSPECTIVES.length ? v : PERSPECTIVES;
+}
+
+// ---------------------------------------------------------------- 자료 분석
+//
+// 프로젝트를 만들고 에이전트가 준비되면, 이어서 자료를 한 번 읽어 «자료 분석» 문서를 남긴다.
+// 「에이전트 준비」 작업의 끝에 붙는다 — 작가가 따로 누를 것이 없다.
+
+export const STUDY_TITLE = '자료 분석';
+
+export async function runStudy(pid, ctx) {
+  const project = state.get(pid);
+  if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
+  if (!(project.materials || []).length) return { ok: true, skipped: true };
+  if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
+  if (ctx) ctx.step(STUDY_TITLE);
+
+  const r = await callWithRetry({ pid, code: 'S02', materials: true, allFinals: true, signal: ctx && ctx.signal });
+  if (!r.ok) return r;
+  if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
+
+  let docId = null;
+  state.update(pid, (p) => { docId = model.docCreate(p, { title: STUDY_TITLE, body: r.text }).id; });
+  if (ctx) { ctx.addDoc(docId); ctx.step(''); }
+  return { ok: true, docId };
 }

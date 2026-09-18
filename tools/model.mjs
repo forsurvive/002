@@ -247,6 +247,7 @@ export function agentCreate(p, fields = {}) {
     name: str(fields.name).trim() || '이름 없음',
     role: str(fields.role),
     craft: str(fields.craft),
+    model: str(fields.model),   // 빈 값이면 프로젝트에 정해 둔 모델을 따른다
     createdAt: now(),
   };
   p.crew.push(a);
@@ -261,6 +262,7 @@ export function agentWrite(p, id, next = {}) {
   if (next.name != null) a.name = str(next.name).trim() || a.name;
   if (next.role != null) a.role = str(next.role);
   if (next.craft != null) a.craft = str(next.craft);
+  if (next.model != null) a.model = str(next.model);
   return a;
 }
 
@@ -279,7 +281,7 @@ export function agentsByIds(p, ids = []) {
   const out = [];
   for (const id of ids) {
     const a = findAgent(p, id);
-    if (a) out.push({ id: a.id, name: a.name, role: a.role, craft: a.craft });
+    if (a) out.push({ id: a.id, name: a.name, role: a.role, craft: a.craft, model: a.model || '' });
   }
   return out;
 }

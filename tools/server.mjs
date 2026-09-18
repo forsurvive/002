@@ -12,8 +12,7 @@ import * as state from './state.mjs';
 import * as model from './model.mjs';
 import * as jobs from './jobs.mjs';
 import * as engine from './engine.mjs';
-import { prepareAgents, agentsReady } from './agents.mjs';
-import { runAuto, canStart, runStudy } from './auto.mjs';
+import { prepareAgents, agentsReady, runStudy, STUDY_TITLE } from './agents.mjs';
 import { killAllCalls, MODELS } from './call.mjs';
 import { EDITABLE_CODES } from './prompts.mjs';
 
@@ -24,6 +23,12 @@ const PORT = Number(process.env.SE2_PORT || 8801);
 const ok = (extra = {}) => ({ ok: true, ...extra });
 const bad = (error) => ({ ok: false, error: String(error) });
 const arr = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
+// 실행기가 아는 이름만 받는다. 모르는 것이 오면 지금 값을 지킨다.
+const pickModel = (v, fallback) => (MODELS.includes(String(v || '')) ? String(v || '') : fallback);
+
+// 준비가 온전히 끝났는가 — 프롬프트가 다 서 있고, 자료가 있다면 «자료 분석»까지 남았는가.
+// 둘 중 하나라도 비면 화면이 [에이전트 준비 다시] 를 세운다.
+const prepared = (p) => agentsReady(p) && (!(p.materials || []).length || p.docs.some((d) => d.title === STUDY_TITLE));
 
 // 프로젝트를 만든 직후 그 프로젝트 전용 에이전트를 짓는다(소설이면 판정만 남기고 끝난다).
 function startAgentPrep(pid) {
@@ -84,6 +89,17 @@ const OPS = {
     if (p.prompts) delete p.prompts[b.code];
   }),
 
+  // 판정이 어긋났거나 중지·재시작으로 준비가 끊긴 프로젝트를 구한다.
+  // 자동 집필을 빼기 전에는 «자동 집필 시작»이 같은 문을 한 번 더 지났다 — 그 되돌리기를 여기로 옮겼다.
+  'project.prepare': (b) => {
+    const p = state.get(b.pid);
+    if (!p) return bad('프로젝트를 찾을 수 없습니다');
+    if (jobs.isKindRunning(b.pid, 'agents')) return bad('이미 도는 중입니다');
+    if (prepared(p)) return bad('이미 준비되어 있습니다');
+    startAgentPrep(b.pid);
+    return ok();
+  },
+
   'project.delete': (b) => {
     jobs.stopProject(b.pid);
     return state.remove(b.pid) ? ok() : bad('프로젝트를 찾을 수 없습니다');
@@ -94,12 +110,16 @@ const OPS = {
   'material.delete': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.materialDelete(p, id); }),
 
   // ---------------- 에이전트 (작가가 짓는다)
+  // 사람마다 쓸 모델을 따로 둘 수 있다 — 빈 값이면 프로젝트에 정해 둔 것을 따른다.
   'agent.create': (b) => {
     let id = null;
-    const r = state.update(b.pid, (p) => { id = model.agentCreate(p, b).id; });
+    const r = state.update(b.pid, (p) => { id = model.agentCreate(p, { ...b, model: pickModel(b.model, '') }).id; });
     return r.ok === false ? r : ok({ id });
   },
-  'agent.write': (b) => state.update(b.pid, (p) => { model.agentWrite(p, b.id, b); }),
+  'agent.write': (b) => state.update(b.pid, (p) => {
+    const cur = model.findAgent(p, b.id);
+    model.agentWrite(p, b.id, { ...b, model: b.model == null ? undefined : pickModel(b.model, cur ? cur.model : '') });
+  }),
   'agent.delete': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.agentDelete(p, id); }),
 
   // ---------------- 문서 · 모순 검사 · 합평회
@@ -186,23 +206,7 @@ const OPS = {
 
   // ---------------- 작업
   'job.stop': (b) => jobs.stop(b.pid, b.id),
-  'job.pause': (b) => jobs.pause(b.pid, b.id),
-  'job.resume': (b) => jobs.resume(b.pid, b.id),
   'job.remove': (b) => jobs.remove(b.pid, b.id),
-
-  // ---------------- 자동 집필
-  'auto.start': (b) => {
-    const p = state.get(b.pid);
-    if (!p) return bad('프로젝트를 찾을 수 없습니다');
-    const gate = canStart(p);
-    if (!gate.ok) return gate;
-    if (jobs.isAutoRunning(b.pid)) return bad('이미 도는 중입니다');
-    state.update(b.pid, (pr) => {
-      pr.auto.feedbackRounds = Math.min(3, Math.max(1, Number(b.feedbackRounds) || 1));
-      pr.auto.skipProse = !!b.skipProse;
-    });
-    return jobs.start(b.pid, { kind: 'auto', title: '자동 집필', run: (ctx) => runAuto(b.pid, ctx) });
-  },
 };
 
 export const OP_NAMES = Object.keys(OPS);
@@ -216,7 +220,7 @@ function stateOf(pid) {
     id: p.id, name: p.name, spec: p.spec, standard: p.standard, request: p.request,
     materials: (p.materials || []).map((m) => ({ id: m.id, name: m.name, chars: String(m.text || '').length })),
     categories: model.categoriesView(p),
-    crew: (p.crew || []).map((a) => ({ id: a.id, name: a.name, role: a.role, craft: a.craft })),
+    crew: (p.crew || []).map((a) => ({ id: a.id, name: a.name, role: a.role, craft: a.craft, model: a.model || '' })),
     docs: p.docs.map((d) => ({
       id: d.id, kind: d.kind, title: d.title, body: d.body, isFinal: d.isFinal,
       categoryId: d.categoryId, request: d.request, refIds: d.refIds, targetIds: d.targetIds,
@@ -230,7 +234,6 @@ function stateOf(pid) {
     })),
     trash: p.trash.map((e) => ({ id: e.id, at: e.at, kind: e.kind, from: e.from, title: e.title })),
     jobs: p.jobs,
-    auto: p.auto,
     model: p.model || '',
     models: MODELS,
     prompts: EDITABLE_CODES.map((code) => ({
@@ -239,6 +242,8 @@ function stateOf(pid) {
       edited: !!(p.prompts && p.prompts[code]),
     })),
     agentKind: (p.agents && p.agents.__kind) || '',
+    // 준비가 끝났는가 — 끝나지 않았으면 화면이 «다시» 단추를 세운다.
+    prepared: prepared(p),
   };
 }
 

@@ -1,7 +1,7 @@
 // 시험 — SE2_MOCK=1 node tools/test.mjs
-// 순수 로직 + 실제 서버(같은 프로세스에서 띄운다) + 자동 집필 완주 + 화면-서버 배선 맞춤.
+// 순수 로직 + 실제 서버(같은 프로세스에서 띄운다) + 화면-서버 배선 맞춤.
 
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +27,6 @@ const store = await import('./store.mjs');
 const asm = await import('./assemble.mjs');
 const agents = await import('./agents.mjs');
 const prompts = await import('./prompts.mjs');
-const auto = await import('./auto.mjs');
 
 // ---------------------------------------------------------------- 순수 로직
 
@@ -316,37 +315,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   p = (await stateOf(pid)).project;
   ok('복원된다', p.docs.some((d) => d.id === docId));
 
-  // 자동 집필 완주 (분량 3화 → 회차 수 확인 호출 없이 돈다)
-  r = await post('auto.start', { pid, feedbackRounds: 1, skipProse: false });
-  ok('자동 집필 시작', r.ok);
-  const again = await post('auto.start', { pid });
-  ok('둘은 못 돈다', !again.ok);
-  p = await settle(pid, 60000);
-  const autoJob = p.jobs.find((j) => j.kind === 'auto');
-  eq('완주', autoJob.status, 'done');
-
-  const titles = p.docs.map((d) => d.title);
-  for (const t of ['자료 분석', '세계관', '서사 재료', '기획 선정', '세계관 재작성', '인물 풀', '대략 플롯', '주요 인물 선정', '인물 설계', '상세 플롯', '회차 계획', '모순 검사', '자동 집필 합본']) {
-    ok('산출물 «' + t + '»', titles.includes(t));
-  }
-  eq('관점마다 기획 한 편', titles.filter((t) => t.startsWith('기획 — ')).length, 8);
-  eq('회차 본문 셋', titles.filter((t) => /^\d+화$/.test(t)).length, 3);
-  eq('회차 집필 계획 셋', titles.filter((t) => /^\d+화 집필 계획$/.test(t)).length, 3);
-  eq('회차 집필 계획 세부 셋', titles.filter((t) => /^\d+화 집필 계획 세부$/.test(t)).length, 3);
-
-  const finals = p.docs.filter((d) => d.isFinal);
-  eq('자동이 켠 확정본은 회차 계획 재작성 하나', finals.filter((d) => d.title === '회차 계획 재작성').length, 1);
-  const autoCat = p.categories.find((c) => c.name === '자동 실행');
-  ok('자동 실행 카테고리', !!autoCat);
-  ok('합본이 그 안에 있다', autoCat.docIds.includes(p.docs.find((d) => d.title === '자동 집필 합본').id));
-  const bundle = p.docs.find((d) => d.title === '자동 집필 합본');
-  ok('합본에 회차 본문이 담긴다', bundle.body.includes('# 1화'));
-  ok('합본에 모순 검사가 담긴다', bundle.body.includes('# 모순 검사'));
-  eq('회차 수가 기록된다', p.auto.episodes, 3);
 }
 
 {
-  // 본문 집필 제외 + 회차 수 확인 호출 + 비소설 즉석 에이전트
+  // 비소설 즉석 에이전트
   KIND = '실무 안내서';
   const r = await post('project.create', {
     name: '안내서', spec: { outline: '개요', form: '안내 문서', length: '' },
@@ -360,35 +332,25 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('자리마다 프롬프트를 지었다', prompts.AGENT_SLOTS.filter((c) => raw.agents[c] && raw.agents[c].craft).length, prompts.AGENT_SLOTS.length);
   ok('지은 프롬프트는 2000자 이상', prompts.AGENT_SLOTS.every((c) => raw.agents[c].craft.length >= agents.CRAFT_MIN));
   ok('관점도 새로 지었다', (raw.agents.__views || [])[0] === '관점0');
-
-  await post('auto.start', { pid, feedbackRounds: 2, skipProse: true });
-  p = await settle(pid, 90000);
-  eq('완주', p.jobs.find((j) => j.kind === 'auto').status, 'done');
-  const titles = p.docs.map((d) => d.title);
-  eq('본문 제외면 본문 문서가 없다', titles.filter((t) => /^\d+화$/.test(t)).length, 0);
-  ok('집필 계획 세부는 그대로 쓴다', titles.some((t) => /^\d+화 집필 계획 세부$/.test(t)));
-  eq('회차 수는 물어서 정한다', p.auto.episodes, 3);
-  eq('피드백을 두 번 돌면 합평도 둘', titles.filter((t) => t === '상세 플롯 합평').length, 2);
-  eq('재작성도 둘', titles.filter((t) => t === '회차 계획 재작성').length, 2);
-  eq('그래도 확정본은 하나', p.docs.filter((d) => d.isFinal && d.title === '회차 계획 재작성').length, 1);
+  ok('비소설도 자료 분석은 남는다', p.docs.some((d) => d.title === '자료 분석'));
+  await post('project.delete', { pid });
+  KIND = '소설';
 }
 
 {
-  // 시작 검사와 중지
+  // 도는 작업 중지와 프로젝트 삭제
   const r = await post('project.create', {
     name: '멈춤 시험', spec: { outline: '개요', form: '소설', length: '2화' },
     materials: [{ name: '자료', text: '본문' }],
   });
   const pid = r.pid;
   await settle(pid);
-  await post('material.delete', { pid, ids: [(await stateOf(pid)).project.materials[0].id] });
-  const gate = await post('auto.start', { pid });
-  ok('자료가 없으면 시작하지 않는다', !gate.ok && gate.error === '작품 규격과 자료 필요');
-
-  await post('material.add', { pid, name: '자료', text: '본문' });
-  const started = await post('auto.start', { pid });
+  process.env.SE2_MOCK_DELAY_MS = '150';
+  const made = await post('doc.create', { pid, title: '중지할 문서' });
+  const started = await post('doc.update', { pid, id: made.id });
   await post('job.stop', { pid, id: started.jobId });
   const p = await settle(pid);
+  process.env.SE2_MOCK_DELAY_MS = '3';
   eq('중지됨', p.jobs.find((j) => j.id === started.jobId).status, 'stopped');
 
   const del = await post('project.delete', { pid });
@@ -434,15 +396,6 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const ans = th.messages.find((m) => m.text === '첫 답');
   eq('답의 부모는 물은 그 말', ans.parentId, q1.id);
   eq('보던 가지를 빼앗지 않는다', th.headId, other.id);
-}
-
-{
-  // 분량 읽기 — «N화» 가 여럿이면 지어내지 않는다
-  eq('«3화» 하나면 그대로', auto.specEpisodes({ spec: { length: '3화' } }), 3);
-  eq('«총 12화» 하나면 그대로', auto.specEpisodes({ spec: { length: '총 12화' } }), 12);
-  eq('«1화당 5천 자, 총 12화» 는 읽지 않는다', auto.specEpisodes({ spec: { length: '1화당 5천 자, 총 12화' } }), null);
-  eq('«장편» 은 읽지 않는다', auto.specEpisodes({ spec: { length: '장편' } }), null);
-  eq('빈 칸도 읽지 않는다', auto.specEpisodes({ spec: { length: '' } }), null);
 }
 
 {
@@ -500,50 +453,19 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
-  // 서버 — 에이전트를 짓는 중에 자동 집필을 걸면 기다렸다 이어 간다(두 벌로 짓지 않는다)
+  // 서버 — 프롬프트를 두 벌로 짓지 않는다
   process.env.SE2_MOCK_DELAY_MS = '60';
   KIND = '실무 안내서';
   let agentCalls = 0;
   globalThis.__SE2_MOCK_FN = (args) => { if (args.mockKey === 'F-AGENT') agentCalls++; return MOCK_FN(args); };
   const r = await post('project.create', { name: '겹침', spec: { outline: 'ㄱ', form: 'ㄴ', length: '2화' }, materials: [{ name: 'ㄷ', text: 'ㄹ' }] });
-  const started = await post('auto.start', { pid: r.pid });
-  ok('준비 중에도 시작을 받는다', started.ok);
   const p = await settle(r.pid, 120000);
   globalThis.__SE2_MOCK_FN = MOCK_FN;
   process.env.SE2_MOCK_DELAY_MS = '3';
-  eq('자동 집필이 완주한다', p.jobs.find((j) => j.kind === 'auto').status, 'done');
+  eq('준비 작업이 완료된다', p.jobs.find((j) => j.kind === 'agents').status, 'done');
   eq('자리 수만큼만 지었다(두 벌이 아니다)', agentCalls, prompts.AGENT_SLOTS.length);
   await post('project.delete', { pid: r.pid });
   KIND = '소설';
-}
-
-{
-  // 자동 집필이 남기는 것 — 합평은 합평회로, 모순 검사에는 대상이 적혀 있다
-  const r = await post('project.create', {
-    name: '자취 시험', spec: { outline: '개요', form: '소설', length: '2화' },
-    materials: [{ name: '자료', text: '본문' }],
-  });
-  const pid = r.pid;
-  await settle(pid);
-  let seenSys = '';
-  globalThis.__SE2_MOCK_FN = ({ mockKey, systemPrompt }) => {
-    if (mockKey === 'F-REVIEW' && !seenSys) seenSys = systemPrompt;
-    return MOCK_FN({ mockKey });
-  };
-  await post('auto.start', { pid, feedbackRounds: 1 });
-  const p = await settle(pid, 90000);
-  globalThis.__SE2_MOCK_FN = MOCK_FN;
-
-  const 합평 = p.docs.filter((d) => d.title === '상세 플롯 합평');
-  eq('합평은 합평회 레코드', 합평[0].kind, 'review');
-  ok('합평에 대상이 적혀 있다', 합평[0].targetIds.length > 0);
-  const 검사 = p.docs.find((d) => d.title === '모순 검사');
-  ok('모순 검사에 회차 계획과 회차 산출물이 대상으로 적혀 있다', 검사.targetIds.length >= 3);
-  const 계획 = p.docs.find((d) => d.title === '회차 계획 재작성');
-  ok('그 대상에 회차 계획이 들어 있다', 검사.targetIds.includes(계획.id));
-  ok('갱신이 빈 호출이 되지 않는다', 검사.targetIds.every((id) => p.docs.some((d) => d.id === id)));
-  ok('합평 호출의 앞뒤가 실제 이웃이다', seenSys.includes('사건 엮는이') && seenSys.includes('플롯 고쳐 쓰는이'), seenSys.split('\n').find((l) => l.startsWith('앞:')) || '');
-  await post('project.delete', { pid });
 }
 
 
@@ -589,14 +511,6 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
-  // 앞뒤는 실제 파이프라인의 이웃이다
-  eq('본문 뒤에 합평이 서지 않는다', prompts.NEIGHBORS.S18C[1], 'F-CONTRA');
-  eq('상세 플롯 뒤는 합평', prompts.NEIGHBORS.S12[1], 'F-REVIEW');
-  eq('합평 뒤는 재작성', prompts.NEIGHBORS['F-REVIEW'][1], 'S14');
-  ok('모든 자리에 이웃이 적혀 있다', prompts.AGENT_SLOTS.every((c) => prompts.NEIGHBORS[c]));
-}
-
-{
   // 자료 이름은 첫 줄에서 딴다
   eq('첫 줄이 이름이 된다', model.firstLineName('  등대 자료\n둘째 줄'), '등대 자료');
   eq('빈 글이면 기본 이름', model.firstLineName('   '), '붙여 넣은 글');
@@ -633,38 +547,11 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   await post('project.delete', { pid });
 }
 
-{
-  // 자동 집필을 두 번 돌리면 지난 확정본이 내려간다(옛 판이 새 판을 지배하지 않게)
-  const r = await post('project.create', { name: '두 번', spec: { outline: 'ㄱ', form: 'ㄴ', length: '1화' }, materials: [{ name: 'ㄷ', text: 'ㄹ' }] });
-  const pid = r.pid;
-  await settle(pid);
-  await post('auto.start', { pid, feedbackRounds: 1, skipProse: true });
-  let p = await settle(pid, 90000);
-  const firstFinal = p.docs.filter((x) => x.isFinal);
-  eq('첫 실행의 확정본은 하나', firstFinal.length, 1);
-
-  // 작가가 손으로 켠 확정본은 건드리지 않는다
-  const mine = await post('doc.create', { pid, title: '내가 켠 확정본' });
-  await post('doc.final', { pid, ids: [mine.id], on: true });
-
-  await post('auto.start', { pid, feedbackRounds: 1, skipProse: true });
-  p = await settle(pid, 90000);
-  const finals = p.docs.filter((x) => x.isFinal);
-  eq('지난 실행의 확정본은 내려간다', finals.filter((x) => x.title === '회차 계획 재작성').length, 1);
-  ok('작가가 켠 확정본은 그대로', finals.some((x) => x.id === mine.id));
-  eq('켜져 있는 확정본은 둘뿐', finals.length, 2);
-  await post('project.delete', { pid });
-}
-
 
 // ---------------------------------------------------------------- 새로 더한 것들
 
 {
   // ① 이름·형식·자료만 있으면 만들어진다 (개요는 비워도 된다)
-  ok('개요가 없어도 시작할 수 있다', auto.canStart({ name: '가', spec: { form: '소설' }, materials: [{}] }).ok);
-  ok('형식이 없으면 시작하지 않는다', !auto.canStart({ name: '가', spec: { outline: 'ㄱ', form: '' }, materials: [{}] }).ok);
-  ok('자료가 없으면 시작하지 않는다', !auto.canStart({ name: '가', spec: { form: '소설' }, materials: [] }).ok);
-
   const p = store.blankProject('p_sp', '규격');
   p.spec = { outline: '', form: '소설', length: '' };
   const blk = asm.specBlock(p);
@@ -741,62 +628,6 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('그 작업은 완료로 끝난다', p.jobs.find((j) => j.kind === 'agents').status, 'done');
   ok('작업에 단계 시각이 적힌다', typeof p.jobs[0].stepAt === 'number');
   await post('project.delete', { pid: r.pid });
-}
-
-{
-  // ⑥ 일시중지 — 멈추면 더 나아가지 않고, 이어 하면 완주한다
-  const r = await post('project.create', {
-    name: '멈춤 시험', spec: { form: '소설', length: '1화' },
-    materials: [{ name: '자료', text: '자료 본문' }],
-  });
-  const pid = r.pid;
-  await settle(pid, 60000);
-  process.env.SE2_MOCK_DELAY_MS = '120';
-  const started = await post('auto.start', { pid, feedbackRounds: 1, skipProse: true });
-  ok('자동 집필 시작', started.ok);
-
-  // 문서가 몇 편 쌓일 때까지 기다렸다 멈춘다
-  for (let i = 0; i < 80; i++) {
-    const st = (await stateOf(pid)).project;
-    if (st.docs.filter((d) => d.title !== '자료 분석').length >= 2) break;
-    await sleep(60);
-  }
-  await post('job.pause', { pid, id: started.jobId });
-  await sleep(400);
-  const atPause = (await stateOf(pid)).project;
-  eq('상태가 멈춤이 된다', atPause.jobs.find((j) => j.id === started.jobId).status, 'paused');
-  const n1 = atPause.docs.length;
-  await sleep(700);
-  const still = (await stateOf(pid)).project;
-  eq('멈춘 동안 문서가 늘지 않는다', still.docs.length, n1);
-  eq('멈춘 채로 있다', still.jobs.find((j) => j.id === started.jobId).status, 'paused');
-
-  await post('job.resume', { pid, id: started.jobId });
-  const done = await settle(pid, 120000);
-  process.env.SE2_MOCK_DELAY_MS = '3';
-  eq('이어 하면 완주한다', done.jobs.find((j) => j.id === started.jobId).status, 'done');
-  ok('멈춘 뒤에도 문서가 더 쌓였다', done.docs.length > n1);
-  await post('project.delete', { pid });
-}
-
-{
-  // ⑥ 멈춘 작업도 중지할 수 있다 (문지기에 갇히지 않는다)
-  const r = await post('project.create', {
-    name: '멈춤 뒤 중지', spec: { form: '소설', length: '1화' },
-    materials: [{ name: '자료', text: '자료 본문' }],
-  });
-  const pid = r.pid;
-  await settle(pid, 60000);
-  process.env.SE2_MOCK_DELAY_MS = '120';
-  const started = await post('auto.start', { pid, feedbackRounds: 1, skipProse: true });
-  await sleep(500);
-  await post('job.pause', { pid, id: started.jobId });
-  await sleep(300);
-  await post('job.stop', { pid, id: started.jobId });
-  const p = await settle(pid, 30000);
-  process.env.SE2_MOCK_DELAY_MS = '3';
-  eq('멈춘 작업도 중지된다', p.jobs.find((j) => j.id === started.jobId).status, 'stopped');
-  await post('project.delete', { pid });
 }
 
 // ---------------------------------------------------------------- 작가가 짓는 에이전트
@@ -882,8 +713,12 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   });
   const pid = r.pid;
   await settle(pid);
-  const made = await post('agent.create', { pid, name: '밤의 문장가', role: '어둠을 쓴다', craft: '짧은 문장만 쓴다' });
+  const made = await post('agent.create', { pid, name: '밤의 문장가', role: '어둠을 쓴다', craft: '짧은 문장만 쓴다', model: 'fable' });
   ok('에이전트가 지어진다', made.ok && made.id);
+  eq('지을 때 고른 모델이 붙는다', (await stateOf(pid)).project.crew[0].model, 'fable');
+  const junk = await post('agent.create', { pid, name: '엉터리 모델', model: '없는모델' });
+  eq('모르는 이름으로 지으면 빈 값', (await stateOf(pid)).project.crew.find((x) => x.id === junk.id).model, '');
+  await post('agent.delete', { pid, ids: [junk.id] });
   const dr = await post('doc.create', { pid, title: '걸린 문서' });
   await post('doc.write', { pid, id: dr.id, agentIds: [made.id] });
   let st = await stateOf(pid);
@@ -898,11 +733,122 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('걸린 사람이 시스템 프롬프트에 선다', sys.includes('밤의 문장가 — 어둠을 쓴다'));
   ok('그 사람의 작법이 실린다', sys.includes('▶ 밤의 문장가') && sys.includes('짧은 문장만 쓴다'));
 
+  // 사람마다 쓸 모델 — 걸린 사람이 정해 두었으면 그 모델로 부른다
+  const call = await import('./call.mjs');
+  let usedModel = 'ㄴ';
+  globalThis.__SE2_MOCK_FN = (args) => { usedModel = args.model === undefined ? '(안 넘어옴)' : args.model; return MOCK_FN(args); };
+  await post('project.spec', { pid, model: 'sonnet' });
+  await post('doc.update', { pid, id: dr.id });
+  await settle(pid);
+  eq('제 모델을 정해 둔 사람이 이긴다', usedModel, 'fable');
+
+  await post('agent.write', { pid, id: made.id, model: '' });
+  await post('doc.update', { pid, id: dr.id });
+  await settle(pid);
+  eq('아무도 정하지 않았으면 작품의 모델', usedModel, 'sonnet');
+
+  await post('agent.write', { pid, id: made.id, model: 'opus' });
+  st = await stateOf(pid);
+  eq('사람에게 모델이 붙는다', st.project.crew[0].model, 'opus');
+  await post('doc.update', { pid, id: dr.id });
+  await settle(pid);
+  eq('걸린 사람의 모델이 이긴다', usedModel, 'opus');
+
+  await post('agent.write', { pid, id: made.id, model: '없는모델' });
+  st = await stateOf(pid);
+  eq('모르는 이름은 받지 않는다', st.project.crew[0].model, 'opus');
+  await post('agent.write', { pid, id: made.id, model: '' });
+  st = await stateOf(pid);
+  eq('비우면 다시 작품을 따른다', st.project.crew[0].model, '');
+  await post('doc.update', { pid, id: dr.id });
+  await settle(pid);
+  eq('비운 뒤에는 작품의 모델', usedModel, 'sonnet');
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  ok('고를 수 있는 모델은 넷', call.MODELS.length === 4);
+
   await post('agent.delete', { pid, ids: [made.id] });
   st = await stateOf(pid);
   eq('지우면 목록이 빈다', (st.project.crew || []).length, 0);
   eq('걸려 있던 문서에서도 떨어진다', st.project.docs.find((d) => d.id === dr.id).agentIds.length, 0);
   await post('project.delete', { pid });
+}
+
+// ---------------------------------------------------------------- 자동 집필은 빠졌다 (사용자 지시)
+
+{
+  for (const gone of ['auto.start', 'job.pause', 'job.resume']) {
+    ok('서버에 «' + gone + '» 문이 없다', !OP_NAMES.includes(gone));
+  }
+  const app = readFileSync(join(ROOT, 'web', 'app.js'), 'utf8');
+  ok('화면에 자동 집필이 없다', !app.includes('자동 집필') && !app.includes("'auto'"));
+  ok('화면에 일시중지가 없다', !app.includes('일시중지') && !app.includes('이어 하기'));
+  ok('작업 줄에 «멈춤»이 없다', !app.includes("'멈춤'"));
+  ok('파이프라인 모듈이 없다', !existsSync(join(ROOT, 'tools', 'auto.mjs')));
+
+  // 고칠 수 있는 자리는 «프로그램이 실제로 부르는 여섯»뿐이다.
+  eq('고칠 수 있는 자리 여섯', prompts.EDITABLE_CODES.length, 6);
+  for (const c of prompts.EDITABLE_CODES) ok('그 자리의 내장 프롬프트가 있다: ' + c, !!prompts.BUILTIN[c]);
+  ok('제어 호출은 고치지 못한다', prompts.CONTROL_CODES.every((c) => !prompts.EDITABLE_CODES.includes(c)));
+  ok('즉석으로 짓는 자리도 셋뿐', prompts.AGENT_SLOTS.length === 3 && prompts.AGENT_SLOTS.every((c) => prompts.SLOT_DUTY[c]));
+  // 지난 파이프라인의 프롬프트는 자료 파일에 그대로 둔다(되살릴 날을 위해).
+  ok('자료 파일에는 옛 프롬프트가 남아 있다', !!prompts.BUILTIN.S18C && !!prompts.BUILTIN['F-COUNT']);
+}
+
+{
+  // 프로젝트를 만들면 여전히 «자료 분석» 한 편이 남는다(자동 집필과는 다른 일이다)
+  const r = await post('project.create', {
+    name: '분석만', spec: { form: '소설' },
+    materials: [{ name: '자료', text: '자료 본문' }],
+  });
+  const p = await settle(r.pid, 60000);
+  eq('준비 작업은 완료', p.jobs.find((j) => j.kind === 'agents').status, 'done');
+  eq('남는 문서는 자료 분석 하나', p.docs.length, 1);
+  eq('그 이름', p.docs[0].title, agents.STUDY_TITLE);
+  ok('작업이 그 문서를 제 것으로 적는다', p.jobs[0].docIds.includes(p.docs[0].id));
+  ok('준비가 끝났다고 알린다', p.prepared);
+  await post('project.delete', { pid: r.pid });
+}
+
+{
+  // 준비가 어긋나면 다시 걸 수 있다 — 자동 집필을 빼며 잃었던 되돌리기(되짚기에서 잡힘)
+  KIND = '실무 안내서';
+  globalThis.__SE2_MOCK_FN = (args) => (args.mockKey === 'F-KIND' ? '꼴이 어긋난 답' : MOCK_FN(args));
+  const r = await post('project.create', {
+    name: '판정 실패', spec: { form: '안내 문서' },
+    materials: [{ name: '자료', text: '자료 본문' }],
+  });
+  const pid = r.pid;
+  let p = await settle(pid, 60000);
+  eq('준비가 실패한다', p.jobs.find((j) => j.kind === 'agents').status, 'failed');
+  eq('그때는 문서가 없다', p.docs.length, 0);
+  ok('준비가 안 되었다고 알린다', !p.prepared);
+
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  const again = await post('project.prepare', { pid });
+  ok('다시 걸 수 있다', again.ok);
+  p = await settle(pid, 60000);
+  eq('이번에는 끝난다', p.jobs.filter((j) => j.kind === 'agents').pop().status, 'done');
+  ok('이제 준비되었다', p.prepared);
+  eq('«자료 분석»도 뒤늦게 생긴다', p.docs.filter((d) => d.title === agents.STUDY_TITLE).length, 1);
+  eq('종류도 적힌다', p.agentKind, '실무 안내서');
+
+  const busy = await post('project.prepare', { pid: 'p_없음' });
+  ok('없는 프로젝트는 거절', !busy.ok);
+  await post('project.delete', { pid });
+  KIND = '소설';
+}
+
+{
+  // 옛 판에서 «멈춤»으로 저장된 작업은 창을 껐다 켜면 «중지됨»으로 내려앉는다
+  const p = store.blankProject('p_pz', '옛 멈춤');
+  p.jobs.push({ id: 'j_old', kind: 'auto', title: '자동 집필', status: 'paused', step: '', startedAt: 1, endedAt: 0, docIds: [] });
+  store.saveProject(p);
+  const jobsMod = await import('./jobs.mjs');
+  const st3 = await import('./state.mjs');
+  st3.get('p_pz');
+  jobsMod.healStale('p_pz');
+  eq('멈춤도 중지됨으로 내려간다', st3.get('p_pz').jobs[0].status, 'stopped');
+  st3.remove('p_pz');
 }
 
 // ---------------------------------------------------------------- 화면-서버 배선
@@ -919,6 +865,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('집으로 가는 길이 둘', (app.match(/onclick: goHome/g) || []).length >= 2 && app.includes("text: '‹'"));
   ok('설정에 작업 순서 안내가 있다', app.includes('guideBlock()') && /GUIDE = \[/.test(app));
   ok('문서에 에이전트를 건다', /refLine\('에이전트'/.test(app) && app.includes("'agent'"));
+  ok('사람마다 모델을 고른다', /function modelRow\(/.test(app) && app.includes("'작품을 따름'"));
+  ok('그 누름은 mousedown 으로 받는다', /onmousedown: \(\) => pick\(m\)/.test(app));
+  ok('준비를 다시 걸 길이 있다', app.includes("'project.prepare'"));
   for (const op of used) ok('서버에 문이 있다: ' + op, OP_NAMES.includes(op));
   for (const m of app.matchAll(/\/api\/(state|download)/g)) ok('상태·내려받기 경로', !!m[1]);
   // 색은 :root 에 적힌 것만 쓴다 — 적·백·흑·파랑 네 갈래.

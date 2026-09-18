@@ -104,6 +104,9 @@ export async function callOnce({
   const task = [pr.task, taskExtra].filter((x) => String(x || '').trim()).join('\n');
   // 작가가 이 문서에 걸어 둔 사람들 — 있으면 이들이 «누가 쓰는가»를 대신한다.
   const crew = model.agentsByIds(project, agentIds);
+  // 쓸 모델은 «제 모델을 정해 둔 첫 사람»이 정한다. 아무도 정하지 않았으면 프로젝트의 것을 쓴다.
+  const picked = crew.find((c) => String(c.model || '').trim());
+  const useModel = picked ? picked.model : project.model;
   const systemPrompt = buildSystem({ prompt: pr, prev, next, crew, withFinalRule: finals.length > 0, withNoCount: noCount });
   const prompt = buildUser({
     project,
@@ -112,7 +115,7 @@ export async function callOnce({
     refs, finals, targets, talk, request, task, noCount,
   });
 
-  const r = await runClaudeCall({ systemPrompt, prompt, mockKey: code, signal, model: project.model });
+  const r = await runClaudeCall({ systemPrompt, prompt, mockKey: code, signal, model: useModel });
   if (!r.ok) return { ok: false, error: r.error };
   const text = cleanResponse(r.text);
   if (!text) return { ok: false, error: '빈 응답' };
