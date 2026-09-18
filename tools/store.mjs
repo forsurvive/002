@@ -69,6 +69,8 @@ export function blankProject(id, name) {
     trash: [],
     jobs: [],
     auto: { feedbackRounds: 1, skipProse: false, lastFinishedAt: 0 },
+    model: '',        // 쓸 클로드 모델. 빈 값이면 실행기 기본값
+    prompts: {},      // 작가가 고친 작법 프롬프트 (코드 → {name, role, task, craft})
     agents: null,
     createdAt: at,
     updatedAt: at,
@@ -99,6 +101,7 @@ export function loadProject(id) {
     spec: { ...base.spec, ...(p.spec || {}) },
     auto: { ...base.auto, ...(p.auto || {}) },
     materials: p.materials || [],
+    prompts: p.prompts || {},
     docs: p.docs || [],
     categories: p.categories || [],
     threads: p.threads || [],

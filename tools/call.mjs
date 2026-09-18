@@ -16,12 +16,16 @@ export const CALL_TIMEOUT_MS = Math.max(60000, Number(process.env.SE2_CALL_TIMEO
 
 const LIVE = new Set();
 
-export function buildCallArgs(systemPromptFile) {
+export const MODELS = ['', 'opus', 'sonnet', 'fable'];   // 빈 값은 «실행기 기본값»
+
+export function buildCallArgs(systemPromptFile, model) {
+  const m = String(model || '').trim();
   return [
     '-p',
     '--system-prompt-file', systemPromptFile,
     '--output-format', 'stream-json', '--verbose',
-    '--tools', '',
+    ...(m ? ['--model', m] : []),
+    '--tools', '',            // 값을 여럿 받는 깃발이라 반드시 맨 뒤에 둔다
   ];
 }
 
@@ -53,7 +57,7 @@ export function mockResponse({ mockKey, prompt, systemPrompt }) {
 }
 
 // 돌려주는 값: { ok, text, error, elapsedMs, usage }
-export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal } = {}) {
+export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, model } = {}) {
   const started = Date.now();
   const fail = (error) => ({
     ok: false, text: '', error: String(error || '알 수 없는 오류'),
@@ -76,7 +80,7 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal } = 
     dir = mkdtempSync(join(tmpdir(), 'se2-call-'));
     const spFile = join(dir, 'system-prompt.txt');
     writeFileSync(spFile, String(systemPrompt || ''), 'utf8');
-    p = spawn(CLI, buildCallArgs(spFile), { env: childEnv(), windowsHide: true });
+    p = spawn(CLI, buildCallArgs(spFile, model), { env: childEnv(), windowsHide: true });
     LIVE.add(p);
     try { p.stdin.write(String(prompt), 'utf8'); } catch {}
     try { p.stdin.end(); } catch {}

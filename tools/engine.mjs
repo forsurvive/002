@@ -7,11 +7,26 @@ import { runClaudeCall } from './call.mjs';
 import * as state from './state.mjs';
 import * as model from './model.mjs';
 
-// 그 단계의 프롬프트: 프로젝트 생성본이 있으면 그것, 없으면 내장. 찾는 순서는 이 둘뿐이다.
+// 그 자리의 프롬프트를 찾는 순서는 셋이다 —
+//   ① 작가가 설정에서 고친 것  ② 비소설이라 즉석으로 지은 것  ③ 내장
+// 칸 하나하나마다 이 순서로 고른다(이름만 고치고 작법은 그대로 두는 일이 되도록).
 export function promptFor(project, code) {
-  const made = project && project.agents && project.agents[code];
-  if (made && made.craft) return { code, name: made.name, role: made.role, task: made.task, craft: made.craft };
-  return BUILTIN[code] || { code, name: '집필자', role: '글을 쓴다', task: '', craft: '' };
+  const mine = (project && project.prompts && project.prompts[code]) || null;
+  const made = (project && project.agents && project.agents[code]) || null;
+  const base = BUILTIN[code] || { code, name: '집필자', role: '글을 쓴다', task: '', craft: '' };
+  const pick = (k) => {
+    const a = mine && String(mine[k] || '').trim();
+    if (a) return mine[k];
+    const b = made && String(made[k] || '').trim();
+    if (b) return made[k];
+    return base[k] || '';
+  };
+  return { code, name: pick('name'), role: pick('role'), task: pick('task'), craft: pick('craft') };
+}
+
+// 화면이 보여 줄 한 자리의 지금 값과, 작가가 고친 자리인지 여부
+export function promptView(project, code) {
+  return { code, ...promptFor(project, code), edited: !!(project && project.prompts && project.prompts[code]) };
 }
 
 const asItem = (d) => ({ id: d.id, name: d.title, text: d.body });
@@ -36,6 +51,18 @@ export function materialItems(project) {
   return (project.materials || []).map((m) => ({ id: m.id, name: m.name, text: m.text }));
 }
 
+// 참조 목록에는 문서 id 와 자료 id 가 섞여 들어올 수 있다. 자료는 «■ 자료» 구획으로 간다.
+export const isMaterialId = (id) => String(id || '').startsWith('m_');
+
+export function materialsByIds(project, ids = []) {
+  const out = [];
+  for (const id of ids) {
+    const m = (project.materials || []).find((x) => x.id === id);
+    if (m) out.push({ id: m.id, name: m.name, text: m.text });
+  }
+  return out;
+}
+
 /**
  * 호출 하나. 돌려주는 값: { ok, text, error }
  * refIds/targetIds 는 문서 id. finals 를 따로 넘기면 그것을 쓰고, 아니면 고른 참조 중 확정본을 옮긴다.
@@ -49,10 +76,14 @@ export async function callOnce({
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
   const pr = promptFor(project, code);
 
+  // 참조에 섞여 온 자료를 갈라낸다 — 자료는 문서 자리가 아니라 «■ 자료» 구획에 선다.
+  const pickedMats = materialsByIds(project, refIds.filter(isMaterialId));
+  const docRefIds = refIds.filter((id) => !isMaterialId(id));
+
   // 한 문서는 한 구획에만 실린다.
   //  · 보통은 대상 > 확정본 > 참조 순서(합평할 원고가 확정본이어도 대상 자리에 남는다).
   //  · 모순 검사만 확정본 > 대상 > 참조 — 고른 문서 가운데 확정본이 있으면 그것이 기준이 되어야 한다.
-  const finalsAll = allFinals ? finalDocs(project) : finalDocs(project, { onlyIds: [...refIds, ...targetIds] });
+  const finalsAll = allFinals ? finalDocs(project) : finalDocs(project, { onlyIds: [...docRefIds, ...targetIds] });
   const taken = new Set();
   let finals; let targets;
   // 고른 대상이 모두 확정본이면 기준으로 뺄 것이 없다 — 그때는 대상 자리에 그대로 둔다(구획이 사라지면 지시가 가리킬 곳이 없다).
@@ -68,17 +99,18 @@ export async function callOnce({
     finals = finalsAll.filter((d) => !taken.has(d.id));
     finals.forEach((d) => taken.add(d.id));
   }
-  const refs = docsByIds(project, refIds).filter((d) => !taken.has(d.id));
+  const refs = docsByIds(project, docRefIds).filter((d) => !taken.has(d.id));
 
   const task = [pr.task, taskExtra].filter((x) => String(x || '').trim()).join('\n');
   const systemPrompt = buildSystem({ prompt: pr, prev, next, withFinalRule: finals.length > 0, withNoCount: noCount });
   const prompt = buildUser({
     project,
-    materials: materials ? materialItems(project) : [],
+    // 자동 집필의 자료 단계는 자료를 통째로, 손으로 여는 자리는 «고른 자료»만 싣는다.
+    materials: materials ? materialItems(project) : pickedMats,
     refs, finals, targets, talk, request, task, noCount,
   });
 
-  const r = await runClaudeCall({ systemPrompt, prompt, mockKey: code, signal });
+  const r = await runClaudeCall({ systemPrompt, prompt, mockKey: code, signal, model: project.model });
   if (!r.ok) return { ok: false, error: r.error };
   const text = cleanResponse(r.text);
   if (!text) return { ok: false, error: '빈 응답' };

@@ -53,9 +53,10 @@ export function buildSystem({ prompt, prev, next, withFinalRule = true, withNoCo
 export function specBlock(project, { capNote = true } = {}) {
   const sp = project.spec || {};
   const len = s(sp.length).trim();
+  const out = s(sp.outline).trim();
   return neutralize([
     '이름: ' + s(project.name),
-    '개요: ' + s(sp.outline),
+    '개요: ' + (out || '정해지지 않음'),
     '형식: ' + s(sp.form),
     '분량: ' + (len || (capNote ? '정해지지 않음. 상한 24화.' : '정해지지 않음')),
   ].join('\n'));

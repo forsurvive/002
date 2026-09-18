@@ -13,8 +13,9 @@ import * as model from './model.mjs';
 import * as jobs from './jobs.mjs';
 import * as engine from './engine.mjs';
 import { prepareAgents, agentsReady } from './agents.mjs';
-import { runAuto, canStart } from './auto.mjs';
-import { killAllCalls } from './call.mjs';
+import { runAuto, canStart, runStudy } from './auto.mjs';
+import { killAllCalls, MODELS } from './call.mjs';
+import { EDITABLE_CODES } from './prompts.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(dirname(HERE), 'web');
@@ -27,8 +28,17 @@ const arr = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
 // 프로젝트를 만든 직후 그 프로젝트 전용 에이전트를 짓는다(소설이면 판정만 남기고 끝난다).
 function startAgentPrep(pid) {
   const p = state.get(pid);
-  if (!p || agentsReady(p)) return;
-  jobs.start(pid, { kind: 'agents', title: '에이전트 준비', run: (ctx) => prepareAgents(pid, ctx) });
+  if (!p) return;
+  jobs.start(pid, {
+    kind: 'agents', title: '에이전트 준비',
+    run: async (ctx) => {
+      if (!agentsReady(state.get(pid))) {
+        const r = await prepareAgents(pid, ctx);
+        if (!r.ok) return r;
+      }
+      return runStudy(pid, ctx);   // 이어서 자료를 한 번 읽는다
+    },
+  });
 }
 
 const OPS = {
@@ -38,7 +48,7 @@ const OPS = {
   'project.create': (b) => {
     const name = String(b.name || '').trim();
     const spec = b.spec || {};
-    if (!name || !String(spec.outline || '').trim() || !String(spec.form || '').trim()) return bad('작품 규격 필요');
+    if (!name || !String(spec.form || '').trim()) return bad('작품 규격 필요');
     const materials = arr(b.materials).filter((m) => m && String(m.text || '').trim());
     if (!materials.length) return bad('자료 필요');
     const p = state.create({ name, spec, standard: b.standard, request: b.request, materials });
@@ -51,6 +61,27 @@ const OPS = {
     if (b.spec) p.spec = { ...p.spec, ...b.spec };
     if (b.standard != null) p.standard = String(b.standard);
     if (b.request != null) p.request = String(b.request);
+    if (b.model != null) p.model = MODELS.includes(String(b.model)) ? String(b.model) : p.model;
+  }),
+
+  // ---------------- 작법 프롬프트 고치기
+  'prompt.read': (b) => {
+    const p = state.get(b.pid);
+    if (!p) return bad('프로젝트를 찾을 수 없습니다');
+    if (!EDITABLE_CODES.includes(b.code)) return bad('고칠 수 없는 자리입니다');
+    return ok({ one: engine.promptView(p, b.code) });
+  },
+  'prompt.write': (b) => {
+    if (!EDITABLE_CODES.includes(b.code)) return bad('고칠 수 없는 자리입니다');
+    return state.update(b.pid, (p) => {
+      p.prompts = p.prompts || {};
+      const cur = p.prompts[b.code] || {};
+      for (const k of ['name', 'role', 'task', 'craft']) if (b[k] != null) cur[k] = String(b[k]);
+      p.prompts[b.code] = cur;
+    });
+  },
+  'prompt.reset': (b) => state.update(b.pid, (p) => {
+    if (p.prompts) delete p.prompts[b.code];
   }),
 
   'project.delete': (b) => {
@@ -146,6 +177,8 @@ const OPS = {
 
   // ---------------- 작업
   'job.stop': (b) => jobs.stop(b.pid, b.id),
+  'job.pause': (b) => jobs.pause(b.pid, b.id),
+  'job.resume': (b) => jobs.resume(b.pid, b.id),
   'job.remove': (b) => jobs.remove(b.pid, b.id),
 
   // ---------------- 자동 집필
@@ -187,6 +220,13 @@ function stateOf(pid) {
     trash: p.trash.map((e) => ({ id: e.id, at: e.at, kind: e.kind, from: e.from, title: e.title })),
     jobs: p.jobs,
     auto: p.auto,
+    model: p.model || '',
+    models: MODELS,
+    prompts: EDITABLE_CODES.map((code) => ({
+      code,
+      name: engine.promptFor(p, code).name,
+      edited: !!(p.prompts && p.prompts[code]),
+    })),
     agentKind: (p.agents && p.agents.__kind) || '',
   };
 }

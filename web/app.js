@@ -73,6 +73,24 @@ function flagBox(id, fallback, label) {
 const area = (id, placeholder, value, attrs) => inputOf('textarea', id, { placeholder, value, ...attrs });
 const stop = (e) => { e.stopPropagation(); };
 const when = (t) => new Date(t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+// 지난 시간 — 막대도 백분율도 쓰지 않는다. 얼마나 되었는지만 말한다.
+function since(t) {
+  const sec = Math.max(0, Math.floor((Date.now() - (t || Date.now())) / 1000));
+  if (sec < 60) return sec + '초';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return min + '분';
+  return Math.floor(min / 60) + '시간 ' + (min % 60) + '분';
+}
+
+// 작업 한 줄이 말하는 것 — 그리기와 초침이 같은 글을 쓰도록 한 자리에 둔다.
+function jobLine(j) {
+  if (j.status === 'running') return (j.step || '진행 중') + ' · ' + since(j.stepAt || j.startedAt);
+  if (j.status === 'paused') return '멈춤' + (j.step ? ' · ' + j.step : '');
+  if (j.status === 'done') return '완료';
+  if (j.status === 'stopped') return '중지됨';
+  return j.error ? '실패 — ' + j.error.slice(0, 80) : '실패';
+}
+
 const firstLine = (text) => (String(text || '').split('\n').map((l) => l.trim()).find((l) => l) || '붙여 넣은 글').slice(0, 24);
 
 async function api(op, body = {}) {
@@ -206,14 +224,30 @@ function app() {
 }
 
 function jobRow(j) {
-  const st = j.status === 'running' ? (j.step || '진행 중') : j.status === 'done' ? '완료' : j.status === 'stopped' ? '중지됨' : '실패';
+  const live = j.status === 'running' || j.status === 'paused';
   return h('div', { class: 'job' },
     h('div', { class: 'job-name', text: j.title }),
-    h('div', { class: 'job-step' + (j.status === 'failed' ? ' fail' : ''), text: j.status === 'failed' && j.error ? '실패 — ' + j.error.slice(0, 80) : st }),
+    h('div', { class: 'job-step' + (j.status === 'failed' ? ' fail' : ''), id: 'jstep-' + j.id, text: jobLine(j) }),
     h('div', { class: 'job-acts' },
-      j.status === 'running' ? h('button', { text: '중지', onclick: () => api('job.stop', { id: j.id }) }) : null,
+      j.kind === 'auto' && live
+        ? h('button', {
+          text: j.status === 'paused' ? '이어 하기' : '일시중지',
+          onclick: () => api(j.status === 'paused' ? 'job.resume' : 'job.pause', { id: j.id }),
+        })
+        : null,
+      live ? h('button', { text: '중지', onclick: () => api('job.stop', { id: j.id }) }) : null,
       h('button', { text: '삭제', onclick: () => api('job.remove', { id: j.id }) })));
 }
+
+// 초마다 작업 줄의 «지난 시간»만 고쳐 쓴다 — 화면을 통째로 다시 그리지 않는다.
+setInterval(() => {
+  if (!S.project) return;
+  for (const j of S.project.jobs || []) {
+    if (j.status !== 'running') continue;
+    const n = $('jstep-' + j.id);
+    if (n) n.textContent = jobLine(j);
+  }
+}, 1000);
 
 // ---------------------------------------------------------------- 작업실
 
@@ -366,11 +400,65 @@ function settings() {
             onclick: () => { const t = $('set-mat').value; if (t.trim()) { clearTyped('set-mat'); api('material.add', { text: t }); } },
           }),
           fileButton((name, text) => api('material.add', { name, text }))))),
+    h('div', null,
+      h('div', { class: 'lab', text: '모델' }),
+      h('div', { class: 'line' }, (p.models || ['']).map((m) => h('div', {
+        class: 'line', style: 'gap:6px;cursor:pointer',
+        onclick: () => api('project.spec', { model: m }),
+      },
+      h('button', { class: 'ck' + ((p.model || '') === m ? ' on' : '') }),
+      h('span', { text: m || '기본값' }))))),
+    (p.prompts || []).length ? h('details', { open: S.fold['prompts'] ? 'open' : null },
+      h('summary', { text: '작법 프롬프트', onclick: () => { S.fold['prompts'] = !S.fold['prompts']; } }),
+      (p.prompts || []).map((pr) => h('div', {
+        class: 'row', onclick: () => openPrompt(pr.code),
+      },
+      h('span', { class: 'mark', text: pr.code }),
+      h('div', { class: 'name', text: pr.name }),
+      pr.edited ? h('span', { class: 'when', style: 'color:var(--red)', text: '고침' }) : null))) : null,
     h('div', { style: 'padding-top:20px' },
       h('button', {
         class: 'btn-red', text: '프로젝트 삭제',
         onclick: () => { S.confirm = { text: '되돌릴 수 없음', run: async () => { await api('project.delete', {}); S.pid = null; S.project = null; S.confirm = null; pull(true); } }; render(); },
       })));
+}
+
+async function openPrompt(code) {
+  const r = await api('prompt.read', { code });
+  if (r.ok) { S.open = { type: 'prompt', one: r.one }; S.typed = {}; render(); }
+}
+
+function promptPanel(close) {
+  const one = S.open.one;
+  const save = async () => {
+    if (S.redrawing) return;
+    S.saveOpen = null;
+    const body = { code: one.code };
+    let any = false;
+    for (const [id, key] of [['pr-name', 'name'], ['pr-role', 'role'], ['pr-task', 'task'], ['pr-craft', 'craft']]) {
+      if (id in S.typed) { body[key] = $(id).value; any = true; }
+    }
+    clearTyped('pr-name', 'pr-role', 'pr-task', 'pr-craft');
+    if (!any) return;
+    await api('prompt.write', body);
+    const again = await api('prompt.read', { code: one.code });
+    if (again.ok) { S.open = { type: 'prompt', one: again.one }; render(); }
+  };
+  S.saveOpen = save;
+  return h('div', { class: 'panel' },
+    h('div', { class: 'panel-head' },
+      h('span', { class: 'mark', text: one.code }),
+      h('div', { class: 'name', text: one.name }),
+      one.edited ? h('button', {
+        class: 'btn-text red', text: '내장으로 되돌리기',
+        onclick: async () => { S.typed = {}; await api('prompt.reset', { code: one.code }); openPrompt(one.code); },
+      }) : null,
+      h('button', { class: 'x', text: '×', onclick: close })),
+    h('div', { class: 'panel-body' },
+      h('div', null, h('div', { class: 'lab', text: '이름' }), textbox('pr-name', '이름', one.name, { onblur: save })),
+      h('div', null, h('div', { class: 'lab', text: '역할' }), textbox('pr-role', '역할', one.role, { onblur: save })),
+      h('div', null, h('div', { class: 'lab', text: '이번에 할 일' }), area('pr-task', '이번에 할 일', one.task, { onblur: save })),
+      h('div', null, h('div', { class: 'lab', text: '작법' }), area('pr-craft', '작법', one.craft, { class: 'body-edit', onblur: save }))));
 }
 
 function fileButton(onRead) {
@@ -415,7 +503,8 @@ function trash() {
 
 // 겹창이 쓰는 입력 열쇠 — 닫을 때 이것만 지운다(작업실·설정에 치던 글은 그대로 둔다).
 const LAYER_KEYS = ['d-title', 'd-body', 'd-req', 't-say', 'nd-name', 'a-rounds',
-  'n-name', 'n-form', 'n-outline', 'n-length', 'n-standard', 'n-request', 'n-mat'];
+  'n-name', 'n-form', 'n-outline', 'n-length', 'n-standard', 'n-request', 'n-mat',
+  'pr-name', 'pr-role', 'pr-task', 'pr-craft'];
 
 function closeLayer() {
   // 닫기 전에 저장을 먼저 부른다 — Esc·×·바깥 클릭이 모두 같은 길을 지난다.
@@ -440,14 +529,23 @@ function layerOne() {
       : t === 'newproject' ? newProjectPanel(close)
         : t === 'newdoc' ? newDocPanel(close)
             : t === 'auto' ? autoPanel(close)
-              : donePanel(close);
+              : t === 'prompt' ? promptPanel(close)
+                : donePanel(close);
   return h('div', { class: 'layer', onclick: (e) => { if (e.target.classList.contains('layer')) close(); } }, panel);
+}
+
+// 참조 칩이 가리킬 수 있는 것 — 문서와 자료
+function refIndex() {
+  const m = new Map();
+  for (const d of S.project.docs || []) m.set(d.id, { title: d.title, isFinal: d.isFinal, kind: d.kind });
+  for (const x of S.project.materials || []) m.set(x.id, { title: x.name, mat: true });
+  return m;
 }
 
 function docPanel(close) {
   const d = (S.project.docs || []).find((x) => x.id === S.open.id);
   if (!d) return h('div', { class: 'panel narrow' }, h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '없음' }), h('button', { class: 'x', text: '×', onclick: close })));
-  const byId = new Map(S.project.docs.map((x) => [x.id, x]));
+  const byId = refIndex();
   const peeking = S.peek && S.peek.docId === d.id ? d.versions.find((v) => v.i === S.peek.i) : null;
   const busy = (S.project.jobs || []).some((j) => j.status === 'running' && j.targetId === d.id);
   // 이 창이 닫힐 때 저장할 것
@@ -519,6 +617,7 @@ function refLine(label, ids, byId, save, selfId) {
       (ids || []).map((id) => {
         const t = byId.get(id);
         return h('span', { class: 'chip' + (t && t.isFinal ? ' final' : '') },
+          t && t.mat ? h('span', { class: 'mark', text: '자료' }) : null,
           h('span', { text: t ? t.title : '없음' }),
           h('button', { text: '×', onclick: () => save((ids || []).filter((x) => x !== id)) }));
       }),
@@ -528,7 +627,7 @@ function refLine(label, ids, byId, save, selfId) {
 function threadPanel(close) {
   const t = (S.project.threads || []).find((x) => x.id === S.open.id);
   if (!t) return h('div', { class: 'panel narrow' }, h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '없음' }), h('button', { class: 'x', text: '×', onclick: close })));
-  const byId = new Map(S.project.docs.map((x) => [x.id, x]));
+  const byId = refIndex();
   const msgs = new Map(t.messages.map((m) => [m.id, m]));
   const flow = [];
   for (const id of t.path) {
@@ -634,7 +733,7 @@ function newDocPanel(close) {
 
 function autoPanel(close) {
   const p = S.project;
-  const ready = p.name && p.spec.outline && p.spec.form && p.materials.length;
+  const ready = p.name && p.spec.form && p.materials.length;
   return h('div', { class: 'panel narrow' },
     h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '자동 집필' }), h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
@@ -668,7 +767,23 @@ function pickLayer() {
   return h('div', { class: 'layer two', onclick: (e) => { if (e.target.classList.contains('layer')) close(); } },
     h('div', { class: 'panel' },
       h('div', { class: 'panel-head' }, h('div', { class: 'name', text: S.pick.label || '참조' }), h('button', { class: 'x', text: '×', onclick: close })),
-      h('div', { class: 'panel-body' }, p.categories.map((c) => {
+      h('div', { class: 'panel-body' },
+        (p.materials || []).length ? h('div', { class: 'sec' },
+          h('div', { class: 'sec-head' },
+            h('button', {
+              class: 'ck' + ((p.materials || []).every((m) => chosen.has(m.id)) ? ' on' : ''),
+              onclick: () => {
+                const allOn = (p.materials || []).every((m) => chosen.has(m.id));
+                (p.materials || []).forEach((m) => (allOn ? chosen.delete(m.id) : chosen.add(m.id)));
+                S.pick.ids = [...chosen]; S.pick.save(S.pick.ids); render();
+              },
+            }),
+            h('div', { class: 'name', text: '자료' })),
+          (p.materials || []).map((m) => h('div', { class: 'row', onclick: () => flip(m.id) },
+            h('button', { class: 'ck' + (chosen.has(m.id) ? ' on' : '') }),
+            h('div', { class: 'name', text: m.name }),
+            h('div', { class: 'when', text: String(m.chars) })))) : null,
+        p.categories.map((c) => {
         const ids = c.docIds.filter((id) => id !== S.pick.selfId);
         if (!ids.length) return null;
         const allOn = ids.every((id) => chosen.has(id));

@@ -656,6 +656,149 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   await post('project.delete', { pid });
 }
 
+
+// ---------------------------------------------------------------- 새로 더한 것들
+
+{
+  // ① 이름·형식·자료만 있으면 만들어진다 (개요는 비워도 된다)
+  ok('개요가 없어도 시작할 수 있다', auto.canStart({ name: '가', spec: { form: '소설' }, materials: [{}] }).ok);
+  ok('형식이 없으면 시작하지 않는다', !auto.canStart({ name: '가', spec: { outline: 'ㄱ', form: '' }, materials: [{}] }).ok);
+  ok('자료가 없으면 시작하지 않는다', !auto.canStart({ name: '가', spec: { form: '소설' }, materials: [] }).ok);
+
+  const p = store.blankProject('p_sp', '규격');
+  p.spec = { outline: '', form: '소설', length: '' };
+  const blk = asm.specBlock(p);
+  ok('빈 개요도 한 줄로 선다', blk.includes('개요: 정해지지 않음'));
+  eq('규격은 네 줄 그대로', blk.split('\n').length, 4);
+  p.spec.outline = '내 개요';
+  ok('적은 개요는 그대로', asm.specBlock(p).includes('개요: 내 개요'));
+}
+
+{
+  // ④ 모델을 실행기에 넘기는 꼴
+  const call = await import('./call.mjs');
+  const plain = call.buildCallArgs('/tmp/sp.txt');
+  eq('모델을 안 고르면 깃발이 없다', plain.includes('--model'), false);
+  eq('끝은 언제나 --tools', plain[plain.length - 2], '--tools');
+  const withModel = call.buildCallArgs('/tmp/sp.txt', 'opus');
+  ok('고른 모델이 실린다', withModel.includes('--model') && withModel[withModel.indexOf('--model') + 1] === 'opus');
+  ok('--model 은 --tools 앞에 온다', withModel.indexOf('--model') < withModel.indexOf('--tools'));
+  ok('고를 수 있는 값', call.MODELS.includes('opus') && call.MODELS.includes('sonnet') && call.MODELS.includes('fable') && call.MODELS.includes(''));
+  ok('제어 호출은 고치지 못한다', prompts.CONTROL_CODES.every((c) => !prompts.EDITABLE_CODES.includes(c)));
+  ok('집필 프롬프트는 고칠 수 있다', prompts.EDITABLE_CODES.includes('S02') && prompts.EDITABLE_CODES.includes('F-REVIEW'));
+}
+
+{
+  // ④ 프롬프트를 찾는 순서 — 고친 것 → 즉석 생성본 → 내장
+  const eng = await import('./engine.mjs');
+  const p = store.blankProject('p_pr', '순서');
+  eq('아무것도 없으면 내장', eng.promptFor(p, 'S02').name, prompts.BUILTIN.S02.name);
+  p.agents = { S02: { name: '생성본 이름', role: '', task: '', craft: '생성본 작법' } };
+  eq('생성본이 있으면 그것', eng.promptFor(p, 'S02').name, '생성본 이름');
+  eq('빈 칸은 내장으로 물러선다', eng.promptFor(p, 'S02').role, prompts.BUILTIN.S02.role);
+  p.prompts = { S02: { name: '내가 고친 이름' } };
+  eq('고친 것이 가장 앞', eng.promptFor(p, 'S02').name, '내가 고친 이름');
+  eq('안 고친 칸은 생성본', eng.promptFor(p, 'S02').craft, '생성본 작법');
+  ok('고친 자리임을 알린다', eng.promptView(p, 'S02').edited);
+}
+
+{
+  // ③ 자료를 참조로 고르면 «■ 자료» 구획에 실린다 (참조 문서 자리가 아니다)
+  const st2 = await import('./state.mjs');
+  const eng = await import('./engine.mjs');
+  const pj = st2.create({
+    name: '자료 참조', spec: { form: '소설' },
+    materials: [{ name: '등대 자료', text: '난파선 목재' }, { name: '안 고른 자료', text: '쓰이지 않는다' }],
+  });
+  let docId;
+  st2.update(pj.id, (p) => { docId = model.docCreate(p, { title: '메모', body: '메모 본문' }).id; });
+  const matId = st2.get(pj.id).materials[0].id;
+  ok('자료 id 는 m_ 로 시작한다', eng.isMaterialId(matId));
+  ok('문서 id 는 자료가 아니다', !eng.isMaterialId(docId));
+
+  let seen = '';
+  globalThis.__SE2_MOCK_FN = ({ prompt }) => { seen = prompt; return '모의'; };
+  await eng.callOnce({ pid: pj.id, code: 'F-UPDATE', refIds: [matId, docId] });
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  ok('고른 자료가 자료 구획에 실린다', seen.includes('■ 자료') && seen.includes('난파선 목재'));
+  ok('안 고른 자료는 실리지 않는다', !seen.includes('쓰이지 않는다'));
+  ok('문서는 참조 문서 구획에', seen.includes('■ 참조 문서') && seen.includes('메모 본문'));
+  ok('자료가 참조 문서 자리로 새지 않는다', seen.indexOf('난파선 목재') < seen.indexOf('■ 참조 문서'));
+  st2.remove(pj.id);
+}
+
+{
+  // ② 프로젝트를 만들면 에이전트를 짓고 이어서 «자료 분석» 문서를 남긴다
+  const r = await post('project.create', {
+    name: '자동 분석', spec: { form: '소설', length: '1화' },
+    materials: [{ name: '자료', text: '자료 본문' }],
+  });
+  const p = await settle(r.pid, 60000);
+  const study = p.docs.find((d) => d.title === '자료 분석');
+  ok('만들자마자 자료 분석 문서가 생긴다', !!study);
+  ok('그 문서에 본문이 있다', study && study.body.length > 0);
+  eq('준비 작업 하나로 끝난다', p.jobs.filter((j) => j.kind === 'agents').length, 1);
+  eq('그 작업은 완료로 끝난다', p.jobs.find((j) => j.kind === 'agents').status, 'done');
+  ok('작업에 단계 시각이 적힌다', typeof p.jobs[0].stepAt === 'number');
+  await post('project.delete', { pid: r.pid });
+}
+
+{
+  // ⑥ 일시중지 — 멈추면 더 나아가지 않고, 이어 하면 완주한다
+  const r = await post('project.create', {
+    name: '멈춤 시험', spec: { form: '소설', length: '1화' },
+    materials: [{ name: '자료', text: '자료 본문' }],
+  });
+  const pid = r.pid;
+  await settle(pid, 60000);
+  process.env.SE2_MOCK_DELAY_MS = '120';
+  const started = await post('auto.start', { pid, feedbackRounds: 1, skipProse: true });
+  ok('자동 집필 시작', started.ok);
+
+  // 문서가 몇 편 쌓일 때까지 기다렸다 멈춘다
+  for (let i = 0; i < 80; i++) {
+    const st = (await stateOf(pid)).project;
+    if (st.docs.filter((d) => d.title !== '자료 분석').length >= 2) break;
+    await sleep(60);
+  }
+  await post('job.pause', { pid, id: started.jobId });
+  await sleep(400);
+  const atPause = (await stateOf(pid)).project;
+  eq('상태가 멈춤이 된다', atPause.jobs.find((j) => j.id === started.jobId).status, 'paused');
+  const n1 = atPause.docs.length;
+  await sleep(700);
+  const still = (await stateOf(pid)).project;
+  eq('멈춘 동안 문서가 늘지 않는다', still.docs.length, n1);
+  eq('멈춘 채로 있다', still.jobs.find((j) => j.id === started.jobId).status, 'paused');
+
+  await post('job.resume', { pid, id: started.jobId });
+  const done = await settle(pid, 120000);
+  process.env.SE2_MOCK_DELAY_MS = '3';
+  eq('이어 하면 완주한다', done.jobs.find((j) => j.id === started.jobId).status, 'done');
+  ok('멈춘 뒤에도 문서가 더 쌓였다', done.docs.length > n1);
+  await post('project.delete', { pid });
+}
+
+{
+  // ⑥ 멈춘 작업도 중지할 수 있다 (문지기에 갇히지 않는다)
+  const r = await post('project.create', {
+    name: '멈춤 뒤 중지', spec: { form: '소설', length: '1화' },
+    materials: [{ name: '자료', text: '자료 본문' }],
+  });
+  const pid = r.pid;
+  await settle(pid, 60000);
+  process.env.SE2_MOCK_DELAY_MS = '120';
+  const started = await post('auto.start', { pid, feedbackRounds: 1, skipProse: true });
+  await sleep(500);
+  await post('job.pause', { pid, id: started.jobId });
+  await sleep(300);
+  await post('job.stop', { pid, id: started.jobId });
+  const p = await settle(pid, 30000);
+  process.env.SE2_MOCK_DELAY_MS = '3';
+  eq('멈춘 작업도 중지된다', p.jobs.find((j) => j.id === started.jobId).status, 'stopped');
+  await post('project.delete', { pid });
+}
+
 // ---------------------------------------------------------------- 화면-서버 배선
 
 {
@@ -663,6 +806,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const used = new Set();
   for (const m of app.matchAll(/api\(\s*'([^']+)'/g)) used.add(m[1]);
   ok('화면이 부르는 문이 하나라도 있다', used.size > 5, String(used.size));
+  ok('시작 검사가 개요를 보지 않는다', !/const ready[^\n]*spec\.outline/.test(app));
+  ok('작업 줄이 지난 시간을 말한다', /function jobLine\(/.test(app) && /since\(/.test(app));
   for (const op of used) ok('서버에 문이 있다: ' + op, OP_NAMES.includes(op));
   for (const m of app.matchAll(/\/api\/(state|download)/g)) ok('상태·내려받기 경로', !!m[1]);
   // 색은 :root 에 적힌 것만 쓴다 — 적·백·흑·파랑 네 갈래.

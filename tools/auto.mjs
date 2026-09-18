@@ -9,15 +9,41 @@ import { buildSystem, buildUser, cleanResponse } from './assemble.mjs';
 import { runClaudeCall } from './call.mjs';
 import * as state from './state.mjs';
 import * as model from './model.mjs';
+import * as jobs from './jobs.mjs';
 
 export const EPISODE_CAP = 24;
 export const AUTO_CATEGORY = '자동 실행';
+export const STUDY_TITLE = '자료 분석';
+
+// 프로젝트를 만들고 에이전트가 준비되면, 이어서 자료를 한 번 읽어 «자료 분석» 문서를 남긴다.
+// 자동 집필의 S02 와 같은 호출이다 — 다만 그 자리가 아니라 «준비» 작업의 끝에 붙는다.
+export async function runStudy(pid, ctx) {
+  const project = state.get(pid);
+  if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
+  if (!(project.materials || []).length) return { ok: true, skipped: true };
+  if (ctx && ctx.gate) await ctx.gate();
+  if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
+  if (ctx) ctx.step(STUDY_TITLE);
+
+  const { prev, next } = neighborNames(project, 'S02');
+  const r = await callWithRetry({
+    pid, code: 'S02', materials: true, allFinals: true,
+    prev, next, signal: ctx && ctx.signal,
+  });
+  if (!r.ok) return r;
+  if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
+
+  let docId = null;
+  state.update(pid, (p) => { docId = model.docCreate(p, { title: STUDY_TITLE, body: r.text }).id; });
+  if (ctx) { ctx.addDoc(docId); ctx.step(''); }
+  return { ok: true, docId };
+}
 
 // 작품 규격과 자료가 없으면 시작하지 않는다.
 export function canStart(project) {
   if (!project) return { ok: false, error: '작품 규격과 자료 필요' };
   const sp = project.spec || {};
-  const filled = String(project.name || '').trim() && String(sp.outline || '').trim() && String(sp.form || '').trim();
+  const filled = String(project.name || '').trim() && String(sp.form || '').trim();
   if (!filled) return { ok: false, error: '작품 규격과 자료 필요' };
   if (!(project.materials || []).length) return { ok: false, error: '작품 규격과 자료 필요' };
   return { ok: true };
@@ -48,6 +74,7 @@ export async function runAuto(pid, ctx) {
 
   // 단계 하나 = 호출 하나 = 문서 하나
   async function write(key, { code, title, refs = [], targets = [], taskExtra = '', materials = false, finalFirst = false, kind = 'doc', prevCode = '', nextCode = '' }) {
+    if (ctx && ctx.gate) await ctx.gate();       // 멈춰 두었으면 여기서 선다
     if (stopped()) return { ok: false, error: '중지됨' };
     if (ctx) ctx.step(title);
     const project = state.get(pid);
@@ -73,6 +100,12 @@ export async function runAuto(pid, ctx) {
   // ---- S00 에이전트 준비 (비소설이면 자리마다 프롬프트를 새로 짓는다)
   const prep = await prepareAgents(pid, ctx);
   if (!prep.ok) return prep;
+  if (stopped()) return { ok: false, error: '중지됨' };
+
+  // 프로젝트를 만들 때 도는 준비 작업이 아직 자료를 읽고 있으면 끝나기를 기다린다.
+  while (jobs.isKindRunning(pid, 'agents') && !stopped()) {
+    await new Promise((r) => setTimeout(r, 400));
+  }
   if (stopped()) return { ok: false, error: '중지됨' };
 
   const project0 = state.get(pid);
@@ -211,6 +244,7 @@ export async function runAuto(pid, ctx) {
   // ---- S19 모순 검사 — 회차마다 «회차 계획 확정본 ↔ 그 회차 산출물» 한 번씩
   const parts = [];
   for (let e = 1; e <= N; e++) {
+    if (ctx && ctx.gate) await ctx.gate();
     if (stopped()) return { ok: false, error: '중지됨' };
     if (ctx) ctx.step('모순 검사 — ' + e + '화');
     const targetKey = skipProse ? 'S18-' + e + '-B' : 'S18-' + e + '-C';
@@ -269,14 +303,14 @@ export async function countEpisodes(pid, planId, ctx) {
   const project = state.get(pid);
   const d = model.findDoc(project, planId);
   if (!d) return { ok: false, error: '회차 계획을 찾을 수 없습니다' };
-  const pr = BUILTIN['F-COUNT'];
+  const pr = promptFor(project, 'F-COUNT');
   const systemPrompt = buildSystem({ prompt: pr, withFinalRule: false, withNoCount: false });
   const prompt = buildUser({
     project, refs: [{ id: d.id, name: d.title, text: d.body }],
     task: pr.task, noCount: false,
   });
   for (let attempt = 0; attempt < 2; attempt++) {
-    const r = await runClaudeCall({ systemPrompt, prompt, mockKey: 'F-COUNT', signal: ctx && ctx.signal });
+    const r = await runClaudeCall({ systemPrompt, prompt, mockKey: 'F-COUNT', signal: ctx && ctx.signal, model: project.model });
     if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
     if (!r.ok) { if (attempt) return { ok: false, error: r.error }; continue; }
     const m = cleanResponse(r.text).match(/\d+/);

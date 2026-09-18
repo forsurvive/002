@@ -59,3 +59,7 @@ export const SLOT_DUTY = {
 
 export function has(code) { return !!BUILTIN[code]; }
 export const CODES = Object.keys(BUILTIN);
+
+// 제어 호출 셋은 답의 «꼴»이 정해져 있어 프로그램이 읽는다 — 손대면 읽지 못하므로 고치는 목록에서 뺀다.
+export const CONTROL_CODES = ['F-KIND', 'F-AGENT', 'F-COUNT'];
+export const EDITABLE_CODES = CODES.filter((c) => !CONTROL_CODES.includes(c));
