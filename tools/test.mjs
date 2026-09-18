@@ -162,6 +162,12 @@ const auto = await import('./auto.mjs');
   const sys = asm.buildSystem({ prompt: { name: '이름', role: '역할', craft: '작법 본문' }, prev: '앞', next: '뒤' });
   ok('시스템 구획', sys.includes('■ 에이전트') && sys.includes('■ 앞뒤') && sys.includes('■ 작법') && sys.includes('■ 응답 형식'));
   ok('확정본 규칙과 금지 문구', sys.includes('최우선 사실') && sys.includes('세어서 말하지 말고'));
+  // 금지어 목록 — 기획서 중요사항2 와 사용자가 덧붙인 말
+  for (const word of ['숫자', '개수', '계량어', '횟수', '장부', '명단', '명부', '박자', '걸음']) {
+    ok('금지어에 «' + word + '»이 실린다', asm.NO_COUNT.includes(word));
+  }
+  ok('내장 작법이 스스로 «걸음»을 쓰지 않는다',
+    Object.values(prompts.BUILTIN).every((p) => !((p.craft || '') + (p.task || '')).includes('걸음')));
   const sys2 = asm.buildSystem({ prompt: { name: 'ㄱ', role: 'ㄴ', craft: 'ㄷ' }, withFinalRule: false, withNoCount: false });
   ok('제어 호출에는 금지 문구를 싣지 않는다', !sys2.includes('■ 쓰지 않는 말'));
 }
