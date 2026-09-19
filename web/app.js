@@ -17,6 +17,7 @@ const S = {
   newCat: false,   // 카테고리 이름을 그 자리에서 받는 중
   peek: null,      // 지금 들여다보는 옛 판 { docId, i }
   saveOpen: null,  // 지금 열린 창이 «닫기 전에 저장할 것»을 여기 걸어 둔다
+  askOpen: null,   // 새로 만드는 창이 «닫기 전에 물어볼 것»을 여기 걸어 둔다
   focusNext: '',   // 다시 그린 뒤 이 칸에 커서를 둔다
   redrawing: false,// 다시 그리는 중 — 그때 떨어지는 포커스는 저장이 아니다
   last: '',
@@ -99,6 +100,9 @@ function jobLine(j) {
   return j.error ? '실패 — ' + j.error.slice(0, 80) : '실패';
 }
 
+// 그 칸들 가운데 한 글자라도 쳐 둔 것이 있는가
+const typedAny = (...ids) => ids.some((id) => String(S.typed[id] || '').trim());
+
 const firstLine = (text) => (String(text || '').split('\n').map((l) => l.trim()).find((l) => l) || '붙여 넣은 글').slice(0, 24);
 
 async function api(op, body = {}) {
@@ -142,6 +146,7 @@ function render() {
   const tops = SCROLLERS.map((sel) => { const n = document.querySelector(sel); return n ? n.scrollTop : 0; });
 
   S.saveOpen = null;
+  S.askOpen = null;
   S.redrawing = true;
   $('root').replaceChildren(S.pid && S.project ? app() : projectList());
   $('layer1').replaceChildren(...(S.open ? [layerOne()] : []));
@@ -443,6 +448,7 @@ function agentPanel(close) {
   };
   if (!making && !a) return h('div', { class: 'panel narrow' }, h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '없음' }), h('button', { class: 'x', text: '×', onclick: close })));
   if (!making) S.saveOpen = save;
+  else S.askOpen = { label: '만들고 닫기', dirty: () => typedAny('ag-name', 'ag-role', 'ag-craft'), save: makeAgent };
   return h('div', { class: 'panel' },
     h('div', { class: 'panel-head' },
       h('div', { class: 'name', text: making ? '새 에이전트' : a.name }),
@@ -457,18 +463,19 @@ function agentPanel(close) {
           (m) => { if (making) { S.open.model = m; render(); } else api('agent.write', { id: a.id, model: m }); },
           '작품을 따름')),
       h('div', null, h('div', { class: 'lab', text: '작법' }), area('ag-craft', '작법', a ? a.craft : '', { class: 'body-edit', onblur: save })),
-      making ? h('div', null, h('button', {
-        class: 'btn', text: '만들기',
-        onclick: async () => {
-          const body = { name: $('ag-name').value, role: $('ag-role').value, craft: $('ag-craft').value, model: S.open.model || '' };
-          // 한 글자도 치지 않았으면 짓지 않는다 — 창만 닫힌다.
-          if (!String(body.name).trim() && !String(body.role).trim() && !String(body.craft).trim()) return close();
-          if (!String(body.name).trim()) return;
-          clearTyped('ag-name', 'ag-role', 'ag-craft');
-          await api('agent.create', body);
-          close();
-        },
-      })) : null));
+      making ? h('div', null, h('button', { class: 'btn', text: '만들기', onclick: makeAgent })) : null));
+}
+
+// 돌려주는 값: 갈무리했으면 true. 이름이 비면 짓지 못하므로 창을 열어 둔다.
+async function makeAgent() {
+  const body = { name: $('ag-name').value, role: $('ag-role').value, craft: $('ag-craft').value, model: (S.open && S.open.model) || '' };
+  // 한 글자도 치지 않았으면 짓지 않는다 — 창만 닫힌다.
+  if (!String(body.name).trim() && !String(body.role).trim() && !String(body.craft).trim()) { closeLayer(true); return true; }
+  if (!String(body.name).trim()) return false;   // 이름은 있어야 한다
+  clearTyped('ag-name', 'ag-role', 'ag-craft');
+  await api('agent.create', body);
+  closeLayer(true);
+  return true;
 }
 
 async function openPrompt(code) {
@@ -555,7 +562,24 @@ const LAYER_KEYS = ['d-title', 'd-body', 'd-req', 't-say', 'nd-name', 'pp-req',
   'pr-name', 'pr-role', 'pr-task', 'pr-craft',
   'ag-name', 'ag-role', 'ag-craft'];
 
-function closeLayer() {
+function closeLayer(force) {
+  // 새로 만드는 창은 닫으면 치던 글이 사라진다 — 그때는 그냥 닫지 않고 묻는다(사용자 지시).
+  // 고치는 창은 닫을 때 저장되므로 묻지 않는다(잃는 것이 없다).
+  const asking = S.askOpen;
+  if (!force && asking && asking.dirty()) {
+    S.confirm = {
+      text: '치던 글이 있습니다',
+      acts: [
+        {
+          label: asking.label, class: 'btn',
+          run: async () => { S.confirm = null; render(); const done = await asking.save(); if (!done) render(); },
+        },
+        { label: '버리고 닫기', class: 'btn-line', run: () => { S.confirm = null; closeLayer(true); } },
+      ],
+    };
+    render();
+    return;
+  }
   // 닫기 전에 저장을 먼저 부른다 — Esc·×·바깥 클릭이 모두 같은 길을 지난다.
   // (창이 사라지며 나는 blur 에 기대면 창 바깥을 누른 때와 Esc 를 누른 때가 갈린다.)
   const save = S.saveOpen;
@@ -667,11 +691,21 @@ function crewIndex() {
   return m;
 }
 
+// 그 자리에 늘 서는 사람의 이름 — 설정의 프롬프트 목록에서 가져온다.
+function seatNames(codes) {
+  const by = new Map(((S.project && S.project.prompts) || []).map((x) => [x.code, x.name]));
+  return codes.map((c) => by.get(c)).filter(Boolean);
+}
+
 // pool 이 'agent' 면 고르는 창이 문서가 아니라 사람을 펼친다.
-function refLine(label, ids, byId, save, selfId, pool) {
+// fixed 는 «늘 서는 자리 사람» — 뗄 수 없으므로 × 를 붙이지 않는다.
+function refLine(label, ids, byId, save, selfId, pool, fixed) {
   return h('div', null,
     h('div', { class: 'lab', text: label }),
     h('div', { class: 'line' },
+      (fixed || []).map((name) => h('span', { class: 'chip' },
+        h('span', { class: 'mark', text: '자리' }),
+        h('span', { text: name }))),
       (ids || []).map((id) => {
         const t = byId.get(id);
         return h('span', { class: 'chip' + (t && t.isFinal ? ' final' : '') },
@@ -724,7 +758,8 @@ function threadPanel(close) {
       h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
       refLine('참조', t.refIds, byId, (ids) => api('thread.refs', { id: t.id, refIds: ids }), null),
-      refLine('에이전트', t.agentIds, crewIndex(), (ids) => api('thread.agents', { id: t.id, agentIds: ids }), null, 'agent'),
+      refLine('에이전트', t.agentIds, crewIndex(), (ids) => api('thread.agents', { id: t.id, agentIds: ids }), null, 'agent',
+        seatNames(['F-TALK', 'F-THREADDOC'])),
       h('div', { class: 'talk' }, flow),
       h('div', { class: 'send' },
         area('t-say', '요청사항'),
@@ -732,8 +767,15 @@ function threadPanel(close) {
         h('button', { class: 'btn-line', text: '문서로 정리', onclick: async () => { const v = $('t-say').value; clearTyped('t-say'); await api('thread.doc', { id: t.id, request: v }); } }))));
 }
 
+const NEW_PROJECT_KEYS = ['n-name', 'n-form', 'n-outline', 'n-length', 'n-standard', 'n-request', 'n-mat'];
+
 function newProjectPanel(close) {
   const add = (name, text) => { if (String(text || '').trim()) { S.draft.push({ name: name || firstLine(text), text }); render(); } };
+  S.askOpen = {
+    label: '만들고 닫기',
+    dirty: () => typedAny(...NEW_PROJECT_KEYS) || S.draft.length > 0,
+    save: makeProject,
+  };
   return h('div', { class: 'panel' },
     h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '새 작품' }), h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
@@ -755,66 +797,74 @@ function newProjectPanel(close) {
         h('div', { class: 'line', style: 'margin-top:8px' },
           h('button', { class: 'btn-line', text: '추가', onclick: () => { const t = $('n-mat').value; clearTyped('n-mat'); add('', t); } }),
           fileButton(add))),
-      h('div', { style: 'padding-top:6px' }, h('button', {
-        class: 'btn', text: '생성',
-        onclick: async () => {
-          const rest = $('n-mat') ? $('n-mat').value : '';
-          const body = {
-            name: $('n-name').value, standard: $('n-standard').value, request: $('n-request').value,
-            spec: { outline: $('n-outline').value, form: $('n-form').value, length: $('n-length').value },
-            materials: rest.trim() ? [...S.draft, { name: '', text: rest }] : S.draft.slice(),
-          };
-          // 한 글자도 치지 않았으면 만들지 않는다 — 창만 닫힌다.
-          const empty = !body.name.trim() && !body.standard.trim() && !body.request.trim()
-            && !body.spec.outline.trim() && !body.spec.form.trim() && !body.spec.length.trim()
-            && !body.materials.length;
-          if (empty) return close();
-          const r = await api('project.create', body);
-          if (r.ok) { S.pid = r.pid; S.draft = []; S.open = null; S.project = null; S.typed = {}; pull(true); }
-          else { S.open = { type: 'newproject', err: r.error }; render(); }
-        },
-      }), S.open.err ? h('span', { class: 'notice', style: 'margin-left:10px', text: S.open.err }) : null)));
+      h('div', { style: 'padding-top:6px' }, h('button', { class: 'btn', text: '생성', onclick: makeProject }),
+        S.open.err ? h('span', { class: 'notice', style: 'margin-left:10px', text: S.open.err }) : null)));
+}
+
+// 돌려주는 값: 이 자리에서 창까지 다 갈무리했으면 true. 거절당했으면 false(창을 열어 둔다).
+async function makeProject() {
+  const rest = $('n-mat') ? $('n-mat').value : '';
+  const body = {
+    name: $('n-name').value, standard: $('n-standard').value, request: $('n-request').value,
+    spec: { outline: $('n-outline').value, form: $('n-form').value, length: $('n-length').value },
+    materials: rest.trim() ? [...S.draft, { name: '', text: rest }] : S.draft.slice(),
+  };
+  // 한 글자도 치지 않았으면 만들지 않는다 — 창만 닫힌다.
+  const empty = !body.name.trim() && !body.standard.trim() && !body.request.trim()
+    && !body.spec.outline.trim() && !body.spec.form.trim() && !body.spec.length.trim()
+    && !body.materials.length;
+  if (empty) { closeLayer(true); return true; }
+  const r = await api('project.create', body);
+  if (r.ok) { S.pid = r.pid; S.draft = []; S.open = null; S.project = null; S.typed = {}; pull(true); return true; }
+  S.open = { type: 'newproject', err: r.error };
+  return false;
 }
 
 // «에이전트 준비 다시» — 이번 한 번만 실을 요청사항을 받는다(비워 두어도 된다. 저장하지 않는다).
 function preparePanel(close) {
+  S.askOpen = { label: '시작하고 닫기', dirty: () => typedAny('pp-req'), save: startPrepare };
   return h('div', { class: 'panel narrow' },
     h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '에이전트 준비' }), h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
       h('div', null, h('div', { class: 'lab', text: '요청사항' }), area('pp-req', '요청사항')),
-      h('button', {
-        class: 'btn', text: '시작',
-        onclick: async () => {
-          const req = $('pp-req') ? $('pp-req').value : '';
-          clearTyped('pp-req');
-          const r = await api('project.prepare', { request: req });
-          if (r.ok) close();
-          else { S.open = { type: 'prepare', err: r.error }; render(); }
-        },
-      }),
+      h('button', { class: 'btn', text: '시작', onclick: startPrepare }),
       S.open.err ? h('div', { class: 'notice', text: S.open.err }) : null));
 }
 
+async function startPrepare() {
+  const req = $('pp-req') ? $('pp-req').value : '';
+  clearTyped('pp-req');
+  const r = await api('project.prepare', { request: req });
+  if (r.ok) { closeLayer(true); return true; }
+  S.open = { type: 'prepare', err: r.error };
+  return false;
+}
+
 function newDocPanel(close) {
+  S.askOpen = { label: '만들고 닫기', dirty: () => typedAny('nd-name'), save: makeDoc };
   return h('div', { class: 'panel narrow' },
     h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '문서' }), h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
       textbox('nd-name', '이름'),
       h('div', { class: 'line' },
         h('button', {
-          class: 'btn', text: '생성',
-          onclick: async () => {
-            // 아무것도 치지 않았으면 아무것도 만들지 않는다 — 창만 닫힌다.
-            const title = ($('nd-name') ? $('nd-name').value : '').trim();
-            if (!title) return close();
-            const r = await api('doc.create', { title });
-            if (r.ok) { S.open = { type: 'doc', id: r.id }; render(); }
-          },
+          class: 'btn', text: '생성', onclick: makeDoc,
         }),
         fileButton(async (name, text) => {
           const r = await api('doc.create', { title: name.replace(/\.[^.]+$/, ''), body: text });
           if (r.ok) { S.open = { type: 'doc', id: r.id }; render(); }
         }))));
+}
+
+// 돌려주는 값: 갈무리했으면 true. 만들기는 문서 창을 여는 것으로 끝난다.
+async function makeDoc() {
+  // 아무것도 치지 않았으면 아무것도 만들지 않는다 — 창만 닫힌다.
+  const title = ($('nd-name') ? $('nd-name').value : '').trim();
+  if (!title) { closeLayer(true); return true; }
+  clearTyped('nd-name');
+  const r = await api('doc.create', { title });
+  if (r.ok) { S.open = { type: 'doc', id: r.id }; render(); }
+  return true;
 }
 
 // ---------------------------------------------------------------- 2겹 창
@@ -878,10 +928,13 @@ function pickLayer() {
 
 function confirmLayer() {
   const close = () => { S.confirm = null; render(); };
+  // 갈래를 적어 주지 않으면 지난날처럼 [삭제] 하나다.
+  const acts = S.confirm.acts || [{ label: '삭제', class: 'btn-red', run: S.confirm.run }];
   return h('div', { class: 'layer two' },
     h('div', { class: 'panel narrow' },
       h('div', { class: 'panel-head' }, h('div', { class: 'name', text: S.confirm.text }), h('button', { class: 'x', text: '×', onclick: close })),
-      h('div', { class: 'panel-body' }, h('button', { class: 'btn-red', text: '삭제', onclick: S.confirm.run }))));
+      h('div', { class: 'panel-body' },
+        h('div', { class: 'line' }, acts.map((a) => h('button', { class: a.class || 'btn', text: a.label, onclick: a.run }))))));
 }
 
 // ---------------------------------------------------------------- 시작

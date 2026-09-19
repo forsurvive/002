@@ -70,7 +70,7 @@ export function materialsByIds(project, ids = []) {
 export async function callOnce({
   pid, code, refIds = [], targetIds = [], agentIds = [], request = '', taskExtra = '',
   materials = false, allFinals = false, talk = [], prev = '', next = '',
-  signal = null, noCount = true, finalFirst = false,
+  signal = null, noCount = true, finalFirst = false, keepSeat = false,
 }) {
   const project = state.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
@@ -102,11 +102,14 @@ export async function callOnce({
   const refs = docsByIds(project, docRefIds).filter((d) => !taken.has(d.id));
 
   const task = [pr.task, taskExtra].filter((x) => String(x || '').trim()).join('\n');
-  // 작가가 이 문서에 걸어 둔 사람들 — 있으면 이들이 «누가 쓰는가»를 대신한다.
-  const crew = model.agentsByIds(project, agentIds);
+  // 작가가 걸어 둔 사람들 — 있으면 이들이 «누가 쓰는가»를 대신한다.
+  // keepSeat 이면 그 자리의 사람이 맨 앞에 그대로 남고 걸린 사람은 거기에 더해진다(논의 스레드).
+  // 자리의 작법은 «■ 작법» 첫 덩이로 이미 실리므로 여기서는 이름과 역할만 세운다.
+  const picked = model.agentsByIds(project, agentIds);
+  const crew = keepSeat ? [{ id: '', name: pr.name, role: pr.role, craft: '', model: '' }, ...picked] : picked;
   // 쓸 모델은 «제 모델을 정해 둔 첫 사람»이 정한다. 아무도 정하지 않았으면 프로젝트의 것을 쓴다.
-  const picked = crew.find((c) => String(c.model || '').trim());
-  const useModel = picked ? picked.model : project.model;
+  const bringsModel = picked.find((c) => String(c.model || '').trim());
+  const useModel = bringsModel ? bringsModel.model : project.model;
   const systemPrompt = buildSystem({ prompt: pr, prev, next, crew, withFinalRule: finals.length > 0, withNoCount: noCount });
   const prompt = buildUser({
     project,
@@ -186,7 +189,7 @@ export async function runTalk(pid, threadId, text, ctx) {
 
   const r = await callWithRetry({
     pid, code: 'F-TALK', refIds: (t.refIds || []).slice(), agentIds: (t.agentIds || []).slice(), talk,
-    signal: ctx && ctx.signal,
+    keepSeat: true, signal: ctx && ctx.signal,
   });
   if (!r.ok) return r;
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
@@ -214,7 +217,7 @@ export async function runThreadDoc(pid, threadId, request, ctx) {
 
   const r = await callWithRetry({
     pid, code: 'F-THREADDOC', refIds: (t.refIds || []).slice(), agentIds: (t.agentIds || []).slice(), talk, request,
-    signal: ctx && ctx.signal,
+    keepSeat: true, signal: ctx && ctx.signal,
   });
   if (!r.ok) return r;
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };

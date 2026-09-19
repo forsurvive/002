@@ -779,6 +779,22 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('논의에도 걸린 사람이 선다', talkSys.includes('밤의 문장가 — 어둠을 쓴다'));
   ok('자리의 작법은 그대로 남는다', talkSys.includes('■ 작법') && talkSys.includes('▶ 밤의 문장가'));
+  // 논의에서는 자리 사람이 물러나지 않는다 — 걸린 사람이 거기에 더해진다(사용자 지시)
+  const talkSeat = prompts.BUILTIN['F-TALK'].name;
+  ok('자리 사람이 맨 앞에 남는다', talkSys.includes('■ 에이전트\n' + talkSeat + ' — '));
+  ok('걸린 사람은 그 밑에 선다', talkSys.indexOf(talkSeat) < talkSys.indexOf('밤의 문장가 — 어둠을 쓴다'));
+  ok('여럿이니 함께 쓴다고 이른다', talkSys.includes('함께 쓴다'));
+
+  // 아무도 걸지 않은 스레드는 자리 사람 하나뿐이다
+  const bare = await post('thread.create', { pid, title: '맨 논의' });
+  let bareSys = '';
+  globalThis.__SE2_MOCK_FN = (args) => { if (args.mockKey === 'F-TALK') bareSys = args.systemPrompt; return MOCK_FN(args); };
+  await post('thread.send', { pid, id: bare.id, text: '한 마디' });
+  await settle(pid);
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  ok('맨 스레드도 자리 사람이 선다', bareSys.includes('■ 에이전트\n' + talkSeat + ' — '));
+  ok('혼자면 함께 쓴다는 말이 없다', !bareSys.includes('함께 쓴다'));
+  await post('thread.delete', { pid, ids: [bare.id] });
 
   await post('agent.delete', { pid, ids: [made.id] });
   st = await stateOf(pid);
@@ -893,9 +909,15 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('설정 항목이 서로 떨어져 보인다',
     app.includes("class: 'settings'") && /\.settings > \* \+ \*/.test(readFileSync(join(ROOT, 'web', 'style.css'), 'utf8')));
   // 아무것도 치지 않았으면 만들지 않고 창만 닫힌다 (사용자 지시)
-  ok('빈 채로 [생성]하면 문서를 만들지 않는다', /if \(!title\) return close\(\);/.test(app));
-  ok('빈 채로 [생성]하면 작품을 만들지 않는다', /if \(empty\) return close\(\);/.test(app));
-  ok('빈 채로 [만들기]하면 사람을 짓지 않는다', /!String\(body\.craft\)\.trim\(\)\) return close\(\);/.test(app));
+  ok('빈 채로 [생성]하면 문서를 만들지 않는다', /if \(!title\) \{ closeLayer\(true\); return true; \}/.test(app));
+  ok('빈 채로 [생성]하면 작품을 만들지 않는다', /if \(empty\) \{ closeLayer\(true\); return true; \}/.test(app));
+  ok('빈 채로 [만들기]하면 사람을 짓지 않는다', /!String\(body\.craft\)\.trim\(\)\) \{ closeLayer\(true\); return true; \}/.test(app));
+  // 치던 글이 있으면 그냥 닫히지 않고 묻는다 (사용자 지시)
+  ok('닫기 전에 물어볼 것을 걸어 둔다', /S\.askOpen = \{ label:/.test(app) || /S\.askOpen = \{\n/.test(app));
+  ok('치던 글이 있으면 묻는다', app.includes("text: '치던 글이 있습니다'") && app.includes("label: '버리고 닫기'"));
+  ok('물음은 갈래를 여럿 받는다', /const acts = S\.confirm\.acts \|\|/.test(app));
+  ok('새로 만드는 창 넷이 모두 물어본다', (app.match(/S\.askOpen = \{/g) || []).length === 4);
+  ok('논의에 자리 사람이 칩으로 선다', /seatNames\(\['F-TALK', 'F-THREADDOC'\]\)/.test(app));
   for (const op of used) ok('서버에 문이 있다: ' + op, OP_NAMES.includes(op));
   for (const m of app.matchAll(/\/api\/(state|download)/g)) ok('상태·내려받기 경로', !!m[1]);
   // 색은 :root 에 적힌 것만 쓴다 — 적·백·흑·파랑 네 갈래.
