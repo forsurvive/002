@@ -238,13 +238,17 @@ textarea { resize: vertical; min-height: 88px; line-height: 1.65; }
 .card .name { font-weight: 700; font-size: 17px; letter-spacing: -.018em; }
 .card .when { margin-top: 6px; }
 
+.plus-wrap { position: relative; display: flex; justify-content: flex-end; }
 .menu {
+  position: absolute; top: calc(100% + 10px); right: 0; z-index: 15;
+  animation: menu-in .16s cubic-bezier(.2, .9, .3, 1); transform-origin: top right;
   background: rgba(255, 255, 255, .88);
   -webkit-backdrop-filter: saturate(180%) blur(24px);
   backdrop-filter: saturate(180%) blur(24px);
-  border-radius: var(--r-m); width: 224px; margin: 10px 0 0 auto;
+  border-radius: var(--r-m); width: 224px;
   box-shadow: 0 10px 40px rgba(28, 28, 30, .18); overflow: hidden;
 }
+@keyframes menu-in { from { opacity: 0; transform: translateY(-8px) scale(.98); } to { opacity: 1; transform: none; } }
 .menu button { display: block; width: 100%; text-align: left; padding: 11px 16px; font-size: 15px; }
 .menu button + button { border-top: 1px solid var(--line-soft); }
 .menu button:hover { background: var(--blue); color: var(--paper); }
@@ -265,6 +269,8 @@ textarea { resize: vertical; min-height: 88px; line-height: 1.65; }
   animation: panel-in .2s cubic-bezier(.2, .9, .3, 1);
 }
 @keyframes panel-in { from { opacity: 0; transform: scale(.97) translateY(8px); } to { opacity: 1; transform: none; } }
+/* 열려 있던 창을 다시 그릴 때 — 열리는 시늉을 되풀이하지 않는다(번쩍임을 없앤다). */
+.layer.still, .layer.still > .panel { animation: none; }
 .panel.narrow { width: min(540px, 100%); }
 .panel-head {
   display: flex; align-items: center; gap: 12px; padding: 15px 20px;

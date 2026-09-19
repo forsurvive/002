@@ -49,6 +49,10 @@ function sleepBriefly(ms) {
   while (Date.now() < until) { /* 기다린다 */ }
 }
 
+// 고를 수 있는 모델 — «기본값»(빈 값)은 두지 않는다.
+// 무엇이 돌지 모르는 칸이 있으면 사람마다 모델을 정해 둔 뜻이 흐려진다(사용자 지시, 2026-09-19).
+export const MODELS = ['opus', 'sonnet', 'fable'];
+
 export function readJson(file, fallback = null) {
   try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return fallback; }
 }
@@ -68,7 +72,7 @@ export function blankProject(id, name) {
     threads: [],
     trash: [],
     jobs: [],
-    model: '',        // 쓸 클로드 모델. 빈 값이면 실행기 기본값
+    model: 'opus',    // 쓸 클로드 모델 — 늘 하나로 정해져 있다(사람이 따로 정하지 않은 자리가 이것을 쓴다)
     prompts: {},      // 작가가 고친 작법 프롬프트 (코드 → {name, role, task, craft})
     crew: [],         // 작가가 지은 에이전트 — 문서에 걸면 그 사람이 쓴다
     agents: null,
@@ -96,7 +100,7 @@ export function loadProject(id) {
   if (!p || !p.id) return null;
   // 옛 파일에 빠진 칸이 있어도 화면이 깨지지 않게 골격을 덮어씌운다.
   const base = blankProject(p.id, p.name);
-  return {
+  const out = {
     ...base, ...p,
     spec: { ...base.spec, ...(p.spec || {}) },
     materials: p.materials || [],
@@ -108,6 +112,10 @@ export function loadProject(id) {
     trash: p.trash || [],
     jobs: p.jobs || [],
   };
+  // 옛 파일에는 «기본값»이라는 빈 칸이 있었다 — 정해진 모델로 내려 읽는다.
+  if (!MODELS.includes(out.model)) out.model = 'opus';
+  for (const a of out.crew) if (!MODELS.includes(a.model)) a.model = out.model;
+  return out;
 }
 
 export function saveProject(p) {

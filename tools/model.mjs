@@ -5,7 +5,7 @@
 //  2) '새로 추가된 문서' 카테고리는 레코드가 아니라 «categoryId 가 없는 문서들»이다.
 //     그래서 비면 저절로 사라지고, 새 문서가 생기면 저절로 돌아온다.
 
-import { newId } from './store.mjs';
+import { newId, MODELS } from './store.mjs';
 
 export const INBOX = '__inbox__';
 export const INBOX_NAME = '새로 추가된 문서';
@@ -248,7 +248,7 @@ export function agentCreate(p, fields = {}) {
     name: str(fields.name).trim() || '이름 없음',
     role: str(fields.role),
     craft: str(fields.craft),
-    model: str(fields.model),   // 빈 값이면 프로젝트에 정해 둔 모델을 따른다
+    model: MODELS.includes(str(fields.model)) ? str(fields.model) : (p.model || 'opus'),   // 비워 두지 않는다
     createdAt: now(),
   };
   p.crew.push(a);
@@ -263,7 +263,7 @@ export function agentWrite(p, id, next = {}) {
   if (next.name != null) a.name = str(next.name).trim() || a.name;
   if (next.role != null) a.role = str(next.role);
   if (next.craft != null) a.craft = str(next.craft);
-  if (next.model != null) a.model = str(next.model);
+  if (next.model != null && MODELS.includes(str(next.model))) a.model = str(next.model);
   return a;
 }
 

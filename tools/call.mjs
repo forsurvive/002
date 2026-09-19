@@ -16,7 +16,7 @@ export const CALL_TIMEOUT_MS = Math.max(60000, Number(process.env.SE2_CALL_TIMEO
 
 const LIVE = new Set();
 
-export const MODELS = ['', 'opus', 'sonnet', 'fable'];   // 빈 값은 «실행기 기본값»
+export { MODELS } from './store.mjs';   // 고를 수 있는 모델 — 빈 값은 없다
 
 export function buildCallArgs(systemPromptFile, model) {
   const m = String(model || '').trim();

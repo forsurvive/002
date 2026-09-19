@@ -125,6 +125,8 @@ async function prepareAgentsInner(pid, ctx, project, request = '') {
   for (let i = 0; i < AGENT_SLOTS.length; i++) {
     const code = AGENT_SLOTS[i];
     if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
+    if (ctx && ctx.gate) await ctx.gate();
+    if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
     const cur = state.get(pid).agents || {};
     if (cur[code] && cur[code].craft) continue; // 이미 지은 자리는 건너뛴다
 
@@ -168,6 +170,7 @@ export async function runStudy(pid, ctx, request = '') {
   const project = state.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
   if (!(project.materials || []).length) return { ok: true, skipped: true };
+  if (ctx && ctx.gate) await ctx.gate();
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   if (ctx) ctx.step(STUDY_TITLE);
 

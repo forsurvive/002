@@ -4,9 +4,34 @@
 import { newId } from './store.mjs';
 import * as state from './state.mjs';
 
-const live = new Map(); // jobId → { controller, pid }
+const live = new Map(); // jobId → { controller, pid, paused, wake }
 
-export const STATUS = { running: '진행 중', done: '완료', stopped: '중지됨', failed: '실패' };
+export const STATUS = { running: '진행 중', paused: '멈춤', done: '완료', stopped: '중지됨', failed: '실패' };
+
+// 멈춤 — 돌던 호출 한 건은 끝까지 두고, 다음 호출 앞에서 선다.
+// (호출을 중간에 끊으면 그 호출은 버려지고 구독만 나간다.)
+export function pause(pid, jobId) {
+  const h = live.get(jobId);
+  if (!h) return { ok: false, error: '도는 작업이 아닙니다' };
+  h.paused = true;
+  state.update(pid, (p) => {
+    const j = p.jobs.find((x) => x.id === jobId);
+    if (j && j.status === 'running') j.status = 'paused';
+  });
+  return { ok: true };
+}
+
+export function resume(pid, jobId) {
+  const h = live.get(jobId);
+  if (!h) return { ok: false, error: '도는 작업이 아닙니다' };
+  h.paused = false;
+  if (h.wake) { const w = h.wake; h.wake = null; w(); }
+  state.update(pid, (p) => {
+    const j = p.jobs.find((x) => x.id === jobId);
+    if (j && j.status === 'paused') { j.status = 'running'; j.stepAt = Date.now(); }
+  });
+  return { ok: true };
+}
 
 function put(pid, jobId, patch) {
   state.update(pid, (p) => {
@@ -33,13 +58,21 @@ export function start(pid, { kind = 'call', title = '작업', targetId = '', run
   state.update(pid, (pr) => { pr.jobs.push(job); });
 
   const controller = new AbortController();
-  live.set(id, { controller, pid });
+  const handle = { controller, pid, paused: false, wake: null };
+  live.set(id, handle);
 
   const ctx = {
     pid,
     jobId: id,
     signal: controller.signal,
     step(name) { put(pid, id, { step: String(name || ''), stepAt: Date.now() }); },
+    // 호출과 호출 사이의 문지기 — 멈춰 두면 여기서 기다린다(돌던 호출 한 건은 끝까지 간다).
+    async gate() {
+      while (handle.paused && !controller.signal.aborted) {
+        await new Promise((resolve) => { handle.wake = resolve; });
+      }
+      return !controller.signal.aborted;
+    },
     addDoc(docId) {
       state.update(pid, (pr) => {
         const j = pr.jobs.find((x) => x.id === id);
@@ -66,7 +99,11 @@ export function start(pid, { kind = 'call', title = '작업', targetId = '', run
 
 export function stop(pid, jobId) {
   const h = live.get(jobId);
-  if (h) h.controller.abort();
+  if (h) {
+    h.controller.abort();
+    h.paused = false;
+    if (h.wake) { const w = h.wake; h.wake = null; w(); }   // 문지기에 갇혀 있으면 풀어 준다
+  }
   // 이미 끝난 작업의 «완료»·«실패»를 «중지됨»으로 뒤집지 않는다.
   state.update(pid, (p) => {
     const j = p.jobs.find((x) => x.id === jobId);
@@ -88,7 +125,7 @@ export function isTargetRunning(pid, targetId) {
 
 export function isKindRunning(pid, kind) {
   const p = state.get(pid);
-  return !!(p && p.jobs.some((j) => j.kind === kind && j.status === 'running'));
+  return !!(p && p.jobs.some((j) => j.kind === kind && (j.status === 'running' || j.status === 'paused')));
 }
 
 // 목록에서 지운다. 돌고 있으면 먼저 멈춘다. 산출 문서는 건드리지 않는다.

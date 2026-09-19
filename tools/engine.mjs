@@ -161,6 +161,8 @@ export async function runUpdate(pid, docId, ctx, { modelPick = '' } = {}) {
   };
 
   // 합평회에 여럿이 걸렸으면 각자 제 합평을 내고, 그 뒤에 한 자리가 그것들을 모은다(사용자 지시).
+  if (ctx && ctx.gate) await ctx.gate();
+  if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   const r = d.kind === 'review' && agentIds.length > 1
     ? await runPanelReview(pid, d, agentIds, common, ctx)
     : await callWithRetry({ ...common, code: KIND_CODE[d.kind] || 'F-UPDATE', agentIds });
@@ -180,6 +182,7 @@ async function runPanelReview(pid, d, agentIds, common, ctx) {
 
   const said = [];
   for (const one of crew) {
+    if (ctx && ctx.gate) await ctx.gate();
     if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
     if (ctx) ctx.step(d.title + ' — ' + one.name);
     const r = await callWithRetry({ ...common, code: 'F-REVIEW', agentIds: [one.id] });
@@ -187,6 +190,7 @@ async function runPanelReview(pid, d, agentIds, common, ctx) {
     said.push({ id: '', name: one.name + '의 합평', text: r.text });
   }
 
+  if (ctx && ctx.gate) await ctx.gate();
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   if (ctx) ctx.step(d.title + ' — 모으기');
   // 모으는 자리에는 사람을 걸지 않는다 — 누구의 편도 들지 않아야 한다.
@@ -212,6 +216,8 @@ export async function runTalk(pid, threadId, text, ctx, { modelPick = '' } = {})
 
   const project = state.get(pid);
   const t = model.findThread(project, threadId);
+  if (ctx && ctx.gate) await ctx.gate();
+  if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   if (ctx) ctx.step(t.title);
   // 대화는 «물은 그 자리»까지만 싣는다(기다리는 동안 작가가 다른 가지로 옮겨 가도 흔들리지 않는다).
   const path = model.threadPath(t, askedId);
@@ -242,6 +248,8 @@ export async function runThreadDoc(pid, threadId, request, ctx, { modelPick = ''
   const project = state.get(pid);
   const t = project && model.findThread(project, threadId);
   if (!t) return { ok: false, error: '스레드를 찾을 수 없습니다' };
+  if (ctx && ctx.gate) await ctx.gate();
+  if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   if (ctx) ctx.step(t.title);
   const talk = model.threadPath(t).map((m) => ({ name: m.role === 'user' ? '작가' : '너', text: m.text }));
 

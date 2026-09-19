@@ -338,7 +338,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
-  // 도는 작업 중지와 프로젝트 삭제
+  // 도는 작업 삭제(멈추고 치운다) · 일시중지와 이어 하기 · 프로젝트 삭제
   const r = await post('project.create', {
     name: '멈춤 시험', spec: { outline: '개요', form: '소설', length: '2화' },
     materials: [{ name: '자료', text: '본문' }],
@@ -346,12 +346,41 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const pid = r.pid;
   await settle(pid);
   process.env.SE2_MOCK_DELAY_MS = '150';
-  const made = await post('doc.create', { pid, title: '중지할 문서' });
+  const made = await post('doc.create', { pid, title: '치울 문서' });
+  await post('doc.write', { pid, id: made.id, request: '써 다오' });
   const started = await post('doc.update', { pid, id: made.id });
-  await post('job.stop', { pid, id: started.jobId });
-  const p = await settle(pid);
+  await post('job.remove', { pid, id: started.jobId });
+  let p = await settle(pid);
   process.env.SE2_MOCK_DELAY_MS = '3';
-  eq('중지됨', p.jobs.find((j) => j.id === started.jobId).status, 'stopped');
+  ok('삭제하면 줄에서 사라진다', !p.jobs.some((j) => j.id === started.jobId));
+
+  // 일시중지 — 돌던 호출 한 건은 끝까지 가고, 다음 호출 앞에서 선다.
+  // 그래서 호출이 여럿인 일(합평회 = 평 둘 + 모으기)로 붙든다.
+  const ag = await post('project.prepare', { pid });
+  ok('준비를 다시 걸 수 없다(이미 되어 있다)', !ag.ok);
+
+  const one = await post('agent.create', { pid, name: '갑', role: 'ㄱ', craft: 'ㄱ', model: 'opus' });
+  const two = await post('agent.create', { pid, name: '을', role: 'ㄴ', craft: 'ㄴ', model: 'opus' });
+  const tgt = await post('doc.create', { pid, title: '볼 글' });
+  await post('doc.write', { pid, id: tgt.id, body: '본문이 여기 있다' });
+  const rv = await post('doc.create', { pid, title: '합평회', kind: 'review' });
+  await post('doc.write', { pid, id: rv.id, targetIds: [tgt.id], agentIds: [one.id, two.id] });
+
+  process.env.SE2_MOCK_DELAY_MS = '150';
+  const run = await post('doc.update', { pid, id: rv.id });
+  await sleep(40);
+  const paused = await post('job.pause', { pid, id: run.jobId });
+  ok('도는 작업을 멈춘다', paused.ok);
+  await sleep(500);                                   // 세 호출을 다 돌고도 남을 틈
+  let st = await stateOf(pid);
+  eq('멈춘 채로 서 있다', st.project.jobs.find((j) => j.id === run.jobId).status, 'paused');
+  const back = await post('job.resume', { pid, id: run.jobId });
+  ok('다시 잇는다', back.ok);
+  p = await settle(pid);
+  process.env.SE2_MOCK_DELAY_MS = '3';
+  eq('이어 하면 끝까지 간다', p.jobs.find((j) => j.id === run.jobId).status, 'done');
+  ok('멈췄다 이어도 글이 남는다', !!String(p.docs.find((d) => d.id === rv.id).body || '').trim());
+  ok('멈춘 일은 중지가 아니다', !p.jobs.some((j) => j.id === run.jobId && j.status === 'stopped'));
 
   const del = await post('project.delete', { pid });
   ok('프로젝트 삭제', del.ok);
@@ -570,7 +599,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const withModel = call.buildCallArgs('/tmp/sp.txt', 'opus');
   ok('고른 모델이 실린다', withModel.includes('--model') && withModel[withModel.indexOf('--model') + 1] === 'opus');
   ok('--model 은 --tools 앞에 온다', withModel.indexOf('--model') < withModel.indexOf('--tools'));
-  ok('고를 수 있는 값', call.MODELS.includes('opus') && call.MODELS.includes('sonnet') && call.MODELS.includes('fable') && call.MODELS.includes(''));
+  ok('고를 수 있는 값', call.MODELS.includes('opus') && call.MODELS.includes('sonnet') && call.MODELS.includes('fable'));
+  ok('«기본값»이라는 빈 칸은 없다', !call.MODELS.includes(''));
   ok('제어 호출은 고치지 못한다', prompts.CONTROL_CODES.every((c) => !prompts.EDITABLE_CODES.includes(c)));
   ok('집필 프롬프트는 고칠 수 있다', prompts.EDITABLE_CODES.includes('S02') && prompts.EDITABLE_CODES.includes('F-REVIEW'));
 }
@@ -717,7 +747,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('에이전트가 지어진다', made.ok && made.id);
   eq('지을 때 고른 모델이 붙는다', (await stateOf(pid)).project.crew[0].model, 'fable');
   const junk = await post('agent.create', { pid, name: '엉터리 모델', model: '없는모델' });
-  eq('모르는 이름으로 지으면 빈 값', (await stateOf(pid)).project.crew.find((x) => x.id === junk.id).model, '');
+  eq('모르는 이름으로 지으면 작품의 모델', (await stateOf(pid)).project.crew.find((x) => x.id === junk.id).model, 'opus');
   await post('agent.delete', { pid, ids: [junk.id] });
   const dr = await post('doc.create', { pid, title: '걸린 문서' });
   await post('doc.write', { pid, id: dr.id, agentIds: [made.id] });
@@ -742,10 +772,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   await settle(pid);
   eq('제 모델을 정해 둔 사람이 이긴다', usedModel, 'fable');
 
+  // 빈 값은 이제 받지 않는다 — 한 번 정해진 모델은 지워지지 않는다.
   await post('agent.write', { pid, id: made.id, model: '' });
-  await post('doc.update', { pid, id: dr.id });
-  await settle(pid);
-  eq('아무도 정하지 않았으면 작품의 모델', usedModel, 'sonnet');
+  eq('비워도 정해 둔 모델이 남는다', (await stateOf(pid)).project.crew[0].model, 'fable');
 
   await post('agent.write', { pid, id: made.id, model: 'opus' });
   st = await stateOf(pid);
@@ -757,14 +786,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   await post('agent.write', { pid, id: made.id, model: '없는모델' });
   st = await stateOf(pid);
   eq('모르는 이름은 받지 않는다', st.project.crew[0].model, 'opus');
-  await post('agent.write', { pid, id: made.id, model: '' });
-  st = await stateOf(pid);
-  eq('비우면 다시 작품을 따른다', st.project.crew[0].model, '');
-  await post('doc.update', { pid, id: dr.id });
-  await settle(pid);
-  eq('비운 뒤에는 작품의 모델', usedModel, 'sonnet');
   globalThis.__SE2_MOCK_FN = MOCK_FN;
-  ok('고를 수 있는 모델은 넷', call.MODELS.length === 4);
+  ok('고를 수 있는 모델은 셋', call.MODELS.length === 3);
 
   // 논의 스레드에도 건다 — 걸린 사람이 «궁리 나누는이» 자리를 대신한다
   const th = await post('thread.create', { pid, title: '논의' });
@@ -868,13 +891,16 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 // ---------------------------------------------------------------- 자동 집필은 빠졌다 (사용자 지시)
 
 {
-  for (const gone of ['auto.start', 'job.pause', 'job.resume']) {
+  for (const gone of ['auto.start', 'job.stop']) {
     ok('서버에 «' + gone + '» 문이 없다', !OP_NAMES.includes(gone));
   }
+  // 일시중지는 자동 집필과 함께 나갔다가 사용자 지시로 돌아왔다(2026-09-19) — 이번에는 모든 작업에.
+  for (const back of ['job.pause', 'job.resume']) ok('서버에 «' + back + '» 문이 있다', OP_NAMES.includes(back));
   const app = readFileSync(join(ROOT, 'web', 'app.js'), 'utf8');
   ok('화면에 자동 집필이 없다', !app.includes('자동 집필') && !app.includes("'auto'"));
-  ok('화면에 일시중지가 없다', !app.includes('일시중지') && !app.includes('이어 하기'));
-  ok('작업 줄에 «멈춤»이 없다', !app.includes("'멈춤'"));
+  ok('작업마다 일시중지가 붙는다', app.includes('일시중지') && app.includes('이어 하기') && app.includes("'job.pause'"));
+  ok('작업 줄이 «멈춤»을 말한다', app.includes("'멈춤'"));
+  ok('중지 단추는 없다', !app.includes("'job.stop'") && !/text: '중지'/.test(app));
   ok('파이프라인 모듈이 없다', !existsSync(join(ROOT, 'tools', 'auto.mjs')));
 
   // 고칠 수 있는 자리는 «프로그램이 실제로 부르는 여섯»뿐이다.
@@ -975,21 +1001,42 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('합평회에 둘이면 모으는 자리도 보인다', /KIND_SEAT = \{ doc: \['F-UPDATE'\], check: \['F-CONTRA'\], review: \['F-REVIEW', 'F-MERGE'\] \}/.test(app));
   ok('모델이 갈리면 묻는다', /function splitModels\(/.test(app) && /pickOneModel\(/.test(app));
   ok('고른 모델을 실어 보낸다', /model: m\.trim\(\)/.test(app));
-  ok('사람마다 모델을 고른다', /function modelRow\(/.test(app) && app.includes("'작품을 따름'"));
+  ok('사람마다 모델을 고른다', /function modelRow\(/.test(app) && /modelRow\(p\.models, making \? \(S\.open\.model \|\| p\.model\)/.test(app));
+  ok('화면에 «기본값» 칸이 없다', !app.includes("'기본값'") && !app.includes("'작품을 따름'"));
   ok('그 누름은 mousedown 으로 받는다', /onmousedown: \(\) => pick\(m\)/.test(app));
   ok('준비를 다시 걸 길이 있다', app.includes("'project.prepare'"));
   ok('다시 걸며 요청사항을 적는다', /function preparePanel\(/.test(app) && app.includes("area('pp-req'"));
   ok('설정 항목이 서로 떨어져 보인다',
     app.includes("class: 'settings'") && /\.settings > \* \+ \*/.test(readFileSync(join(ROOT, 'web', 'style.css'), 'utf8')));
   // 아무것도 치지 않았으면 만들지 않고 창만 닫힌다 (사용자 지시)
-  ok('빈 채로 [생성]하면 문서를 만들지 않는다', /if \(!title\) \{ closeLayer\(true\); return true; \}/.test(app));
+  ok('빈 채로 [생성]하면 무엇이 빠졌는지 짚어 준다(문서)', app.includes("'필수 항목 누락 — 이름'"));
   ok('빈 채로 [생성]하면 무엇이 빠졌는지 짚어 준다', /'필수 항목 누락 — ' \+ miss\.join\(' · '\)/.test(app) && app.includes('분량은 비워 두면'));
-  ok('빈 채로 [만들기]하면 사람을 짓지 않는다', /!String\(body\.craft\)\.trim\(\)\) \{ closeLayer\(true\); return true; \}/.test(app));
+  ok('빈 채로 [만들기]하면 무엇이 빠졌는지 짚어 준다(에이전트)', /function makeAgent\([^)]*\)[\s\S]{0,400}필수 항목 누락 — 이름/.test(app));
+  ok('시킬 것이 없으면 부르지 않는다', /function missingFor\(/.test(app) && app.includes("'필수 항목 누락 — ' + miss"));
+  ok('보내기·문서로 정리도 짚어 준다', app.includes("'필수 항목 누락 — 할 말'") && app.includes("'필수 항목 누락 — 오간 말'"));
+  const sheetNow = readFileSync(join(ROOT, 'web', 'style.css'), 'utf8');
+  // 열려 있던 창을 다시 그릴 때 열리는 시늉을 되풀이하지 않는다 — 번쩍임의 원인이었다(사용자 지시).
+  ok('같은 창은 다시 열리는 시늉을 하지 않는다', app.includes("classList.add('still')") && /S\.mounted1/.test(app));
+  ok('꾸밈도 그 결을 멈춘다', sheetNow.includes('.layer.still'));
+  // 고르기 창에서 사람을 지으러 갔다가 그 자리로 돌아온다 — 오던 길을 함께 닫지 않는다.
+  ok('오던 길을 적어 둔다', /function openAgent\(id, back\)/.test(app) && app.includes('back: back || null'));
+  ok('닫으면 그 자리로 돌아온다', app.includes('const back = S.open && S.open.back') && app.includes('if (back && back.pick) S.pick = back.pick'));
+  // 알림을 붙이느라 창을 통째로 갈아끼우면 «오던 길»이 사라진다 — 실제로 났다.
+  ok('알림이 창을 갈아끼우지 않는다',
+    app.includes("S.open.err = '필수 항목 누락") && !/S\.open = \{ type: '[a-z]+'[^}]*err:/.test(app));
+  // 차림표는 목록을 밀지 않고 그 위로 내려온다
+  ok('차림표가 목록을 밀지 않는다', app.includes("class: 'plus-wrap'") && /\.menu \{[^}]*position: absolute/.test(sheetNow));
+  // 논의 스레드는 대화하는 자리다
+  ok('논의는 대화하는 자리다', /area\('t-say', '할 말'\)/.test(app) && !/area\('t-say', '요청사항'\)/.test(app));
+  // 에이전트 화면에서는 «작법»이 아니라 «프롬프트»다
+  ok('에이전트 화면은 «프롬프트»라 부른다', /area\('ag-craft', '프롬프트'/.test(app) && /area\('pr-craft', '프롬프트'/.test(app) && !app.includes("text: '작법' }"));
   // 치던 글이 있으면 그냥 닫히지 않고 묻는다 (사용자 지시)
   ok('닫기 전에 물어볼 것을 걸어 둔다', /S\.askOpen = \{ label:/.test(app) || /S\.askOpen = \{\n/.test(app));
   ok('치던 글이 있으면 묻는다', app.includes("text: '치던 글이 있습니다'") && app.includes("label: '버리고 닫기'"));
   ok('물음은 갈래를 여럿 받는다', /const acts = S\.confirm\.acts \|\|/.test(app));
-  ok('새로 만드는 창 넷이 모두 물어본다', (app.match(/S\.askOpen = \{/g) || []).length === 4);
+  // 새로 만드는 창 넷 + 논의(친 말이 있을 때만) = 다섯
+  ok('치던 글이 있는 창 다섯이 모두 물어본다', (app.match(/S\.askOpen = \{/g) || []).length === 5);
+  ok('논의도 보낼지 버릴지 묻는다', app.includes("label: '보내고 닫기'") && app.includes("dirty: () => typedAny('t-say')"));
   ok('논의에 자리 사람이 칩으로 선다', /seatNames\(\['F-TALK', 'F-THREADDOC'\]\)/.test(app));
   for (const op of used) ok('서버에 문이 있다: ' + op, OP_NAMES.includes(op));
   for (const m of app.matchAll(/\/api\/(state|download)/g)) ok('상태·내려받기 경로', !!m[1]);

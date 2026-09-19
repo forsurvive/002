@@ -229,7 +229,9 @@ const OPS = {
   'trash.purge': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.trashPurge(p, id); }),
 
   // ---------------- 작업
-  'job.stop': (b) => jobs.stop(b.pid, b.id),
+  // 중지는 두지 않는다 — 삭제가 멈추고 치운다(사용자 지시, 2026-09-19).
+  'job.pause': (b) => jobs.pause(b.pid, b.id),
+  'job.resume': (b) => jobs.resume(b.pid, b.id),
   'job.remove': (b) => jobs.remove(b.pid, b.id),
 };
 
