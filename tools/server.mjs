@@ -220,9 +220,14 @@ const OPS = {
     const p = state.get(b.pid);
     const t = p && model.findThread(p, b.id);
     if (!t) return bad('스레드를 찾을 수 없습니다');
-    return jobs.start(b.pid, { kind: 'threaddoc', title: t.title, run: (ctx) => engine.runThreadDoc(b.pid, b.id, String(b.request || ''), ctx, { modelPick: pickModel(b.model, '') }) });
+    return jobs.start(b.pid, { kind: 'threaddoc', title: t.title, targetId: t.id, run: (ctx) => engine.runThreadDoc(b.pid, b.id, String(b.request || ''), ctx, { modelPick: pickModel(b.model, '') }) });
   },
   'thread.delete': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.threadDelete(p, id); }),
+  // 갓 만들어 놓고 아무것도 담지 않은 채 창을 닫았을 때 — 없던 일로 돌린다(휴지통에도 두지 않는다).
+  // 비었는지는 서버가 잰다. 답을 적으러 오는 작업이 돌고 있으면 건드리지 않는다.
+  'thread.discard': (b) => (jobs.isTargetRunning(b.pid, b.id)
+    ? ok()
+    : state.update(b.pid, (p) => { model.threadDiscard(p, b.id); })),
 
   // ---------------- 휴지통
   'trash.restore': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.trashRestore(p, id); }),

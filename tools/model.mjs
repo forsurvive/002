@@ -8,6 +8,7 @@
 import { newId, MODELS } from './store.mjs';
 
 export const INBOX = '__inbox__';
+export const THREAD_NAME = '논의';   // 갓 만든 스레드의 이름 — 이것이 그대로면 아직 손대지 않은 것이다
 export const INBOX_NAME = '새로 추가된 문서';
 
 export const KIND_NAME = { doc: '문서', check: '모순 검사', review: '합평회' };
@@ -129,7 +130,7 @@ export function categoryDocIds(p, catId) {
 export function threadCreate(p, fields = {}) {
   const t = {
     id: newId('h'),
-    title: str(fields.title).trim() || '논의',
+    title: str(fields.title).trim() || THREAD_NAME,
     refIds: Array.isArray(fields.refIds) ? fields.refIds.slice() : [],
     agentIds: Array.isArray(fields.agentIds) ? fields.agentIds.slice() : [],
     messages: [],
@@ -204,6 +205,23 @@ export function threadSiblings(t, messageId) {
   const m = t.messages.find((x) => x.id === messageId);
   if (!m) return [];
   return t.messages.filter((x) => x.parentId === m.parentId);
+}
+
+// 아직 아무것도 담기지 않은 스레드 — 차림표를 눌러 만들어지기만 한 그것.
+// 이름까지 그대로여야 «갓 만든 것»이다(이름을 지어 주었으면 작가가 쓰려던 자리다).
+export function threadIsFresh(t) {
+  return !!t && !(t.messages || []).length && !t.headId
+    && !(t.refIds || []).length && !(t.agentIds || []).length
+    && t.title === THREAD_NAME;
+}
+
+// 거두기 — 휴지통을 거치지 않는다. 되살릴 것이 없는 껍데기이기 때문이다.
+// 조건에 어긋나면 아무 일도 하지 않는다(화면이 잘못 재어도 글이 날아가지 않는다).
+export function threadDiscard(p, id) {
+  const i = (p.threads || []).findIndex((t) => t.id === id);
+  if (i < 0 || !threadIsFresh(p.threads[i])) return null;
+  const [t] = p.threads.splice(i, 1);
+  return t;
 }
 
 export function threadDelete(p, id) {

@@ -85,6 +85,8 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   background: var(--paper); border-radius: var(--r-m); box-shadow: var(--shadow-s);
   padding: 12px 14px; margin-bottom: 8px;
 }
+.job.hit { cursor: pointer; }
+.job.hit:hover { background: var(--hover); }
 .job-name { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job-step { font-size: 12.5px; color: var(--dim); margin-top: 2px; min-height: 18px; }
 .job-step.fail { color: var(--red); }
