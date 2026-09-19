@@ -36,7 +36,7 @@ const brandMark = (style) => h('div', { class: 'brand', style, text: STUDIO });
 const GUIDE = [
   ['① 프로젝트를 만든다', '첫 화면 오른쪽 위 [+]. 이름·형식과 자료만 있으면 됩니다(개요와 분량은 비워 두어도 됩니다). 만들고 나면 왼쪽 «에이전트 준비»가 돌며 자료를 한 번 읽어 «자료 분석»을 남깁니다.'],
   ['② 문서를 짓는다', '작업실 [+] → 문서. 이름만 짓고 [생성]을 누르면 요청사항과 참조를 보고 씁니다. 본문을 직접 치셔도 됩니다. 한 호출이 십 분을 넘기기도 하니 작업 줄의 지난 시간을 보고 기다리십시오.'],
-  ['③ 참조를 건다', '자료는 작업실 [+] → 자료로 더 들입니다. 문서 창의 «참조»에 자료와 다른 문서를 겁니다. 확정본(빨간 토글)을 켜 두면 그 문서가 «최우선 사실»로 실려 다른 글을 다스립니다.'],
+  ['③ 참조를 건다', '문서 창의 «참조»에 자료와 다른 문서를 겁니다. 확정본(빨간 토글)을 켜 두면 그 문서가 «최우선 사실»로 실려 다른 글을 다스립니다.'],
   ['④ 에이전트를 건다', '설정에서 이름·역할·프롬프트·쓸 모델로 사람을 짓고, 문서 창의 «에이전트»에 걸어 둡니다. 그 문서를 짓고 고칠 때 그 사람이 씁니다.'],
   ['⑤ 고쳐 간다', '본문이나 요청사항을 고치고 [갱신]. 옛 판은 «이력»에 남아 언제든 되돌립니다.'],
   ['⑥ 검사하고 듣는다', '[+] → 모순 검사로 앞뒤를 맞추고, 합평회로 평을 듣습니다. 둘 다 «대상»에 볼 문서를 겁니다. 모순 검사는 맞댈 것이 둘은 있어야 합니다(대상 둘, 또는 대상 하나에 참조 하나).'],
@@ -302,6 +302,8 @@ function toggleAll(key, ids, on) {
 }
 
 // 한 줄이라도 골랐으면 손질거리를 세운다(«전체 선택»을 켠 때만 서던 것을 고쳤다 — 사용자 지시).
+// 이 구획에 실제로 있는 것 가운데 고른 것만 — 자루에 남은 옛 id 는 세지 않는다.
+const pickedOf = (sel, ids) => ids.filter((id) => sel.has(id));
 const allPicked = (sel, ids) => ids.length > 0 && ids.every((id) => sel.has(id));
 
 function workshop() {
@@ -336,16 +338,17 @@ function plusMenu() {
   const go = (fn) => { S.menu = false; fn(); };
   return h('div', { class: 'menu' },
     h('button', { text: '문서', onclick: () => go(() => { S.open = { type: 'newdoc' }; render(); }) }),
-    h('button', { text: '자료', onclick: () => go(() => { S.open = { type: 'newmat' }; render(); }) }),
     h('button', { text: '카테고리', onclick: () => go(() => { S.newCat = true; S.focusNext = 'nc-name'; render(); }) }),
     h('button', { text: '논의 스레드', onclick: () => go(async () => { const r = await api('thread.create', { title: '논의' }); if (r.ok) { S.open = { type: 'thread', id: r.id, fresh: true }; render(); } }) }),
     h('button', { text: '모순 검사', onclick: () => go(() => newCheck('check', '모순 검사')) }),
     h('button', { text: '합평회', onclick: () => go(() => newCheck('review', '합평회')) }));
 }
 
+// 모순 검사·합평회는 한 글자도 받지 않고 곧바로 만들어진다 — 그래서 «갓 만든 것» 표를 달아 둔다.
+// 아무것도 담기지 않은 채 창을 닫으면 없던 일로 돌린다(사용자 지시).
 async function newCheck(kind, title) {
   const r = await api('doc.create', { kind, title });
-  if (r.ok) { S.open = { type: 'doc', id: r.id }; render(); }
+  if (r.ok) { S.open = { type: 'doc', id: r.id, fresh: true }; render(); }
 }
 
 function catSection(c, byId) {
@@ -353,15 +356,16 @@ function catSection(c, byId) {
   const sel = selOf(key);
   const folded = S.fold[key];
   const docs = c.docIds.map((id) => byId.get(id)).filter(Boolean);
+  const picked = pickedOf(sel, c.docIds);
   return h('div', { class: 'sec' },
     h('div', { class: 'sec-head' },
       h('button', { class: 'ck' + (allPicked(sel, c.docIds) ? ' on' : ''), onclick: () => toggleAll(key, c.docIds, !allPicked(sel, c.docIds)) }),
       h('div', { class: 'name', text: c.name, onclick: () => { S.fold[key] = !folded; render(); } }),
       c.virtual ? null : h('button', { class: 'btn-text red', text: '삭제', onclick: () => api('cat.delete', { ids: [c.id] }) })),
-    sel.size ? h('div', { class: 'bulk' },
+    picked.length ? h('div', { class: 'bulk' },
       // 지정과 해제를 한 단추로 — 고른 것이 모두 확정본이면 내리고, 아니면 올린다.
       (() => {
-        const ids = [...sel];
+        const ids = picked;
         const allFinal = ids.length > 0 && ids.every((id) => { const x = byId.get(id); return x && x.isFinal; });
         return h('button', {
           class: 'btn-line', text: allFinal ? '확정본 해제' : '확정본 지정',
@@ -372,11 +376,11 @@ function catSection(c, byId) {
         class: 'btn-line', text: '다운로드',
         onclick: () => {
           // 그 카테고리를 통째로 골랐으면 한 파일로, 골라 담았으면 문서마다 한 파일로.
-          if (c.docIds.length && c.docIds.every((id) => sel.has(id))) download('cat', c.id);
-          else [...sel].forEach((id, i) => setTimeout(() => download('doc', id), i * 120));
+          if (c.docIds.length && picked.length === c.docIds.length) download('cat', c.id);
+          else picked.forEach((id, i) => setTimeout(() => download('doc', id), i * 120));
         },
       }),
-      h('button', { class: 'btn-red', text: '삭제', onclick: () => api('doc.delete', { ids: [...sel] }) })) : null,
+      h('button', { class: 'btn-red', text: '삭제', onclick: () => api('doc.delete', { ids: picked }) })) : null,
     folded ? null : docs.map((d) => h('div', {
       class: 'row' + (d.isFinal ? ' final' : ''),
       onclick: () => { S.open = { type: 'doc', id: d.id }; render(); },
@@ -392,13 +396,14 @@ function threadSection() {
   const key = 'threads';
   const sel = selOf(key);
   const ids = p.threads.map((t) => t.id);
+  const picked = pickedOf(sel, ids);
   return h('div', { class: 'sec' },
     h('div', { class: 'sec-head' },
       h('button', { class: 'ck' + (allPicked(sel, ids) ? ' on' : ''), onclick: () => toggleAll(key, ids, !allPicked(sel, ids)) }),
       h('div', { class: 'name', text: '논의 스레드', onclick: () => { S.fold[key] = !S.fold[key]; render(); } })),
-    sel.size ? h('div', { class: 'bulk' },
-      h('button', { class: 'btn-line', text: '다운로드', onclick: () => [...sel].forEach((id, i) => setTimeout(() => download('thread', id), i * 120)) }),
-      h('button', { class: 'btn-red', text: '삭제', onclick: () => api('thread.delete', { ids: [...sel] }) })) : null,
+    picked.length ? h('div', { class: 'bulk' },
+      h('button', { class: 'btn-line', text: '다운로드', onclick: () => picked.forEach((id, i) => setTimeout(() => download('thread', id), i * 120)) }),
+      h('button', { class: 'btn-red', text: '삭제', onclick: () => api('thread.delete', { ids: picked }) })) : null,
     S.fold[key] ? null : p.threads.map((t) => h('div', {
       class: 'row', onclick: () => { S.open = { type: 'thread', id: t.id }; render(); },
     },
@@ -607,9 +612,9 @@ function trash() {
       h('div', { class: 'sec-head' },
         h('button', { class: 'ck' + (allPicked(sel, ids) ? ' on' : ''), onclick: () => toggleAll(key, ids, !allPicked(sel, ids)) }),
         h('div', { class: 'name', text: '휴지통' })),
-      sel.size ? h('div', { class: 'bulk' },
-        h('button', { class: 'btn-line', text: '복원', onclick: () => api('trash.restore', { ids: [...sel] }) }),
-        h('button', { class: 'btn-red', text: '삭제', onclick: () => { S.confirm = { text: '되돌릴 수 없음', run: async () => { await api('trash.purge', { ids: [...sel] }); S.confirm = null; render(); } }; render(); } })) : null,
+      pickedOf(sel, ids).length ? h('div', { class: 'bulk' },
+        h('button', { class: 'btn-line', text: '복원', onclick: () => api('trash.restore', { ids: pickedOf(sel, ids) }) }),
+        h('button', { class: 'btn-red', text: '삭제', onclick: () => { S.confirm = { text: '되돌릴 수 없음', run: async () => { await api('trash.purge', { ids: pickedOf(sel, ids) }); S.confirm = null; render(); } }; render(); } })) : null,
       p.trash.slice().reverse().map((e) => h('div', { class: 'row' },
         h('button', { class: 'ck' + (sel.has(e.id) ? ' on' : ''), onclick: () => toggleSel(key, e.id) }),
         h('div', { class: 'name', text: e.title }),
@@ -621,7 +626,7 @@ function trash() {
 // ---------------------------------------------------------------- 1겹 창
 
 // 겹창이 쓰는 입력 열쇠 — 닫을 때 이것만 지운다(작업실·설정에 치던 글은 그대로 둔다).
-const LAYER_KEYS = ['d-title', 'd-body', 'd-req', 't-say', 'nd-name', 'nm-mat', 'pp-req',
+const LAYER_KEYS = ['d-title', 'd-body', 'd-req', 't-say', 'nd-name', 'pp-req',
   'n-name', 'n-form', 'n-outline', 'n-length', 'n-standard', 'n-request', 'n-mat',
   'pr-name', 'pr-role', 'pr-task', 'pr-craft',
   'ag-name', 'ag-role', 'ag-craft'];
@@ -666,7 +671,6 @@ function layerOne() {
     : t === 'thread' ? threadPanel(close)
       : t === 'newproject' ? newProjectPanel(close)
         : t === 'newdoc' ? newDocPanel(close)
-          : t === 'newmat' ? newMatPanel(close)
             : t === 'prompt' ? promptPanel(close)
               : t === 'prepare' ? preparePanel(close)
                 : agentPanel(close);
@@ -712,10 +716,19 @@ function docPanel(close) {
     if ('d-req' in S.typed) body.request = $('d-req').value;
     clearTyped('d-title', 'd-body', 'd-req');
     if (Object.keys(body).length === 1) return;   // 손대지 않았으면 쓰지 않는다
+    if (S.open) S.open.fresh = false;             // 한 글자라도 담았으면 갓 만든 것이 아니다
     await api('doc.write', body);
   };
+  // 닫을 때만 지나는 길 — 저장한 뒤, 갓 만들어 비어 있으면 거둔다.
+  // (칸을 떠날 때마다 부르는 saveFields 에 두면 창 안에서 칸만 옮겨도 문서가 사라진다.)
+  const closeFields = async () => {
+    // 표는 기다리기 전에 쥔다 — 닫는 쪽은 저장을 기다리지 않고 곧바로 S.open 을 비운다.
+    const fresh = !!(S.open && S.open.fresh);
+    await saveFields();
+    if (fresh) await api('doc.discard', { id: d.id });
+  };
 
-  S.saveOpen = saveFields;
+  S.saveOpen = closeFields;
 
   return h('div', { class: 'panel' },
     h('div', { class: 'panel-head' },
@@ -730,8 +743,10 @@ function docPanel(close) {
       // 모순 검사는 견주는 자리이지 치는 자리가 아니다 — 결과만 보인다(사용자 지시).
       // 옛 판 펼쳐보기도 같은 읽기 칸을 쓴다. 치는 칸과 id 를 갈라 두어야
       // 옛 판을 펼친 채로 창을 닫을 때 그 글이 지금 본문을 덮지 않는다.
+      // 모순 검사에는 치는 칸이 없다 — 결과가 나온 뒤에만 읽는 칸이 선다(빈 칸을 세워 두면 치는 자리로 보인다).
       peeking ? h('textarea', { id: 'd-out', class: 'body-edit', value: peeking.body, readonly: 'readonly' })
-        : d.kind === 'check' ? h('textarea', { id: 'd-out', class: 'body-edit', value: d.body, readonly: 'readonly' })
+        : d.kind === 'check'
+          ? (String(d.body || '').trim() ? h('textarea', { id: 'd-out', class: 'body-edit', value: d.body, readonly: 'readonly' }) : null)
           : area('d-body', BODY_HINT, d.body, { class: 'body-edit', onblur: saveFields }),
       h('div', null, h('div', { class: 'lab', text: '카테고리' }), h('div', { class: 'line' }, catPicker(d))),
       h('div', null, h('div', { class: 'lab', text: '요청사항' }), area('d-req', '요청사항', d.request, { onblur: saveFields })),
@@ -891,6 +906,7 @@ function threadPanel(close) {
   // (바깥 클릭·Esc·× 가 모두 closeLayer 로 모이고, 거기서 이 함수를 부른다.)
   const saveThread = async () => {
     if (S.redrawing) return;
+    const fresh = !!(S.open && S.open.fresh);   // 기다리기 전에 쥔다
     const key = 't-title-' + t.id;
     if (key in S.typed) {
       const v = $(key).value;
@@ -899,7 +915,7 @@ function threadPanel(close) {
       await api('thread.title', { id: t.id, title: v });
       return;
     }
-    if (S.open && S.open.fresh) await api('thread.discard', { id: t.id });
+    if (fresh) await api('thread.discard', { id: t.id });
   };
   S.saveOpen = saveThread;
   return h('div', { class: 'panel' },
@@ -1027,30 +1043,6 @@ async function startPrepare() {
   S.open.err = r.error;
   render();
   return false;
-}
-
-// 새 자료 — 붙여 넣거나 파일을 고른다. 들이면 곧바로 닫힌다.
-function newMatPanel(close) {
-  S.askOpen = { label: '들이고 닫기', dirty: () => typedAny('nm-mat'), save: makeMat };
-  return h('div', { class: 'panel narrow' },
-    h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '자료' }), h('button', { class: 'x', text: '×', onclick: close })),
-    h('div', { class: 'panel-body' },
-      area('nm-mat', '자료'),
-      S.open.err ? h('div', { class: 'notice', text: S.open.err }) : null,
-      h('div', { class: 'line' },
-        h('button', { class: 'btn', text: '추가', onclick: makeMat }),
-        fileButton(async (name, text) => { clearTyped('nm-mat'); await api('material.add', { name, text }); closeLayer(true); }))));
-}
-
-// 돌려주는 값: 갈무리했으면 true. 빈 채면 들이지 않고 창을 열어 둔다.
-async function makeMat() {
-  const text = $('nm-mat') ? $('nm-mat').value : '';
-  if (!text.trim()) { S.open.err = '필수 항목 누락 — 자료'; render(); return false; }
-  S.open.err = '';
-  clearTyped('nm-mat');
-  await api('material.add', { text });
-  closeLayer(true);
-  return true;
 }
 
 function newDocPanel(close) {

@@ -8,7 +8,9 @@
 import { newId, MODELS } from './store.mjs';
 
 export const INBOX = '__inbox__';
-export const THREAD_NAME = '논의';   // 갓 만든 스레드의 이름 — 이것이 그대로면 아직 손대지 않은 것이다
+export const THREAD_NAME = '논의';
+// 차림표가 한 글자도 받지 않고 지을 때 붙이는 이름 — 이것이 그대로면 아직 손대지 않은 것이다.
+export const DOC_NAME = { doc: '문서', check: '모순 검사', review: '합평회' };   // 갓 만든 스레드의 이름 — 이것이 그대로면 아직 손대지 않은 것이다
 export const INBOX_NAME = '새로 추가된 문서';
 
 export const KIND_NAME = { doc: '문서', check: '모순 검사', review: '합평회' };
@@ -79,6 +81,22 @@ export function docSetFinal(p, id, on) {
   const d = findDoc(p, id);
   if (!d) return null;
   d.isFinal = !!on;
+  return d;
+}
+
+// 차림표에서 만들어지기만 하고 아무것도 담기지 않은 문서 — 이름까지 그대로여야 «갓 만든 것»이다.
+export function docIsFresh(d) {
+  return !!d && !str(d.body).trim() && !str(d.request).trim()
+    && !(d.refIds || []).length && !(d.targetIds || []).length && !(d.agentIds || []).length
+    && !(d.versions || []).length && !d.isFinal && !d.categoryId
+    && d.title === DOC_NAME[d.kind || 'doc'];
+}
+
+// 거두기 — 휴지통을 거치지 않는다. 되살릴 것이 없는 껍데기이기 때문이다.
+export function docDiscard(p, id) {
+  const i = (p.docs || []).findIndex((x) => x.id === id);
+  if (i < 0 || !docIsFresh(p.docs[i])) return null;
+  const [d] = p.docs.splice(i, 1);
   return d;
 }
 

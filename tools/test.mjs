@@ -418,6 +418,26 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   p = (await stateOf(pid)).project;
   eq('담긴 것이 있으면 그대로 남는다', p.threads.length, 4);
 
+  // 차림표에서 만들어지기만 한 모순 검사·합평회도 같다(사용자 지시, 2026-09-19)
+  const c1 = await post('doc.create', { pid, kind: 'check', title: '모순 검사' });
+  const c2 = await post('doc.create', { pid, kind: 'review', title: '합평회' });
+  await post('doc.discard', { pid, id: c1.id });
+  await post('doc.discard', { pid, id: c2.id });
+  p = (await stateOf(pid)).project;
+  ok('갓 만든 빈 검사·합평은 거둬진다', !p.docs.some((x) => x.id === c1.id || x.id === c2.id));
+  ok('그것도 휴지통에 두지 않는다', !(p.trash || []).some((e) => e.kind === 'doc'));
+
+  // 무엇이든 담겼으면 거두지 않는다 — 요청사항·대상·이름 셋
+  const c3 = await post('doc.create', { pid, kind: 'check', title: '모순 검사' });
+  await post('doc.write', { pid, id: c3.id, request: '앞뒤를 보아 다오' });
+  const c4 = await post('doc.create', { pid, kind: 'check', title: '모순 검사' });
+  await post('doc.write', { pid, id: c4.id, targetIds: [t5.id] });
+  const c5 = await post('doc.create', { pid, kind: 'review', title: '합평회' });
+  await post('doc.write', { pid, id: c5.id, title: '합평 — 1화' });
+  for (const id of [c3.id, c4.id, c5.id]) await post('doc.discard', { pid, id });
+  p = (await stateOf(pid)).project;
+  eq('담긴 것이 있으면 그대로 남는다(문서)', p.docs.filter((x) => [c3.id, c4.id, c5.id].includes(x.id)).length, 3);
+
   // 손수 지우는 길은 그대로 휴지통을 거친다
   await post('thread.delete', { pid, ids: [t2.id] });
   p = (await stateOf(pid)).project;
@@ -1040,16 +1060,18 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 한 줄만 골라도 머리줄에 손질거리가 선다(사용자 지시) — 전에는 «전체 선택»을 켠 때만 섰다.
   // 자료를 들이는 자리는 설정이 아니라 작업실 [+] 다(사용자 지시)
   // 모순 검사는 견주는 자리다 — 치는 칸이 없고, 맞댈 것이 둘은 있어야 한다(사용자 지시)
-  ok('모순 검사에는 본문 치는 칸이 없다', /d\.kind === 'check' \? h\('textarea', \{ id: 'd-out'/.test(app));
+  ok('모순 검사에는 본문 치는 칸이 없다', /d\.kind === 'check'\s*\n?\s*\? \(String\(d\.body \|\| ''\)\.trim\(\)/.test(app));
+  ok('결과가 없으면 빈 칸도 세우지 않는다', /\.trim\(\) \? h\('textarea', \{ id: 'd-out'[^\n]*\) : null\)/.test(app));
   ok('결과와 옛 판은 읽는 칸으로 보인다', /id: 'd-out'[^\n]*readonly/.test(app) && app.includes("'#d-out'"));
   ok('맞댈 것이 둘은 있어야 한다', app.includes("'대상 또는 참조'") && /\(d\.targetIds \|\| \[\]\)\.length \+ \(d\.refIds \|\| \[\]\)\.length >= 2/.test(app));
   ok('치는 칸이 없을 때를 막는다', /'d-body' in S\.typed && \$\('d-body'\)/.test(app));
   ok('설정에 자료 치는 칸이 없다', !app.includes("area('set-mat'"));
-  ok('작업실 차림표에 자료가 있다', /text: '자료', onclick: \(\) => go\(\(\) => \{ S\.open = \{ type: 'newmat' \}/.test(app));
-  ok('빈 채로 들이려 하면 짚어 준다', /function makeMat\(/.test(app) && app.includes("'필수 항목 누락 — 자료'"));
+  ok('차림표에도 자료가 없다', !app.includes("type: 'newmat'") && !/function makeMat\(/.test(app));
   ok('설정에는 목록과 삭제가 남는다', app.includes("api('material.delete'"));
-  ok('한 줄만 골라도 손질거리가 선다', /sel\.size \? h\('div', \{ class: 'bulk' \}/.test(app));
+  ok('한 줄만 골라도 손질거리가 선다', /picked\.length \? h\('div', \{ class: 'bulk' \}/.test(app));
   ok('머리줄 네모는 고른 것으로 셈한다', /const allPicked = /.test(app) && !app.includes('S.all'));
+  // 자루에 남은 옛 id 때문에 «켜진 네모가 없는데 손질거리가 서 있는» 일이 있었다(사용자가 본 버그).
+  ok('구획을 떠난 것은 세지 않는다', /const pickedOf = \(sel, ids\) => ids\.filter/.test(app) && !/\[\.\.\.sel\]/.test(app));
   ok('작업 순서 첫 걸음은 프로젝트다', app.includes('① 프로젝트를 만든다') && !app.includes('① 작품을 만든다'));
   ok('설정의 자리 목록은 «기본 에이전트»다', app.includes("text: '기본 에이전트'") && !app.includes("text: '작법 프롬프트'"));
   ok('«+» 는 글자가 아니라 막대로 그린다', /\.plus \{[^}]*font-size: 0/.test(readFileSync(join(ROOT, 'web', 'style.css'), 'utf8')));
@@ -1079,6 +1101,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('닫으면 그 자리로 돌아온다', app.includes('const back = S.open && S.open.back') && app.includes('if (back && back.pick) S.pick = back.pick'));
   // 알림을 붙이느라 창을 통째로 갈아끼우면 «오던 길»이 사라진다 — 실제로 났다.
   // 갓 만든 빈 스레드는 닫으면서 거둔다(사용자 지시)
+  ok('갓 만든 검사·합평에 표를 단다', /S\.open = \{ type: 'doc', id: r\.id, fresh: true \}/.test(app));
+  ok('닫을 때 빈 문서를 거둔다', /const closeFields = /.test(app) && app.includes("api('doc.discard'") && /S\.saveOpen = closeFields/.test(app));
+  ok('칸을 떠나는 길에서는 거두지 않는다', !/onblur: closeFields/.test(app));
   ok('갓 만든 스레드에 표를 단다', /S\.open = \{ type: 'thread', id: r\.id, fresh: true \}/.test(app));
   ok('닫을 때 빈 스레드를 거둔다', /const saveThread = /.test(app) && app.includes("api('thread.discard'") && /S\.saveOpen = saveThread/.test(app));
   // 작업 줄을 누르면 그 자리가 열린다(사용자 지시)
@@ -1099,8 +1124,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('닫기 전에 물어볼 것을 걸어 둔다', /S\.askOpen = \{ label:/.test(app) || /S\.askOpen = \{\n/.test(app));
   ok('치던 글이 있으면 묻는다', app.includes("text: '치던 글이 있습니다'") && app.includes("label: '버리고 닫기'"));
   ok('물음은 갈래를 여럿 받는다', /const acts = S\.confirm\.acts \|\|/.test(app));
-  // 새로 만드는 창 다섯(작품·문서·자료·에이전트·준비) + 논의(친 말이 있을 때만) = 여섯
-  ok('치던 글이 있는 창 여섯이 모두 물어본다', (app.match(/S\.askOpen = \{/g) || []).length === 6);
+  // 새로 만드는 창 넷(작품·문서·에이전트·준비) + 논의(친 말이 있을 때만) = 다섯
+  ok('치던 글이 있는 창 다섯이 모두 물어본다', (app.match(/S\.askOpen = \{/g) || []).length === 5);
   ok('논의도 보낼지 버릴지 묻는다', app.includes("label: '보내고 닫기'") && app.includes("dirty: () => typedAny('t-say')"));
   ok('논의에 자리 사람이 칩으로 선다', /seatNames\(\['F-TALK', 'F-THREADDOC'\]\)/.test(app));
   for (const op of used) ok('서버에 문이 있다: ' + op, OP_NAMES.includes(op));
