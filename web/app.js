@@ -707,9 +707,9 @@ function docPanel(close) {
   // 아직 한 번도 채워진 적 없는 문서에는 갱신할 것이 없다 — 그때는 «생성»이다.
   const verb = !String(d.body || '').trim() && !d.versions.length ? '생성' : '갱신';
   // 이 창이 닫힐 때 저장할 것
+  // 칸을 떠날 때마다 부른다 — 친 것이 있을 때만 쓴다. 닫는 길(S.saveOpen)은 건드리지 않는다.
   const saveFields = async () => {
     if (S.redrawing) return;
-    S.saveOpen = null;
     const body = { id: d.id };
     if ('d-title' in S.typed) body.title = $('d-title').value;
     if ('d-body' in S.typed && $('d-body')) body.body = $('d-body').value;
@@ -904,23 +904,27 @@ function threadPanel(close) {
   };
   // 닫을 때 지나는 한 목 — 이름을 지어 주었으면 그것을 쓰고, 갓 만든 빈 것이면 거둔다.
   // (바깥 클릭·Esc·× 가 모두 closeLayer 로 모이고, 거기서 이 함수를 부른다.)
-  const saveThread = async () => {
+  // 이름 칸을 떠날 때 — 지어 주었으면 그 이름을 쓴다. 그뿐이다.
+  const saveTitle = async () => {
     if (S.redrawing) return;
-    const fresh = !!(S.open && S.open.fresh);   // 기다리기 전에 쥔다
     const key = 't-title-' + t.id;
-    if (key in S.typed) {
-      const v = $(key).value;
-      clearTyped(key);
-      if (S.open) S.open.fresh = false;       // 이름을 지어 주었으면 갓 만든 것이 아니다
-      await api('thread.title', { id: t.id, title: v });
-      return;
-    }
+    if (!(key in S.typed)) return;
+    const v = $(key).value;
+    clearTyped(key);
+    if (S.open) S.open.fresh = false;         // 이름을 지어 주었으면 갓 만든 것이 아니다
+    await api('thread.title', { id: t.id, title: v });
+  };
+  // 창을 닫을 때만 지나는 길 — 이름을 쓰고, 갓 만들어 비어 있으면 거둔다.
+  // (이름 칸의 blur 에 이것을 걸면 칸을 눌렀다 나가기만 해도 스레드가 사라진다.)
+  const closeThread = async () => {
+    const fresh = !!(S.open && S.open.fresh);   // 기다리기 전에 쥔다
+    await saveTitle();
     if (fresh) await api('thread.discard', { id: t.id });
   };
-  S.saveOpen = saveThread;
+  S.saveOpen = closeThread;
   return h('div', { class: 'panel' },
     h('div', { class: 'panel-head' },
-      textbox('t-title-' + t.id, '이름', t.title, { onblur: saveThread }),
+      textbox('t-title-' + t.id, '이름', t.title, { onblur: saveTitle }),
       h('button', { class: 'btn-text', text: '다운로드', onclick: () => download('thread', t.id) }),
       h('button', { class: 'btn-text red', text: '삭제', onclick: async () => { S.saveOpen = null; await api('thread.delete', { ids: [t.id] }); close(); } }),
       h('button', { class: 'x', text: '×', onclick: close })),

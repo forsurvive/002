@@ -1105,7 +1105,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('닫을 때 빈 문서를 거둔다', /const closeFields = /.test(app) && app.includes("api('doc.discard'") && /S\.saveOpen = closeFields/.test(app));
   ok('칸을 떠나는 길에서는 거두지 않는다', !/onblur: closeFields/.test(app));
   ok('갓 만든 스레드에 표를 단다', /S\.open = \{ type: 'thread', id: r\.id, fresh: true \}/.test(app));
-  ok('닫을 때 빈 스레드를 거둔다', /const saveThread = /.test(app) && app.includes("api('thread.discard'") && /S\.saveOpen = saveThread/.test(app));
+  ok('닫을 때 빈 스레드를 거둔다', /const closeThread = /.test(app) && app.includes("api('thread.discard'") && /S\.saveOpen = closeThread/.test(app));
+  // 칸을 눌렀다 나가는 것은 «친 것»이 아니다 — 두 흠이 한 뿌리에서 나왔다(사용자가 둘 다 보았다).
+  ok('이름 칸의 blur 는 거두지 않는다', /onblur: saveTitle/.test(app) && !/onblur: closeThread/.test(app));
+  ok('저장이 닫는 길을 끊지 않는다', !/const saveFields = async \(\) => \{[\s\S]{0,60}S\.saveOpen = null;/.test(app));
   // 작업 줄을 누르면 그 자리가 열린다(사용자 지시)
   ok('작업 줄이 제 자리를 가리킨다', /function jobTarget\(/.test(app) && /function openJob\(/.test(app));
   ok('작업 줄은 닫기를 먼저 지난다', /if \(S\.open\) \{ closeLayer\(\); if \(S\.confirm\) return; \}/.test(app));
