@@ -185,7 +185,7 @@ export async function runTalk(pid, threadId, text, ctx) {
   const talk = path.map((m) => ({ name: m.role === 'user' ? '작가' : '너', text: m.text }));
 
   const r = await callWithRetry({
-    pid, code: 'F-TALK', refIds: (t.refIds || []).slice(), talk,
+    pid, code: 'F-TALK', refIds: (t.refIds || []).slice(), agentIds: (t.agentIds || []).slice(), talk,
     signal: ctx && ctx.signal,
   });
   if (!r.ok) return r;
@@ -213,7 +213,7 @@ export async function runThreadDoc(pid, threadId, request, ctx) {
   const talk = model.threadPath(t).map((m) => ({ name: m.role === 'user' ? '작가' : '너', text: m.text }));
 
   const r = await callWithRetry({
-    pid, code: 'F-THREADDOC', refIds: (t.refIds || []).slice(), talk, request,
+    pid, code: 'F-THREADDOC', refIds: (t.refIds || []).slice(), agentIds: (t.agentIds || []).slice(), talk, request,
     signal: ctx && ctx.signal,
   });
   if (!r.ok) return r;

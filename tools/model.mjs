@@ -131,6 +131,7 @@ export function threadCreate(p, fields = {}) {
     id: newId('h'),
     title: str(fields.title).trim() || '논의',
     refIds: Array.isArray(fields.refIds) ? fields.refIds.slice() : [],
+    agentIds: Array.isArray(fields.agentIds) ? fields.agentIds.slice() : [],
     messages: [],
     headId: null,
     createdAt: now(),
@@ -274,6 +275,9 @@ export function agentDelete(p, id) {
   for (const d of p.docs) {
     if (Array.isArray(d.agentIds) && d.agentIds.includes(id)) d.agentIds = d.agentIds.filter((x) => x !== id);
   }
+  for (const t of p.threads) {
+    if (Array.isArray(t.agentIds) && t.agentIds.includes(id)) t.agentIds = t.agentIds.filter((x) => x !== id);
+  }
   return a;
 }
 
@@ -306,7 +310,9 @@ export function trashRestore(p, trashId) {
       if (d && !d.categoryId && d.orphanFrom === e.payload.id) { d.categoryId = e.payload.id; d.orphanFrom = null; }
     }
   } else if (e.kind === 'thread') {
-    p.threads.push(e.payload);
+    const t = e.payload;
+    if (Array.isArray(t.agentIds)) t.agentIds = t.agentIds.filter((id) => findAgent(p, id));
+    p.threads.push(t);
   }
   return e;
 }

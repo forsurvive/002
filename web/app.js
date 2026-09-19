@@ -724,6 +724,7 @@ function threadPanel(close) {
       h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
       refLine('참조', t.refIds, byId, (ids) => api('thread.refs', { id: t.id, refIds: ids }), null),
+      refLine('에이전트', t.agentIds, crewIndex(), (ids) => api('thread.agents', { id: t.id, agentIds: ids }), null, 'agent'),
       h('div', { class: 'talk' }, flow),
       h('div', { class: 'send' },
         area('t-say', '요청사항'),

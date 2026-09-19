@@ -171,6 +171,10 @@ const OPS = {
     const t = model.findThread(p, b.id);
     if (t) t.refIds = arr(b.refIds).slice();
   }),
+  'thread.agents': (b) => state.update(b.pid, (p) => {
+    const t = model.findThread(p, b.id);
+    if (t) t.agentIds = arr(b.agentIds).slice();
+  }),
   'thread.send': (b) => {
     const p = state.get(b.pid);
     const t = p && model.findThread(p, b.id);
@@ -229,7 +233,7 @@ function stateOf(pid) {
       updatedAt: d.updatedAt,
     })),
     threads: p.threads.map((t) => ({
-      id: t.id, title: t.title, refIds: t.refIds, messages: t.messages, headId: t.headId,
+      id: t.id, title: t.title, refIds: t.refIds, agentIds: t.agentIds || [], messages: t.messages, headId: t.headId,
       path: model.threadPath(t).map((m) => m.id),
     })),
     trash: p.trash.map((e) => ({ id: e.id, at: e.at, kind: e.kind, from: e.from, title: e.title })),

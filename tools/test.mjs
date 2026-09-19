@@ -766,8 +766,23 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('고를 수 있는 모델은 넷', call.MODELS.length === 4);
 
+  // 논의 스레드에도 건다 — 걸린 사람이 «궁리 나누는이» 자리를 대신한다
+  const th = await post('thread.create', { pid, title: '논의' });
+  await post('thread.agents', { pid, id: th.id, agentIds: [made.id] });
+  st = await stateOf(pid);
+  eq('스레드에 걸린 것이 보인다', st.project.threads[0].agentIds[0], made.id);
+
+  let talkSys = '';
+  globalThis.__SE2_MOCK_FN = (args) => { if (args.mockKey === 'F-TALK') talkSys = args.systemPrompt; return MOCK_FN(args); };
+  await post('thread.send', { pid, id: th.id, text: '한 마디' });
+  await settle(pid);
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  ok('논의에도 걸린 사람이 선다', talkSys.includes('밤의 문장가 — 어둠을 쓴다'));
+  ok('자리의 작법은 그대로 남는다', talkSys.includes('■ 작법') && talkSys.includes('▶ 밤의 문장가'));
+
   await post('agent.delete', { pid, ids: [made.id] });
   st = await stateOf(pid);
+  eq('지우면 스레드에서도 떨어진다', st.project.threads[0].agentIds.length, 0);
   eq('지우면 목록이 빈다', (st.project.crew || []).length, 0);
   eq('걸려 있던 문서에서도 떨어진다', st.project.docs.find((d) => d.id === dr.id).agentIds.length, 0);
   await post('project.delete', { pid });
@@ -870,6 +885,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('집으로 가는 길이 둘', (app.match(/onclick: goHome/g) || []).length >= 2 && app.includes("text: '‹'"));
   ok('설정에 작업 순서 안내가 있다', app.includes('guideBlock()') && /GUIDE = \[/.test(app));
   ok('문서에 에이전트를 건다', /refLine\('에이전트'/.test(app) && app.includes("'agent'"));
+  ok('논의 스레드에도 건다', app.includes("'thread.agents'") && (app.match(/refLine\('에이전트'/g) || []).length >= 2);
   ok('사람마다 모델을 고른다', /function modelRow\(/.test(app) && app.includes("'작품을 따름'"));
   ok('그 누름은 mousedown 으로 받는다', /onmousedown: \(\) => pick\(m\)/.test(app));
   ok('준비를 다시 걸 길이 있다', app.includes("'project.prepare'"));
