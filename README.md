@@ -2,6 +2,8 @@
 
 클로드 구독 사용량으로 도는 로컬 집필 프로그램. 열한 가지 «원소»와 작법 프롬프트만으로 이루어져 있다.
 
+<sub>OLD TOWER STUDIO</sub>
+
 ## 여는 법
 
 `스토리 엔진.cmd` 를 더블클릭한다. 검은 창이 뜨고 브라우저가 열린다 — **그 창은 쓰는 동안 닫지 않는다.**
@@ -55,6 +57,6 @@
 ## 손보는 사람을 위해
 
 - 정본: `기획서.md`(사용자 원문) · `DESIGN.md`(구현 계약).
-- 시험: `SE2_MOCK=1 node tools/test.mjs` — 호출 없이 390건.
+- 시험: `SE2_MOCK=1 node tools/test.mjs` — 호출 없이 394건.
 - 모의 실행(구독 소모 없음): `SE2_MOCK=1 SE2_PORT=8811 SE2_DATA_DIR=.tmp/모의상자 node tools/server.mjs`
 - 자료는 `data/projects/<프로젝트>.json` 파일 하나에 들어 있다.

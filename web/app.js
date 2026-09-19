@@ -28,6 +28,8 @@ const KIND_MARK = { check: '모순 검사', review: '합평회' };
 const KIND_SEAT = { doc: ['F-UPDATE'], check: ['F-CONTRA'], review: ['F-REVIEW', 'F-MERGE'] };
 const INBOX = '__inbox__';
 const BODY_HINT = '직접 입력하거나 아래의 요청사항을 작성해주세요..';
+const STUDIO = 'Old Tower Studio';
+const brandMark = (style) => h('div', { class: 'brand', style, text: STUDIO });
 
 // 처음 쓰는 사람을 위한 작업 순서 — 설정 탭에 접어 둔다.
 const GUIDE = [
@@ -178,14 +180,17 @@ function render() {
 
 function projectList() {
   return h('div', { class: 'body' },
-    h('div', { class: 'top', style: 'position:static;padding:0 0 18px;border:none' },
-      h('div', { class: 'top-name', text: '스토리 엔진' }),
+    h('div', { class: 'top', style: 'position:static;padding:0 0 22px;border:none;background:none' },
+      h('div', null,
+        brandMark('margin-bottom:6px'),
+        h('div', { class: 'top-name', style: 'font-size:30px', text: '스토리 엔진' })),
       h('button', { class: 'plus', text: '+', onclick: () => { S.draft = []; S.open = { type: 'newproject' }; render(); } })),
     h('div', { class: 'cards' }, S.projects.map((p) => h('div', {
       class: 'card', onclick: () => { S.pid = p.id; S.tab = '작업실'; S.project = null; pull(true); },
     },
     h('div', { class: 'name', text: p.name }),
-    h('div', { class: 'when', text: when(p.updatedAt || p.createdAt) })))));
+    h('div', { class: 'when', text: when(p.updatedAt || p.createdAt) })))),
+    brandMark('text-align:center;padding:56px 0 8px'));
 }
 
 // ---------------------------------------------------------------- 프로젝트 안
@@ -196,7 +201,9 @@ function app() {
   const p = S.project;
   return h('div', { class: 'shell' },
     h('div', { class: 'side' },
-      h('div', { class: 'side-top' }, h('button', { class: 'side-title', text: 'STORY ENGINE', onclick: goHome })),
+      h('div', { class: 'side-top' },
+        h('button', { class: 'side-title', text: '스토리 엔진', onclick: goHome }),
+        brandMark()),
       ['작업실', '설정'].map((t) => h('button', {
         class: 'tab' + (S.tab === t ? ' on' : ''), text: t, onclick: () => { S.tab = t; render(); },
       })),
@@ -412,7 +419,8 @@ function settings() {
       h('button', {
         class: 'btn-red', text: '프로젝트 삭제',
         onclick: () => { S.confirm = { text: '되돌릴 수 없음', run: async () => { await api('project.delete', {}); S.pid = null; S.project = null; S.confirm = null; pull(true); } }; render(); },
-      })));
+      })),
+    brandMark('text-align:center;padding:44px 0 4px'));
 }
 
 function openAgent(id) { S.open = { type: 'agent', id, model: null }; clearTyped('ag-name', 'ag-role', 'ag-craft'); render(); }

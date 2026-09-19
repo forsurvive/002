@@ -989,7 +989,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const css = readFileSync(join(ROOT, 'web', 'style.css'), 'utf8');
   const root = css.slice(css.indexOf(':root'), css.indexOf('}', css.indexOf(':root')));
   const rootHex = (root.match(/#[0-9a-f]{3,8}/gi) || []).map((x) => x.toLowerCase());
-  eq('팔레트 토큰', rootHex.sort().join(','), ['#111111', '#ffffff', '#1a48d0', '#7fa0ff', '#d4202a', '#ff8c92'].sort().join(','));
+  // 애플 시스템 색으로 값만 맞췄다(2026-09-19) — 갈래는 여전히 적·백·흑·파랑 넷이다.
+  eq('팔레트 토큰', rootHex.sort().join(','), ['#1c1c1e', '#ffffff', '#007aff', '#5ac8fa', '#ff3b30', '#ff9f9a'].sort().join(','));
   const strays = (css.replace(root, '').match(/#[0-9a-f]{3,8}/gi) || []).map((x) => x.toLowerCase()).filter((x) => !rootHex.includes(x));
   ok('팔레트 밖의 색을 쓰지 않는다', strays.length === 0, strays.join(' '));
   const strayApp = (readFileSync(join(ROOT, 'web', 'app.js'), 'utf8').match(/#[0-9a-f]{3,8}/gi) || []);
@@ -999,6 +1000,11 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   for (const m of app.matchAll(/class: '([^']+)'/g)) for (const c of m[1].split(/\s+/)) if (c) usedClasses.add(c);
   const deadClasses = [...usedClasses].filter((c) => !css.includes('.' + c));
   ok('화면이 쓰는 반이 모두 style.css 에 있다', deadClasses.length === 0, deadClasses.join(' '));
+  // 애플 꼴로 리뉴얼 (사용자 지시, 2026-09-19) — 갈래는 여전히 넷
+  ok('애플 글꼴을 먼저 부른다', /-apple-system/.test(css) && /SF Pro Text/.test(css));
+  ok('띠가 흐릿하게 비친다', /backdrop-filter/.test(css));
+  ok('단추가 알약 꼴이다', /--pill: 980px/.test(css));
+  ok('브랜드 문구가 선다', app.includes("const STUDIO = 'Old Tower Studio'") && (app.match(/brandMark\(/g) || []).length >= 4);
 }
 
 // ---------------------------------------------------------------- 프롬프트 정본
