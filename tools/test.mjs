@@ -823,10 +823,15 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('그때는 문서가 없다', p.docs.length, 0);
   ok('준비가 안 되었다고 알린다', !p.prepared);
 
-  globalThis.__SE2_MOCK_FN = MOCK_FN;
-  const again = await post('project.prepare', { pid });
+  // 다시 걸면서 적은 요청사항이 그 호출에 실린다(저장하지는 않는다)
+  let seen = '';
+  globalThis.__SE2_MOCK_FN = (args) => { if (args.mockKey === 'F-KIND') seen = args.prompt; return MOCK_FN(args); };
+  const again = await post('project.prepare', { pid, request: '이 글은 실용 안내서로 보아라' });
   ok('다시 걸 수 있다', again.ok);
   p = await settle(pid, 60000);
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  ok('적은 요청사항이 호출에 실린다', seen.includes('■ 이번 요청사항') && seen.includes('이 글은 실용 안내서로 보아라'));
+  eq('작품의 요청사항으로 저장되지는 않는다', p.request, '');
   eq('이번에는 끝난다', p.jobs.filter((j) => j.kind === 'agents').pop().status, 'done');
   ok('이제 준비되었다', p.prepared);
   eq('«자료 분석»도 뒤늦게 생긴다', p.docs.filter((d) => d.title === agents.STUDY_TITLE).length, 1);
@@ -868,6 +873,13 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('사람마다 모델을 고른다', /function modelRow\(/.test(app) && app.includes("'작품을 따름'"));
   ok('그 누름은 mousedown 으로 받는다', /onmousedown: \(\) => pick\(m\)/.test(app));
   ok('준비를 다시 걸 길이 있다', app.includes("'project.prepare'"));
+  ok('다시 걸며 요청사항을 적는다', /function preparePanel\(/.test(app) && app.includes("area('pp-req'"));
+  ok('설정 항목이 서로 떨어져 보인다',
+    app.includes("class: 'settings'") && /\.settings > \* \+ \*/.test(readFileSync(join(ROOT, 'web', 'style.css'), 'utf8')));
+  // 아무것도 치지 않았으면 만들지 않고 창만 닫힌다 (사용자 지시)
+  ok('빈 채로 [생성]하면 문서를 만들지 않는다', /if \(!title\) return close\(\);/.test(app));
+  ok('빈 채로 [생성]하면 작품을 만들지 않는다', /if \(empty\) return close\(\);/.test(app));
+  ok('빈 채로 [만들기]하면 사람을 짓지 않는다', /!String\(body\.craft\)\.trim\(\)\) return close\(\);/.test(app));
   for (const op of used) ok('서버에 문이 있다: ' + op, OP_NAMES.includes(op));
   for (const m of app.matchAll(/\/api\/(state|download)/g)) ok('상태·내려받기 경로', !!m[1]);
   // 색은 :root 에 적힌 것만 쓴다 — 적·백·흑·파랑 네 갈래.

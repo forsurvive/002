@@ -16,7 +16,7 @@ export const CRAFT_MIN = 2000; // 기획서가 못 박은 하한. 위쪽 상한�
 // 이미 짓는 중이면 그 일이 끝나기를 기다렸다가 그 결과를 같이 쓴다.
 const building = new Map();
 
-function ctl(code, extraTask, project, { materials = true, refs = [] } = {}) {
+function ctl(code, extraTask, project, { materials = true, refs = [], request = '' } = {}) {
   const pr = promptFor(project, code);
   return {
     systemPrompt: buildSystem({ prompt: pr, withFinalRule: false, withNoCount: false }),
@@ -24,6 +24,7 @@ function ctl(code, extraTask, project, { materials = true, refs = [] } = {}) {
       project,
       materials: materials ? (project.materials || []).map((m) => ({ id: m.id, name: m.name, text: m.text })) : [],
       refs,
+      request,
       task: [pr.task, extraTask].filter(Boolean).join('\n'),
       noCount: false,
     }),
@@ -78,22 +79,23 @@ export function agentsReady(project) {
 }
 
 /**
- * 프로젝트를 만든 직후 한 번(자동 집필도 시작할 때 한 번 더 부르지만 이미 된 자리는 건너뛴다).
+ * 프로젝트를 만든 직후 한 번. 준비가 끊겼으면 설정의 [에이전트 준비 다시]가 같은 문을 다시 지난다(이미 된 자리는 건너뛴다).
  * ctx 는 작업 맥락(step·signal). 돌려주는 값: { ok, fiction, kind, error }
  */
-export async function prepareAgents(pid, ctx) {
+export async function prepareAgents(pid, ctx, request = '') {
   const project = state.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
   if (building.has(pid)) {
     if (ctx) ctx.step('에이전트 준비');
     return building.get(pid);
   }
-  const work = prepareAgentsInner(pid, ctx, project).finally(() => building.delete(pid));
+  const work = prepareAgentsInner(pid, ctx, project, request).finally(() => building.delete(pid));
   building.set(pid, work);
   return work;
 }
 
-async function prepareAgentsInner(pid, ctx, project) {
+// request 는 이번 한 번만 싣는 작가의 말이다(«다시» 를 누르며 적은 것). 저장하지 않는다.
+async function prepareAgentsInner(pid, ctx, project, request = '') {
   if (ctx) ctx.step('에이전트 준비');
 
   // 판정은 프로젝트마다 한 번뿐이다 — 이미 내린 판정이 있으면 그대로 잇는다.
@@ -103,7 +105,7 @@ async function prepareAgentsInner(pid, ctx, project) {
   if (!kindName) {
     let info = null;
     for (let attempt = 0; attempt < 2 && !info; attempt++) {
-      const c = ctl('F-KIND', attempt ? '첫 줄은 반드시 «분류: » 로 시작해야 한다.' : '', project);
+      const c = ctl('F-KIND', attempt ? '첫 줄은 반드시 «분류: » 로 시작해야 한다.' : '', project, { request });
       const r = await runClaudeCall({ ...c, mockKey: 'F-KIND', signal: ctx && ctx.signal, model: project.model });
       if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
       if (!r.ok) { if (attempt) return { ok: false, error: r.error }; continue; }
@@ -136,7 +138,7 @@ async function prepareAgentsInner(pid, ctx, project) {
     if (ctx) ctx.step('에이전트 준비 — ' + code);
     let made = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const c = ctl('F-AGENT', extra + (attempt ? '\n앞서 받은 작법이 ' + CRAFT_MIN + '자에 못 미쳤다. 훨씬 더 길고 촘촘하게 다시 써라.' : ''), state.get(pid));
+      const c = ctl('F-AGENT', extra + (attempt ? '\n앞서 받은 작법이 ' + CRAFT_MIN + '자에 못 미쳤다. 훨씬 더 길고 촘촘하게 다시 써라.' : ''), state.get(pid), { request });
       const r = await runClaudeCall({ ...c, mockKey: 'F-AGENT', signal: ctx && ctx.signal, model: state.get(pid).model });
       if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
       if (!r.ok) { if (attempt) return { ok: false, error: r.error }; continue; }
@@ -162,14 +164,14 @@ export function perspectivesOf(project) {
 
 export const STUDY_TITLE = '자료 분석';
 
-export async function runStudy(pid, ctx) {
+export async function runStudy(pid, ctx, request = '') {
   const project = state.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
   if (!(project.materials || []).length) return { ok: true, skipped: true };
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   if (ctx) ctx.step(STUDY_TITLE);
 
-  const r = await callWithRetry({ pid, code: 'S02', materials: true, allFinals: true, signal: ctx && ctx.signal });
+  const r = await callWithRetry({ pid, code: 'S02', materials: true, allFinals: true, request, signal: ctx && ctx.signal });
   if (!r.ok) return r;
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
 

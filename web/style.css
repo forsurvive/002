@@ -192,6 +192,9 @@ details summary:hover { color: var(--ink); }
 .mat { display: flex; align-items: center; gap: 10px; padding: 7px 2px; border-bottom: 1px solid var(--line-soft); font-size: 14px; }
 .mat .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grid2 { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+/* 설정 탭 — 항목끼리 눈에 띄게 떨어져 보이도록 (사용자 지시) */
+.settings > * + * { margin-top: 28px; }
+.settings > details + * { margin-top: 30px; }
 /* 좁은 창에서는 좌측 메뉴가 위쪽 띠가 된다 — 숨기지 않는다. */
 @media (max-width: 760px) {
   .shell { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }

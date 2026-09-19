@@ -31,17 +31,17 @@ const pickModel = (v, fallback) => (MODELS.includes(String(v || '')) ? String(v 
 const prepared = (p) => agentsReady(p) && (!(p.materials || []).length || p.docs.some((d) => d.title === STUDY_TITLE));
 
 // 프로젝트를 만든 직후 그 프로젝트 전용 에이전트를 짓는다(소설이면 판정만 남기고 끝난다).
-function startAgentPrep(pid) {
+function startAgentPrep(pid, request = '') {
   const p = state.get(pid);
   if (!p) return;
   jobs.start(pid, {
     kind: 'agents', title: '에이전트 준비',
     run: async (ctx) => {
       if (!agentsReady(state.get(pid))) {
-        const r = await prepareAgents(pid, ctx);
+        const r = await prepareAgents(pid, ctx, request);
         if (!r.ok) return r;
       }
-      return runStudy(pid, ctx);   // 이어서 자료를 한 번 읽는다
+      return runStudy(pid, ctx, request);   // 이어서 자료를 한 번 읽는다
     },
   });
 }
@@ -96,7 +96,7 @@ const OPS = {
     if (!p) return bad('프로젝트를 찾을 수 없습니다');
     if (jobs.isKindRunning(b.pid, 'agents')) return bad('이미 도는 중입니다');
     if (prepared(p)) return bad('이미 준비되어 있습니다');
-    startAgentPrep(b.pid);
+    startAgentPrep(b.pid, String(b.request || ''));
     return ok();
   },
 
