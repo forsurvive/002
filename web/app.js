@@ -16,6 +16,7 @@ const S = {
   typed: {},       // 아직 저장되지 않은 입력값 — 다시 그려도 사라지지 않게 여기 둔다
   newCat: false,   // 카테고리 이름을 그 자리에서 받는 중
   peek: null,      // 지금 들여다보는 옛 판 { docId, i }
+  pickOpen: null,  // 고르기 창에서 지금 펼쳐 본 것 { id, name, text }
   saveOpen: null,  // 지금 열린 창이 «닫기 전에 저장할 것»을 여기 걸어 둔다
   askOpen: null,   // 새로 만드는 창이 «닫기 전에 물어볼 것»을 여기 걸어 둔다
   focusNext: '',   // 다시 그린 뒤 이 칸에 커서를 둔다
@@ -33,7 +34,7 @@ const brandMark = (style) => h('div', { class: 'brand', style, text: STUDIO });
 
 // 처음 쓰는 사람을 위한 작업 순서 — 설정 탭에 접어 둔다.
 const GUIDE = [
-  ['① 작품을 만든다', '첫 화면 오른쪽 위 [+]. 이름·형식과 자료만 있으면 됩니다(개요와 분량은 비워 두어도 됩니다). 만들고 나면 왼쪽 «에이전트 준비»가 돌며 자료를 한 번 읽어 «자료 분석»을 남깁니다.'],
+  ['① 프로젝트를 만든다', '첫 화면 오른쪽 위 [+]. 이름·형식과 자료만 있으면 됩니다(개요와 분량은 비워 두어도 됩니다). 만들고 나면 왼쪽 «에이전트 준비»가 돌며 자료를 한 번 읽어 «자료 분석»을 남깁니다.'],
   ['② 문서를 짓는다', '작업실 [+] → 문서. 이름만 짓고 [생성]을 누르면 요청사항과 참조를 보고 씁니다. 본문을 직접 치셔도 됩니다. 한 호출이 십 분을 넘기기도 하니 작업 줄의 지난 시간을 보고 기다리십시오.'],
   ['③ 참조를 건다', '문서 창의 «참조»에 자료와 다른 문서를 겁니다. 확정본(빨간 토글)을 켜 두면 그 문서가 «최우선 사실»로 실려 다른 글을 다스립니다.'],
   ['④ 에이전트를 건다', '설정에서 이름·역할·작법·쓸 모델로 사람을 짓고, 문서 창의 «에이전트»에 걸어 둡니다. 그 문서를 짓고 고칠 때 그 사람이 씁니다.'],
@@ -66,7 +67,8 @@ function h(tag, attrs, ...kids) {
       else n.setAttribute(k, v);
     }
   }
-  for (const kid of kids.flat()) {
+  // 깊이를 가리지 않고 편다 — 한 줄이 여러 조각을 낳는 자리가 있다(고르기 창의 펼친 내용 따위).
+  for (const kid of kids.flat(Infinity)) {
     if (kid == null || kid === false) continue;
     n.appendChild(typeof kid === 'string' ? document.createTextNode(kid) : kid);
   }
@@ -309,8 +311,15 @@ function catSection(c, byId) {
       h('div', { class: 'name', text: c.name, onclick: () => { S.fold[key] = !folded; render(); } }),
       c.virtual ? null : h('button', { class: 'btn-text red', text: '삭제', onclick: () => api('cat.delete', { ids: [c.id] }) })),
     S.all[key] ? h('div', { class: 'bulk' },
-      h('button', { class: 'btn-line', text: '확정본 지정', onclick: () => api('doc.final', { ids: [...sel], on: true }) }),
-      h('button', { class: 'btn-line', text: '확정본 해제', onclick: () => api('doc.final', { ids: [...sel], on: false }) }),
+      // 지정과 해제를 한 단추로 — 고른 것이 모두 확정본이면 내리고, 아니면 올린다.
+      (() => {
+        const ids = [...sel];
+        const allFinal = ids.length > 0 && ids.every((id) => { const x = byId.get(id); return x && x.isFinal; });
+        return h('button', {
+          class: 'btn-line', text: allFinal ? '확정본 해제' : '확정본 지정',
+          onclick: () => api('doc.final', { ids, on: !allFinal }),
+        });
+      })(),
       h('button', {
         class: 'btn-line', text: '다운로드',
         onclick: () => {
@@ -408,7 +417,7 @@ function settings() {
       h('div', { class: 'lab', text: '모델' }),
       modelRow(p.models, p.model, (m) => api('project.spec', { model: m }), '기본값')),
     (p.prompts || []).length ? h('details', { open: S.fold['prompts'] ? 'open' : null },
-      h('summary', { text: '작법 프롬프트', onclick: () => { S.fold['prompts'] = !S.fold['prompts']; } }),
+      h('summary', { text: '기본 에이전트', onclick: () => { S.fold['prompts'] = !S.fold['prompts']; } }),
       (p.prompts || []).map((pr) => h('div', {
         class: 'row', onclick: () => openPrompt(pr.code),
       },
@@ -762,7 +771,7 @@ function refLine(label, ids, byId, save, selfId, pool, fixed) {
           h('span', { text: t ? t.title : '없음' }),
           h('button', { text: '×', onclick: () => save((ids || []).filter((x) => x !== id)) }));
       }),
-      h('button', { class: 'plus', style: 'width:26px;height:26px;font-size:16px', text: '+', onclick: () => { S.pick = { ids: (ids || []).slice(), save, selfId, label, pool }; render(); } })));
+      h('button', { class: 'plus', style: 'width:26px;height:26px', text: '+', onclick: () => { S.pick = { ids: (ids || []).slice(), save, selfId, label, pool }; render(); } })));
 }
 
 function threadPanel(close) {
@@ -865,8 +874,11 @@ function newProjectPanel(close) {
         h('div', { class: 'line', style: 'margin-top:8px' },
           h('button', { class: 'btn-line', text: '추가', onclick: () => { const t = $('n-mat').value; clearTyped('n-mat'); add('', t); } }),
           fileButton(add))),
-      h('div', { style: 'padding-top:6px' }, h('button', { class: 'btn', text: '생성', onclick: makeProject }),
-        S.open.err ? h('span', { class: 'notice', style: 'margin-left:10px', text: S.open.err }) : null)));
+      h('div', { style: 'padding-top:6px' },
+        h('div', { class: 'line' },
+          h('button', { class: 'btn', text: '생성', onclick: makeProject }),
+          S.open.err ? h('span', { class: 'notice', text: S.open.err }) : null),
+        S.open.note ? h('div', { class: 'lab', style: 'margin-top:8px', text: S.open.note }) : null)));
 }
 
 // 돌려주는 값: 이 자리에서 창까지 다 갈무리했으면 true. 거절당했으면 false(창을 열어 둔다).
@@ -877,11 +889,21 @@ async function makeProject() {
     spec: { outline: $('n-outline').value, form: $('n-form').value, length: $('n-length').value },
     materials: rest.trim() ? [...S.draft, { name: '', text: rest }] : S.draft.slice(),
   };
-  // 한 글자도 치지 않았으면 만들지 않는다 — 창만 닫힌다.
-  const empty = !body.name.trim() && !body.standard.trim() && !body.request.trim()
-    && !body.spec.outline.trim() && !body.spec.form.trim() && !body.spec.length.trim()
-    && !body.materials.length;
-  if (empty) { closeLayer(true); return true; }
+  // 필수는 셋 — 이름·형식·자료. 빠진 것이 있으면 만들지 않고 그 자리에 짚어 준다(사용자 지시).
+  const miss = [];
+  if (!body.name.trim()) miss.push('이름');
+  if (!body.spec.form.trim()) miss.push('형식');
+  if (!body.materials.length) miss.push('자료');
+  if (miss.length) {
+    S.open = {
+      type: 'newproject',
+      err: '필수 항목 누락 — ' + miss.join(' · '),
+      // 분량은 필수가 아니다. 비어 있으면 스스로 정한다는 것만 함께 알린다.
+      note: body.spec.length.trim() ? '' : '분량은 비워 두면 회차 수를 스스로 정합니다',
+    };
+    render();
+    return false;
+  }
   const r = await api('project.create', body);
   if (r.ok) { S.pid = r.pid; S.draft = []; S.open = null; S.project = null; S.typed = {}; pull(true); return true; }
   S.open = { type: 'newproject', err: r.error };
@@ -937,22 +959,43 @@ async function makeDoc() {
 
 // ---------------------------------------------------------------- 2겹 창
 
+// 고르기 창에서 한 줄을 누르면 그 내용을 그 자리에 펼친다(고르는 것은 왼쪽 동그라미가 한다).
+async function peekOne(id) {
+  if (S.pickOpen && S.pickOpen.id === id) { S.pickOpen = null; return render(); }
+  S.pickOpen = { id, name: '', text: '', loading: true };
+  render();
+  const r = await api('peek', { id });
+  if (!S.pickOpen || S.pickOpen.id !== id) return;
+  S.pickOpen = r.ok ? { ...r.one, loading: false } : { id, name: '', text: '없습니다', loading: false };
+  render();
+}
+
+function peekBox(id) {
+  if (!S.pickOpen || S.pickOpen.id !== id) return null;
+  return h('div', { class: 'peek', text: S.pickOpen.loading ? '…' : (S.pickOpen.text || '(비어 있음)') });
+}
+
 function pickLayer() {
   const p = S.project;
   const chosen = new Set(S.pick.ids);
   const flip = (id) => { if (chosen.has(id)) chosen.delete(id); else chosen.add(id); S.pick.ids = [...chosen]; S.pick.save(S.pick.ids); render(); };
-  const close = () => { S.pick = null; render(); };
+  const close = () => { S.pick = null; S.pickOpen = null; render(); };
   if (S.pick.pool === 'agent') {
     const crew = p.crew || [];
     return h('div', { class: 'layer two', onclick: (e) => { if (e.target.classList.contains('layer')) close(); } },
       h('div', { class: 'panel narrow' },
         h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '에이전트' }), h('button', { class: 'x', text: '×', onclick: close })),
         h('div', { class: 'panel-body' },
-          crew.length ? crew.map((a) => h('div', { class: 'row', onclick: () => flip(a.id) },
-            h('button', { class: 'ck' + (chosen.has(a.id) ? ' on' : '') }),
-            h('div', { class: 'name', text: a.name }),
-            h('div', { class: 'when', text: a.role })))
-            : h('div', { class: 'lab', text: '없음' }))));
+          crew.length
+            ? crew.map((a) => [
+              h('div', { class: 'row', onclick: () => peekOne(a.id) },
+                h('button', { class: 'ck' + (chosen.has(a.id) ? ' on' : ''), onclick: (e) => { stop(e); flip(a.id); } }),
+                h('div', { class: 'name', text: a.name }),
+                h('div', { class: 'when', text: a.role })),
+              peekBox(a.id),
+            ])
+            // 아직 아무도 짓지 않았으면 그 자리에서 지을 수 있게 한다(막다른 골목을 두지 않는다).
+            : h('button', { class: 'btn', text: '에이전트 만들기', onclick: () => { S.pick = null; openAgent(null); } }))));
   }
   return h('div', { class: 'layer two', onclick: (e) => { if (e.target.classList.contains('layer')) close(); } },
     h('div', { class: 'panel' },
@@ -969,10 +1012,13 @@ function pickLayer() {
               },
             }),
             h('div', { class: 'name', text: '자료' })),
-          (p.materials || []).map((m) => h('div', { class: 'row', onclick: () => flip(m.id) },
-            h('button', { class: 'ck' + (chosen.has(m.id) ? ' on' : '') }),
-            h('div', { class: 'name', text: m.name }),
-            h('div', { class: 'when', text: String(m.chars) })))) : null,
+          (p.materials || []).map((m) => [
+            h('div', { class: 'row', onclick: () => peekOne(m.id) },
+              h('button', { class: 'ck' + (chosen.has(m.id) ? ' on' : ''), onclick: (e) => { stop(e); flip(m.id); } }),
+              h('div', { class: 'name', text: m.name }),
+              h('div', { class: 'when', text: String(m.chars) })),
+            peekBox(m.id),
+          ])) : null,
         p.categories.map((c) => {
         const ids = c.docIds.filter((id) => id !== S.pick.selfId);
         if (!ids.length) return null;
@@ -986,10 +1032,13 @@ function pickLayer() {
             h('div', { class: 'name', text: c.name })),
           ids.map((id) => {
             const d = p.docs.find((x) => x.id === id);
-            return h('div', { class: 'row' + (d.isFinal ? ' final' : ''), onclick: () => flip(id) },
-              h('button', { class: 'ck' + (chosen.has(id) ? ' on' : ''), onclick: (e) => { stop(e); flip(id); } }),
-              KIND_MARK[d.kind] ? h('span', { class: 'mark', text: KIND_MARK[d.kind] }) : null,
-              h('div', { class: 'name', text: d.title }));
+            return [
+              h('div', { class: 'row' + (d.isFinal ? ' final' : ''), onclick: () => peekOne(id) },
+                h('button', { class: 'ck' + (chosen.has(id) ? ' on' : ''), onclick: (e) => { stop(e); flip(id); } }),
+                KIND_MARK[d.kind] ? h('span', { class: 'mark', text: KIND_MARK[d.kind] }) : null,
+                h('div', { class: 'name', text: d.title })),
+              peekBox(id),
+            ];
           }));
       }))));
 }
@@ -1013,7 +1062,7 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (S.pick) { S.pick = null; render(); }
+  if (S.pick) { S.pick = null; S.pickOpen = null; render(); }
   else if (S.confirm) { const f = S.confirm.onClose; S.confirm = null; render(); if (f) f(); }
   else if (S.open) closeLayer();
 });

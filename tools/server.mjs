@@ -50,12 +50,16 @@ const OPS = {
   // ---------------- 프로젝트
   'project.list': () => ok({ projects: state.list() }),
 
+  // 필수는 셋뿐이다 — 이름·형식·자료(사용자 지시, 2026-09-19). 무엇이 빠졌는지 짚어서 돌려준다.
   'project.create': (b) => {
     const name = String(b.name || '').trim();
     const spec = b.spec || {};
-    if (!name || !String(spec.form || '').trim()) return bad('작품 규격 필요');
     const materials = arr(b.materials).filter((m) => m && String(m.text || '').trim());
-    if (!materials.length) return bad('자료 필요');
+    const miss = [];
+    if (!name) miss.push('이름');
+    if (!String(spec.form || '').trim()) miss.push('형식');
+    if (!materials.length) miss.push('자료');
+    if (miss.length) return bad('필수 항목 누락 — ' + miss.join(' · '));
     const p = state.create({ name, spec, standard: b.standard, request: b.request, materials });
     startAgentPrep(p.id);
     return ok({ pid: p.id });
@@ -98,6 +102,20 @@ const OPS = {
     if (prepared(p)) return bad('이미 준비되어 있습니다');
     startAgentPrep(b.pid, String(b.request || ''));
     return ok();
+  },
+
+  // 고르기 창에서 «이게 무슨 글이더라»를 그 자리에서 펼쳐 보는 문.
+  // 문서·자료·에이전트 어느 것이든 id 하나로 본문을 내어 준다(폰도 이 문 하나로 족하다).
+  'peek': (b) => {
+    const p = state.get(b.pid);
+    if (!p) return bad('프로젝트를 찾을 수 없습니다');
+    const d = model.findDoc(p, b.id);
+    if (d) return ok({ one: { id: d.id, name: d.title, text: d.body } });
+    const m = (p.materials || []).find((x) => x.id === b.id);
+    if (m) return ok({ one: { id: m.id, name: m.name, text: m.text } });
+    const a = model.findAgent(p, b.id);
+    if (a) return ok({ one: { id: a.id, name: a.name, text: [a.role, a.craft].filter((x) => String(x || '').trim()).join('\n\n') } });
+    return bad('없습니다');
   },
 
   'project.delete': (b) => {

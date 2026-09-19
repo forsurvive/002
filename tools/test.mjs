@@ -963,6 +963,14 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('설정에 작업 순서 안내가 있다', app.includes('guideBlock()') && /GUIDE = \[/.test(app));
   ok('문서에 에이전트를 건다', /refLine\('에이전트'/.test(app) && app.includes("'agent'"));
   ok('논의 스레드에도 건다', app.includes("'thread.agents'") && (app.match(/refLine\('에이전트'/g) || []).length >= 2);
+  ok('고르기에서 한 줄을 누르면 내용을 펼친다', /function peekBox\(/.test(app) && app.includes("api('peek'"));
+  ok('h() 가 깊이를 가리지 않고 편다', /kids\.flat\(Infinity\)/.test(app));
+  ok('고르는 것은 동그라미가 한다', /onclick: \(e\) => \{ stop\(e\); flip\(/.test(app));
+  ok('에이전트가 없으면 그 자리에서 짓는다', app.includes('에이전트 만들기'));
+  ok('확정본은 한 단추다', app.includes("allFinal ? '확정본 해제' : '확정본 지정'"));
+  ok('작업 순서 첫 걸음은 프로젝트다', app.includes('① 프로젝트를 만든다') && !app.includes('① 작품을 만든다'));
+  ok('설정의 자리 목록은 «기본 에이전트»다', app.includes("text: '기본 에이전트'") && !app.includes("text: '작법 프롬프트'"));
+  ok('«+» 는 글자가 아니라 막대로 그린다', /\.plus \{[^}]*font-size: 0/.test(readFileSync(join(ROOT, 'web', 'style.css'), 'utf8')));
   ok('문서에도 자리 사람이 칩으로 선다', app.includes('KIND_SEAT') && /seatNames\(d\.kind === 'review'/.test(app));
   ok('합평회에 둘이면 모으는 자리도 보인다', /KIND_SEAT = \{ doc: \['F-UPDATE'\], check: \['F-CONTRA'\], review: \['F-REVIEW', 'F-MERGE'\] \}/.test(app));
   ok('모델이 갈리면 묻는다', /function splitModels\(/.test(app) && /pickOneModel\(/.test(app));
@@ -975,7 +983,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     app.includes("class: 'settings'") && /\.settings > \* \+ \*/.test(readFileSync(join(ROOT, 'web', 'style.css'), 'utf8')));
   // 아무것도 치지 않았으면 만들지 않고 창만 닫힌다 (사용자 지시)
   ok('빈 채로 [생성]하면 문서를 만들지 않는다', /if \(!title\) \{ closeLayer\(true\); return true; \}/.test(app));
-  ok('빈 채로 [생성]하면 작품을 만들지 않는다', /if \(empty\) \{ closeLayer\(true\); return true; \}/.test(app));
+  ok('빈 채로 [생성]하면 무엇이 빠졌는지 짚어 준다', /'필수 항목 누락 — ' \+ miss\.join\(' · '\)/.test(app) && app.includes('분량은 비워 두면'));
   ok('빈 채로 [만들기]하면 사람을 짓지 않는다', /!String\(body\.craft\)\.trim\(\)\) \{ closeLayer\(true\); return true; \}/.test(app));
   // 치던 글이 있으면 그냥 닫히지 않고 묻는다 (사용자 지시)
   ok('닫기 전에 물어볼 것을 걸어 둔다', /S\.askOpen = \{ label:/.test(app) || /S\.askOpen = \{\n/.test(app));

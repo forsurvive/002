@@ -141,11 +141,19 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .btn-text { font-size: 14px; font-weight: 500; color: var(--blue); }
 .btn-text:hover { opacity: .65; }
 .btn-text.red { color: var(--red); }
+/* «+» 는 글자로 그리지 않는다 — 글꼴마다 글자의 중심이 달라 원 한가운데에 서지 않는다.
+   막대 둘을 한가운데에 놓아 크기가 바뀌어도 늘 정중앙이다. */
 .plus {
   width: 34px; height: 34px; border-radius: 50%; background: var(--blue); color: var(--paper);
-  font-size: 20px; line-height: 1; display: grid; place-items: center;
+  font-size: 0; line-height: 0; position: relative; display: block;
   box-shadow: var(--shadow-s); transition: filter .12s, transform .06s;
 }
+.plus::before, .plus::after {
+  content: ''; position: absolute; top: 50%; left: 50%;
+  background: var(--paper); border-radius: 1.5px; transform: translate(-50%, -50%);
+}
+.plus::before { width: 44%; height: 2px; }
+.plus::after { width: 2px; height: 44%; }
 .plus:hover { filter: brightness(1.08); }
 .plus:active { transform: scale(.94); }
 .x {
@@ -345,4 +353,13 @@ details summary:hover { opacity: .7; }
   .side-foot { border-top: none; padding: 0; }
   .top, .body { padding-left: 18px; padding-right: 18px; }
   .grid2 { grid-template-columns: 1fr; }
+}
+
+/* 고르기 창에서 한 줄을 눌러 펼친 내용 */
+.peek {
+  white-space: pre-wrap; word-break: break-word;
+  background: var(--group); border-radius: var(--r-m);
+  margin: 0 16px 12px; padding: 13px 15px;
+  max-height: 260px; overflow: auto;
+  font-size: 14px; line-height: 1.6; color: var(--dim);
 }
