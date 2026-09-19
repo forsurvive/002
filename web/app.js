@@ -20,6 +20,7 @@ const S = {
   askOpen: null,   // 새로 만드는 창이 «닫기 전에 물어볼 것»을 여기 걸어 둔다
   focusNext: '',   // 다시 그린 뒤 이 칸에 커서를 둔다
   redrawing: false,// 다시 그리는 중 — 그때 떨어지는 포커스는 저장이 아니다
+  tour: null,      // 튜토리얼이 도는 중 — 걸음 목록을 도는 틀 하나(web/tour.js)
   last: '',
 };
 
@@ -112,6 +113,8 @@ const typedAny = (...ids) => ids.some((id) => String(S.typed[id] || '').trim());
 const firstLine = (text) => (String(text || '').split('\n').map((l) => l.trim()).find((l) => l) || '붙여 넣은 글').slice(0, 24);
 
 async function api(op, body = {}) {
+  // 튜토리얼이 도는 동안에는 서버로 한 걸음도 나가지 않는다 — 문 서른 남짓이 모두 이 한 곳을 지난다.
+  if (S.tour) return S.tour.api(op, body);
   const r = await fetch('/api', {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ op, pid: S.pid, ...body }),
@@ -122,6 +125,7 @@ async function api(op, body = {}) {
 }
 
 function download(kind, id) {
+  if (S.tour) return;   // 가짜 pid 로 내려받으러 가지 않는다
   const a = h('a', { href: '/api/download?pid=' + encodeURIComponent(S.pid) + '&kind=' + kind + '&id=' + encodeURIComponent(id), download: '' });
   document.body.appendChild(a); a.click(); a.remove();
 }
@@ -129,6 +133,7 @@ function download(kind, id) {
 // ---------------------------------------------------------------- 상태 받아오기
 
 async function pull(force) {
+  if (S.tour) return;   // 1.5초마다 도는 갱신도 멈춘다(가짜 pid 를 물으면 튜토리얼이 튕긴다)
   const url = S.pid ? '/api/state?pid=' + encodeURIComponent(S.pid) : '/api/state';
   let d;
   try { d = await (await fetch(url)).json(); } catch { return; }
@@ -164,6 +169,7 @@ function render() {
   $('root').replaceChildren(S.pid && S.project ? app() : projectList());
   $('layer1').replaceChildren(...(S.open ? [layerOne()] : []));
   $('layer2').replaceChildren(...(S.pick ? [pickLayer()] : S.confirm ? [confirmLayer()] : []));
+  $('layer3').replaceChildren(...(S.tour ? [tourLayer()] : []));
   S.redrawing = false;
   if (same1 && $('layer1').firstChild) $('layer1').firstChild.classList.add('still');
   if (same2 && $('layer2').firstChild) $('layer2').firstChild.classList.add('still');
@@ -182,6 +188,8 @@ function render() {
       try { n.setSelectionRange(keep.s, keep.e); } catch {}
     }
   }
+  // 눈길 모으는 테는 스크롤을 되돌린 뒤에 잡는다 — 그 앞에서 잡으면 되돌리기가 지워 버린다.
+  if (S.tour) tourFocus();
   if (S.focusNext) {
     const n = $(S.focusNext);
     S.focusNext = '';
@@ -197,7 +205,9 @@ function projectList() {
       h('div', null,
         brandMark('margin-bottom:6px'),
         h('div', { class: 'top-name', style: 'font-size:30px', text: '스토리 엔진' })),
-      h('button', { class: 'plus', text: '+', onclick: () => { S.draft = []; S.open = { type: 'newproject' }; render(); } })),
+      h('div', { class: 'line', style: 'flex:none' },
+        h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: startTour }),
+        h('button', { class: 'plus', text: '+', onclick: () => { S.draft = []; S.open = { type: 'newproject' }; render(); } }))),
     h('div', { class: 'cards' }, S.projects.map((p) => h('div', {
       class: 'card', onclick: () => { S.pid = p.id; S.tab = '작업실'; S.project = null; pull(true); },
     },
@@ -1183,10 +1193,12 @@ function confirmLayer() {
 // ---------------------------------------------------------------- 시작
 
 document.addEventListener('click', (e) => {
+  if (S.tour) return;   // 각본이 세워 둔 차림표를 바깥 클릭이 닫지 않게
   if (S.menu && !e.target.closest('.menu') && !e.target.closest('.plus')) { S.menu = false; render(); }
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (S.tour) return tourExit();   // 튜토리얼에서는 Esc 가 «나가기»다
   if (S.pick) { S.pick = null; S.pickOpen = null; render(); }
   else if (S.confirm) { const f = S.confirm.onClose; S.confirm = null; render(); if (f) f(); }
   else if (S.open) closeLayer();

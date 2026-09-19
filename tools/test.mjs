@@ -1113,13 +1113,34 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('팔레트 토큰', rootHex.sort().join(','), ['#1c1c1e', '#ffffff', '#007aff', '#5ac8fa', '#ff3b30', '#ff9f9a'].sort().join(','));
   const strays = (css.replace(root, '').match(/#[0-9a-f]{3,8}/gi) || []).map((x) => x.toLowerCase()).filter((x) => !rootHex.includes(x));
   ok('팔레트 밖의 색을 쓰지 않는다', strays.length === 0, strays.join(' '));
-  const strayApp = (readFileSync(join(ROOT, 'web', 'app.js'), 'utf8').match(/#[0-9a-f]{3,8}/gi) || []);
+  // 튜토리얼도 같은 그물 안에 둔다 — 화면 코드가 둘로 갈렸다고 규칙이 갈리지 않는다.
+  const tour = readFileSync(join(ROOT, 'web', 'tour.js'), 'utf8');
+  const tourDemo = readFileSync(join(ROOT, 'web', 'tour.demo.js'), 'utf8');
+  const screens = app + '\n' + tour + '\n' + tourDemo;
+  const strayApp = (screens.match(/#[0-9a-f]{3,8}/gi) || []);
   ok('화면 코드에 색을 박지 않는다', strayApp.length === 0, strayApp.join(' '));
   // 화면이 붙이는 반 이름이 style.css 에 실제로 있어야 한다 — 어긋나면 꾸밈이 통째로 죽는다(폰에서 실제로 났다).
   const usedClasses = new Set();
-  for (const m of app.matchAll(/class: '([^']+)'/g)) for (const c of m[1].split(/\s+/)) if (c) usedClasses.add(c);
+  for (const m of screens.matchAll(/class: '([^']+)'/g)) for (const c of m[1].split(/\s+/)) if (c) usedClasses.add(c);
   const deadClasses = [...usedClasses].filter((c) => !css.includes('.' + c));
   ok('화면이 쓰는 반이 모두 style.css 에 있다', deadClasses.length === 0, deadClasses.join(' '));
+  // 튜토리얼 (사용자 지시, 2026-09-19) — 판매 상세 페이지에 실릴 소개 시퀀스
+  ok('첫 화면에 튜토리얼 문이 있다', app.includes("text: '튜토리얼 보기', onclick: startTour"));
+  ok('세 번째 겹을 그린다', app.includes("$('layer3').replaceChildren") && /<div id="layer3">/.test(readFileSync(join(ROOT, 'web', 'index.html'), 'utf8')));
+  ok('튜토리얼 파일을 함께 부른다', /src="tour\.demo\.js"/.test(readFileSync(join(ROOT, 'web', 'index.html'), 'utf8')) && /src="tour\.js"/.test(readFileSync(join(ROOT, 'web', 'index.html'), 'utf8')));
+  // 서버로 나가는 길 셋이 모두 막혔는가 — 구독을 쓰지 않고 데이터에 쓰지 않는다는 약속의 전부다
+  ok('튜토리얼은 서버를 부르지 않는다', /async function api\(op, body = \{\}\) \{[\s\S]{0,200}if \(S\.tour\) return S\.tour\.api/.test(app));
+  ok('갱신도 멈춘다', /async function pull\(force\) \{\n  if \(S\.tour\) return;/.test(app));
+  ok('내려받기도 막는다', /function download\(kind, id\) \{\n  if \(S\.tour\) return;/.test(app));
+  ok('각본이 도는 동안 손이 닿지 않는다', css.includes('body.tour-on #root') && tour.includes("classList.add('tour-on')"));
+  ok('Esc 는 나가기다', app.includes('if (S.tour) return tourExit();'));
+  ok('언제든 나갈 수 있다', /function tourExit\(/.test(tour) && tour.includes("text: '튜토리얼 나가기'"));
+  ok('나가면 있던 자리로 돌아온다', /Object\.assign\(S, t\.back\)/.test(tour));
+  ok('걸음마다 처음부터 되짚는다', /for \(let k = 0; k <= n; k\+\+\) t\.steps\[k\]\.act\(\)/.test(tour));
+  ok('걸음이 열은 넘는다', (tour.match(/\n      title: '/g) || []).length >= 10);
+  ok('데모 작품이 실린다', /function tourProject\(/.test(tourDemo) && tourDemo.includes('대리 상주'));
+  ok('데모 산출물이 갖춰졌다', ['TOUR_STUDY', 'TOUR_TREAT', 'TOUR_EP1', 'TOUR_CONTRA', 'TOUR_REVIEW', 'TOUR_TALK'].every((k) => tourDemo.includes('const ' + k)));
+  ok('데모가 진짜 프롬프트 자리 이름을 쓴다', ['F-UPDATE', 'F-CONTRA', 'F-REVIEW', 'F-MERGE'].every((c) => tourDemo.includes(c)));
   // 애플 꼴로 리뉴얼 (사용자 지시, 2026-09-19) — 갈래는 여전히 넷
   ok('애플 글꼴을 먼저 부른다', /-apple-system/.test(css) && /SF Pro Text/.test(css));
   ok('띠가 흐릿하게 비친다', /backdrop-filter/.test(css));

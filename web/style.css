@@ -371,3 +371,29 @@ details summary:hover { opacity: .7; }
   max-height: 260px; overflow: auto;
   font-size: 14px; line-height: 1.6; color: var(--dim);
 }
+
+/* ---------------------------------------------------------------- 튜토리얼 */
+/* 진짜 화면 위에 얹히는 세 번째 겹. 말풍선은 아래 한가운데 붙박이고 움직이지 않는다
+   — 영상으로 찍히므로 장면마다 흔들리면 안 된다. 움직이는 것은 눈길 모으는 테뿐이다. */
+.tour {
+  position: fixed; inset: 0; z-index: 40; pointer-events: none;
+  display: grid; align-items: end; justify-items: center; padding: 0 28px 28px;
+}
+/* 구멍 뚫린 막 — 바깥은 어둡고 테 안쪽만 밝다. 그림자 하나로 낸다. */
+.tour-ring {
+  position: fixed; border-radius: var(--r-m); pointer-events: none;
+  /* 창의 막(.32)보다 조금 짙다 — 밝은 바탕 위에서도 눈길이 한 자리에 모여야 한다(영상으로 찍힌다). */
+  box-shadow: var(--focus), 0 0 0 9999px rgba(28, 28, 30, .45);
+  transition: top .28s ease, left .28s ease, width .28s ease, height .28s ease;
+}
+/* 자리를 가진 테가 나중 형제보다 위에 그려지므로, 말풍선은 제 자리를 갖고 한 켜 위로 올라선다. */
+.tour-card { position: relative; z-index: 1; width: min(680px, 100%); max-height: none; pointer-events: auto; animation: none; }
+.tour-card .panel-body { gap: 16px; }
+.tour-say { font-size: 15.5px; line-height: 1.72; white-space: pre-wrap; color: var(--ink); }
+.tour-foot { justify-content: flex-end; }
+.tour-foot .btn-line { margin-right: auto; }
+/* 각본이 도는 동안에는 진짜 화면에 손이 닿지 않는다 — 눈으로는 다 보인다. */
+body.tour-on #root, body.tour-on #layer1, body.tour-on #layer2 { pointer-events: none; }
+/* 각본이 도는 동안 창은 위로 붙고 키를 줄인다 — 아래쪽은 말풍선 자리이기 때문이다. */
+body.tour-on .layer { align-items: start; padding-top: 24px; }
+body.tour-on .panel { max-height: 58vh; }
