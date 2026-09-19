@@ -804,6 +804,67 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   await post('project.delete', { pid });
 }
 
+// ---------------------------------------------------------------- 합평회 — 여럿이 말하고 한 자리가 모은다
+
+{
+  const r = await post('project.create', {
+    name: '합평 시험', spec: { form: '소설' },
+    materials: [{ name: '자료', text: '자료 본문' }],
+  });
+  const pid = r.pid;
+  await settle(pid, 60000);
+  const a1 = await post('agent.create', { pid, name: '갑', role: '뼈대를 본다', craft: '뼈대만 본다', model: 'opus' });
+  const a2 = await post('agent.create', { pid, name: '을', role: '문장을 본다', craft: '문장만 본다', model: 'sonnet' });
+  const origin = await post('doc.create', { pid, title: '원고' });
+  await post('doc.write', { pid, id: origin.id, body: '원고 본문' });
+
+  // 한 사람만 걸면 여느 때처럼 한 호출이다
+  const one = await post('doc.create', { pid, kind: 'review', title: '합평 하나' });
+  await post('doc.write', { pid, id: one.id, targetIds: [origin.id], agentIds: [a1.id] });
+  let codes = [];
+  globalThis.__SE2_MOCK_FN = (args) => { codes.push(args.mockKey); return MOCK_FN(args); };
+  await post('doc.update', { pid, id: one.id });
+  await settle(pid, 60000);
+  eq('한 사람이면 호출도 하나', codes.join(','), 'F-REVIEW');
+
+  // 둘을 걸면 각자 한 번씩 말하고, 마지막에 모으는 자리가 한 번 더 돈다
+  const many = await post('doc.create', { pid, kind: 'review', title: '합평 둘' });
+  await post('doc.write', { pid, id: many.id, targetIds: [origin.id], agentIds: [a1.id, a2.id] });
+  codes = [];
+  const seen = [];
+  globalThis.__SE2_MOCK_FN = (args) => {
+    codes.push(args.mockKey);
+    seen.push({ code: args.mockKey, sys: args.systemPrompt, prompt: args.prompt, model: args.model });
+    return '(모의) ' + args.mockKey + ' 본문';
+  };
+  await post('doc.update', { pid, id: many.id, model: 'fable' });
+  const done = await settle(pid, 60000);
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+
+  eq('둘이면 합평 둘에 모으기 하나', codes.join(','), 'F-REVIEW,F-REVIEW,F-MERGE');
+  const first = seen[0]; const second = seen[1]; const merge = seen[2];
+  ok('첫 합평은 갑이 한다', first.sys.includes('갑 — 뼈대를 본다') && !first.sys.includes('을 — 문장을 본다'));
+  ok('둘째 합평은 을이 한다', second.sys.includes('을 — 문장을 본다') && !second.sys.includes('갑 — 뼈대를 본다'));
+  ok('합평에도 자리 사람이 남는다', first.sys.includes(prompts.BUILTIN['F-REVIEW'].name));
+  ok('모으는 자리에는 사람을 걸지 않는다', !merge.sys.includes('갑 — 뼈대를 본다') && !merge.sys.includes('을 — 문장을 본다'));
+  ok('모으는 자리가 두 합평을 받는다', merge.prompt.includes('▶ 갑의 합평') && merge.prompt.includes('▶ 을의 합평'));
+  ok('모으는 자리에 원고도 함께 온다', merge.prompt.includes('원고 본문'));
+  ok('작가가 고른 모델로 모두 돈다', seen.every((x) => x.model === 'fable'), seen.map((x) => x.model).join(','));
+  eq('결과는 모은 글 하나', done.docs.find((d) => d.id === many.id).body, '(모의) F-MERGE 본문');
+
+  // 모델을 고르지 않으면 걸린 사람 차례대로 첫 사람의 것을 쓴다
+  codes = [];
+  let usedModels = [];
+  globalThis.__SE2_MOCK_FN = (args) => { usedModels.push(args.model); return MOCK_FN(args); };
+  await post('doc.update', { pid, id: many.id });
+  await settle(pid, 60000);
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  eq('첫 호출은 갑의 모델', usedModels[0], 'opus');
+  eq('둘째 호출은 을의 모델', usedModels[1], 'sonnet');
+
+  await post('project.delete', { pid });
+}
+
 // ---------------------------------------------------------------- 자동 집필은 빠졌다 (사용자 지시)
 
 {
@@ -817,10 +878,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('파이프라인 모듈이 없다', !existsSync(join(ROOT, 'tools', 'auto.mjs')));
 
   // 고칠 수 있는 자리는 «프로그램이 실제로 부르는 여섯»뿐이다.
-  eq('고칠 수 있는 자리 여섯', prompts.EDITABLE_CODES.length, 6);
+  eq('고칠 수 있는 자리 일곱', prompts.EDITABLE_CODES.length, 7);
   for (const c of prompts.EDITABLE_CODES) ok('그 자리의 내장 프롬프트가 있다: ' + c, !!prompts.BUILTIN[c]);
   ok('제어 호출은 고치지 못한다', prompts.CONTROL_CODES.every((c) => !prompts.EDITABLE_CODES.includes(c)));
-  ok('즉석으로 짓는 자리도 셋뿐', prompts.AGENT_SLOTS.length === 3 && prompts.AGENT_SLOTS.every((c) => prompts.SLOT_DUTY[c]));
+  ok('즉석으로 짓는 자리도 넷뿐', prompts.AGENT_SLOTS.length === 4 && prompts.AGENT_SLOTS.every((c) => prompts.SLOT_DUTY[c]));
   // 지난 파이프라인의 프롬프트는 자료 파일에 그대로 둔다(되살릴 날을 위해).
   ok('자료 파일에는 옛 프롬프트가 남아 있다', !!prompts.BUILTIN.S18C && !!prompts.BUILTIN['F-COUNT']);
 }
@@ -902,6 +963,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('설정에 작업 순서 안내가 있다', app.includes('guideBlock()') && /GUIDE = \[/.test(app));
   ok('문서에 에이전트를 건다', /refLine\('에이전트'/.test(app) && app.includes("'agent'"));
   ok('논의 스레드에도 건다', app.includes("'thread.agents'") && (app.match(/refLine\('에이전트'/g) || []).length >= 2);
+  ok('문서에도 자리 사람이 칩으로 선다', app.includes('KIND_SEAT') && /seatNames\(d\.kind === 'review'/.test(app));
+  ok('합평회에 둘이면 모으는 자리도 보인다', /KIND_SEAT = \{ doc: \['F-UPDATE'\], check: \['F-CONTRA'\], review: \['F-REVIEW', 'F-MERGE'\] \}/.test(app));
+  ok('모델이 갈리면 묻는다', /function splitModels\(/.test(app) && /pickOneModel\(/.test(app));
+  ok('고른 모델을 실어 보낸다', /model: m\.trim\(\)/.test(app));
   ok('사람마다 모델을 고른다', /function modelRow\(/.test(app) && app.includes("'작품을 따름'"));
   ok('그 누름은 mousedown 으로 받는다', /onmousedown: \(\) => pick\(m\)/.test(app));
   ok('준비를 다시 걸 길이 있다', app.includes("'project.prepare'"));

@@ -20,19 +20,20 @@ export const PERSPECTIVES = [
 
 // 프로그램이 실제로 부르는 집필 자리 — 자동 집필을 뺀 뒤 남은 여섯이다.
 // (자료 파일에는 지난 파이프라인의 프롬프트가 그대로 남아 있다. 되살릴 날을 위해 지우지 않았다.)
-export const EDITABLE_CODES = ['S02', 'F-UPDATE', 'F-TALK', 'F-THREADDOC', 'F-CONTRA', 'F-REVIEW'];
+export const EDITABLE_CODES = ['S02', 'F-UPDATE', 'F-TALK', 'F-THREADDOC', 'F-CONTRA', 'F-REVIEW', 'F-MERGE'];
 
 // 답의 «꼴»이 정해져 있어 프로그램이 읽는 자리 — 손대면 읽지 못하므로 고치는 목록에서 뺀다.
 export const CONTROL_CODES = ['F-KIND', 'F-AGENT'];
 
 // 비소설일 때 프롬프트를 새로 짓는 자리들.
-export const AGENT_SLOTS = ['S02', 'F-REVIEW', 'F-CONTRA'];
+export const AGENT_SLOTS = ['S02', 'F-REVIEW', 'F-CONTRA', 'F-MERGE'];
 
 // 그 자리가 하는 일 — 프롬프트를 새로 지을 때 실어 보낸다.
 export const SLOT_DUTY = {
   S02: '접수된 자료와 집필 기준·요청사항을 읽고, 이 작업에 쓸 수 있도록 갈라 정리한 문서를 쓴다.',
   'F-REVIEW': '주어진 원고·문서의 완성도를 합평한다. 고쳐 쓰는 이가 그대로 쓸 수 있을 만큼 구체적으로.',
   'F-CONTRA': '문서들 사이에서 서로 어긋나는 자리를 찾아 인용과 함께 보인다. 확정본이 있으면 그것이 기준이다.',
+  'F-MERGE': '여러 사람이 따로 내놓은 합평을 읽고 하나의 합평 문서로 모은다. 새 지적을 보태지 않고, 엇갈리는 말은 갈린 까닭과 함께 세운다.',
 };
 
 export function has(code) { return !!BUILTIN[code]; }

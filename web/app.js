@@ -24,6 +24,8 @@ const S = {
 };
 
 const KIND_MARK = { check: '모순 검사', review: '합평회' };
+// 그 종류의 문서를 짓는 자리 — 화면에 «자리» 칩으로 보이고, 사람을 걸어도 물러나지 않는다.
+const KIND_SEAT = { doc: ['F-UPDATE'], check: ['F-CONTRA'], review: ['F-REVIEW', 'F-MERGE'] };
 const INBOX = '__inbox__';
 const BODY_HINT = '직접 입력하거나 아래의 요청사항을 작성해주세요..';
 
@@ -652,10 +654,16 @@ function docPanel(close) {
       h('div', null, h('div', { class: 'lab', text: '요청사항' }), area('d-req', '요청사항', d.request, { onblur: saveFields })),
       d.kind === 'doc' ? null : refLine('대상', d.targetIds, byId, (ids) => api('doc.write', { id: d.id, targetIds: ids }), d.id),
       refLine('참조', d.refIds, byId, (ids) => api('doc.write', { id: d.id, refIds: ids }), d.id),
-      refLine('에이전트', d.agentIds, crewIndex(), (ids) => api('doc.write', { id: d.id, agentIds: ids }), null, 'agent'),
+      refLine('에이전트', d.agentIds, crewIndex(), (ids) => api('doc.write', { id: d.id, agentIds: ids }), null, 'agent',
+        seatNames(d.kind === 'review' && (d.agentIds || []).length > 1 ? KIND_SEAT.review : [KIND_SEAT[d.kind][0]])),
       h('div', null, h('button', {
         class: 'btn', text: busy ? verb + ' 중' : verb, disabled: busy,
-        onclick: async () => { await saveFields(); await api('doc.update', { id: d.id }); },
+        onclick: async () => {
+          await saveFields();
+          const m = await pickOneModel(d.agentIds);
+          if (m === null) return;              // 그만두기
+          await api('doc.update', { id: d.id, model: m.trim() });
+        },
       })),
       d.versions.length ? h('details', { open: S.fold['hist:' + d.id] ? 'open' : null },
         h('summary', {
@@ -689,6 +697,39 @@ function crewIndex() {
   const m = new Map();
   for (const a of S.project.crew || []) m.set(a.id, { title: a.name });
   return m;
+}
+
+// 걸린 사람들이 저마다 다른 모델을 쓰면 어느 것으로 모을지 묻는다(사용자 지시).
+// 실제로 쓰이는 모델 = 그 사람의 것, 정하지 않았으면 작품의 것.
+function splitModels(agentIds) {
+  const p = S.project;
+  if (!p || (agentIds || []).length < 2) return [];
+  const byId = new Map((p.crew || []).map((a) => [a.id, a]));
+  const seen = [];
+  for (const id of agentIds) {
+    const a = byId.get(id);
+    if (!a) continue;
+    const m = String(a.model || '').trim() || String(p.model || '');
+    if (!seen.includes(m)) seen.push(m);
+  }
+  return seen.length > 1 ? seen : [];
+}
+
+// 갈렸으면 묻고 고른 것을 돌려준다. 갈리지 않았으면 곧바로 ''. 그만두면 null.
+function pickOneModel(agentIds) {
+  const split = splitModels(agentIds);
+  if (!split.length) return Promise.resolve('');
+  return new Promise((resolve) => {
+    S.confirm = {
+      text: '쓰는 모델이 서로 다릅니다',
+      acts: split.map((m) => ({
+        label: m || '기본값', class: 'btn-line',
+        run: () => { S.confirm = null; render(); resolve(m || ' '); },
+      })),
+      onClose: () => resolve(null),
+    };
+    render();
+  });
 }
 
 // 그 자리에 늘 서는 사람의 이름 — 설정의 프롬프트 목록에서 가져온다.
@@ -763,8 +804,27 @@ function threadPanel(close) {
       h('div', { class: 'talk' }, flow),
       h('div', { class: 'send' },
         area('t-say', '요청사항'),
-        h('button', { class: 'btn', text: '보내기', onclick: async () => { const v = $('t-say').value; if (!v.trim()) return; clearTyped('t-say'); await api('thread.send', { id: t.id, text: v }); } }),
-        h('button', { class: 'btn-line', text: '문서로 정리', onclick: async () => { const v = $('t-say').value; clearTyped('t-say'); await api('thread.doc', { id: t.id, request: v }); } }))));
+        h('button', {
+          class: 'btn', text: '보내기',
+          onclick: async () => {
+            const v = $('t-say').value;
+            if (!v.trim()) return;
+            const m = await pickOneModel(t.agentIds);
+            if (m === null) return;
+            clearTyped('t-say');
+            await api('thread.send', { id: t.id, text: v, model: m.trim() });
+          },
+        }),
+        h('button', {
+          class: 'btn-line', text: '문서로 정리',
+          onclick: async () => {
+            const v = $('t-say').value;
+            const m = await pickOneModel(t.agentIds);
+            if (m === null) return;
+            clearTyped('t-say');
+            await api('thread.doc', { id: t.id, request: v, model: m.trim() });
+          },
+        }))));
 }
 
 const NEW_PROJECT_KEYS = ['n-name', 'n-form', 'n-outline', 'n-length', 'n-standard', 'n-request', 'n-mat'];
@@ -927,7 +987,8 @@ function pickLayer() {
 }
 
 function confirmLayer() {
-  const close = () => { S.confirm = null; render(); };
+  const onClose = S.confirm.onClose;
+  const close = () => { S.confirm = null; render(); if (onClose) onClose(); };
   // 갈래를 적어 주지 않으면 지난날처럼 [삭제] 하나다.
   const acts = S.confirm.acts || [{ label: '삭제', class: 'btn-red', run: S.confirm.run }];
   return h('div', { class: 'layer two' },
@@ -944,7 +1005,9 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (S.pick) { S.pick = null; render(); } else if (S.confirm) { S.confirm = null; render(); } else if (S.open) closeLayer();
+  if (S.pick) { S.pick = null; render(); }
+  else if (S.confirm) { const f = S.confirm.onClose; S.confirm = null; render(); if (f) f(); }
+  else if (S.open) closeLayer();
 });
 
 pull(true);

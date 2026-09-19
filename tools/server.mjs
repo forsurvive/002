@@ -150,7 +150,9 @@ const OPS = {
     const d = p && model.findDoc(p, b.id);
     if (!d) return bad('문서를 찾을 수 없습니다');
     if (jobs.isTargetRunning(b.pid, d.id)) return bad('이미 도는 중입니다');
-    return jobs.start(b.pid, { kind: 'update', title: d.title, targetId: d.id, run: (ctx) => engine.runUpdate(b.pid, b.id, ctx) });
+    // 작가가 «어느 모델로 모을지»를 골라 보냈으면 그것으로 부른다.
+    const modelPick = pickModel(b.model, '');
+    return jobs.start(b.pid, { kind: 'update', title: d.title, targetId: d.id, run: (ctx) => engine.runUpdate(b.pid, b.id, ctx, { modelPick }) });
   },
 
   // ---------------- 카테고리
@@ -180,7 +182,7 @@ const OPS = {
     const t = p && model.findThread(p, b.id);
     if (!t) return bad('스레드를 찾을 수 없습니다');
     if (!String(b.text || '').trim()) return bad('빈 말');
-    return jobs.start(b.pid, { kind: 'talk', title: t.title, targetId: t.id, run: (ctx) => engine.runTalk(b.pid, b.id, String(b.text), ctx) });
+    return jobs.start(b.pid, { kind: 'talk', title: t.title, targetId: t.id, run: (ctx) => engine.runTalk(b.pid, b.id, String(b.text), ctx, { modelPick: pickModel(b.model, '') }) });
   },
   'thread.edit': (b) => {
     const p = state.get(b.pid);
@@ -189,7 +191,7 @@ const OPS = {
     let made = null;
     state.update(b.pid, (pr) => { made = model.threadEditMessage(pr, b.id, b.messageId, b.text); });
     if (!made) return bad('메시지를 찾을 수 없습니다');
-    return jobs.start(b.pid, { kind: 'talk', title: t.title, targetId: t.id, run: (ctx) => engine.runTalk(b.pid, b.id, null, ctx) });
+    return jobs.start(b.pid, { kind: 'talk', title: t.title, targetId: t.id, run: (ctx) => engine.runTalk(b.pid, b.id, null, ctx, { modelPick: pickModel(b.model, '') }) });
   },
   'thread.title': (b) => state.update(b.pid, (p) => {
     const t = model.findThread(p, b.id);
@@ -200,7 +202,7 @@ const OPS = {
     const p = state.get(b.pid);
     const t = p && model.findThread(p, b.id);
     if (!t) return bad('스레드를 찾을 수 없습니다');
-    return jobs.start(b.pid, { kind: 'threaddoc', title: t.title, run: (ctx) => engine.runThreadDoc(b.pid, b.id, String(b.request || ''), ctx) });
+    return jobs.start(b.pid, { kind: 'threaddoc', title: t.title, run: (ctx) => engine.runThreadDoc(b.pid, b.id, String(b.request || ''), ctx, { modelPick: pickModel(b.model, '') }) });
   },
   'thread.delete': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.threadDelete(p, id); }),
 
