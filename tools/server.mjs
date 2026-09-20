@@ -14,7 +14,8 @@ import * as jobs from './jobs.mjs';
 import * as engine from './engine.mjs';
 import { prepareAgents, agentsReady, runStudy, STUDY_TITLE } from './agents.mjs';
 import { killAllCalls, MODELS } from './call.mjs';
-import { EDITABLE_CODES } from './prompts.mjs';
+import { bookList, BOOK_CATEGORY } from './books.mjs';
+import { EDITABLE_CODES, VIEW_CODES } from './prompts.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(dirname(HERE), 'web');
@@ -61,6 +62,14 @@ const OPS = {
     if (!materials.length) miss.push('자료');
     if (miss.length) return bad('필수 항목 누락 — ' + miss.join(' · '));
     const p = state.create({ name, spec, standard: b.standard, request: b.request, materials });
+    // 작법서를 문서로 세워 둔다 — 본문은 베끼지 않고 가리키기만 한다. 걸고 싶을 때 참조로 걸고, 필요 없으면 지운다.
+    const books = bookList();
+    if (books.length) {
+      state.update(p.id, (pr) => {
+        const cat = model.categoryCreate(pr, BOOK_CATEGORY);
+        for (const bk of books) model.docCreate(pr, { title: bk.title, src: bk.src, categoryId: cat.id });
+      });
+    }
     startAgentPrep(p.id);
     return ok({ pid: p.id });
   },
@@ -71,17 +80,18 @@ const OPS = {
     if (b.standard != null) p.standard = String(b.standard);
     if (b.request != null) p.request = String(b.request);
     if (b.model != null) p.model = MODELS.includes(String(b.model)) ? String(b.model) : p.model;
+    if (b.noCount != null) p.noCount = !!b.noCount;
   }),
 
   // ---------------- 작법 프롬프트 고치기
   'prompt.read': (b) => {
     const p = state.get(b.pid);
     if (!p) return bad('프로젝트를 찾을 수 없습니다');
-    if (!EDITABLE_CODES.includes(b.code)) return bad('고칠 수 없는 자리입니다');
+    if (!VIEW_CODES.includes(b.code)) return bad('없는 자리입니다');
     return ok({ one: engine.promptView(p, b.code) });
   },
   'prompt.write': (b) => {
-    if (!EDITABLE_CODES.includes(b.code)) return bad('고칠 수 없는 자리입니다');
+    if (!VIEW_CODES.includes(b.code)) return bad('없는 자리입니다');
     return state.update(b.pid, (p) => {
       p.prompts = p.prompts || {};
       const cur = p.prompts[b.code] || {};
@@ -89,9 +99,10 @@ const OPS = {
       p.prompts[b.code] = cur;
     });
   },
-  'prompt.reset': (b) => state.update(b.pid, (p) => {
-    if (p.prompts) delete p.prompts[b.code];
-  }),
+  // 되돌리면 작가가 고친 겹만 걷힌다 — 지어진 자리는 «지은 것»으로, 그 밖은 내장으로 돌아간다.
+  'prompt.reset': (b) => (VIEW_CODES.includes(b.code)
+    ? state.update(b.pid, (p) => { if (p.prompts) delete p.prompts[b.code]; })
+    : bad('없는 자리입니다')),
 
   // 판정이 어긋났거나 중지·재시작으로 준비가 끊긴 프로젝트를 구한다.
   // 자동 집필을 빼기 전에는 «자동 집필 시작»이 같은 문을 한 번 더 지났다 — 그 되돌리기를 여기로 옮겼다.
@@ -110,7 +121,7 @@ const OPS = {
     const p = state.get(b.pid);
     if (!p) return bad('프로젝트를 찾을 수 없습니다');
     const d = model.findDoc(p, b.id);
-    if (d) return ok({ one: { id: d.id, name: d.title, text: d.body } });
+    if (d) return ok({ one: { id: d.id, name: d.title, text: model.bodyOf(d) } });
     const m = (p.materials || []).find((x) => x.id === b.id);
     if (m) return ok({ one: { id: m.id, name: m.name, text: m.text } });
     const a = model.findAgent(p, b.id);
@@ -258,7 +269,9 @@ function stateOf(pid) {
     categories: model.categoriesView(p),
     crew: (p.crew || []).map((a) => ({ id: a.id, name: a.name, role: a.role, craft: a.craft, model: a.model || '' })),
     docs: p.docs.map((d) => ({
-      id: d.id, kind: d.kind, title: d.title, body: d.body, isFinal: d.isFinal,
+      // 가리키는 문서(작법서)는 본문을 내려 주지 않는다 — 펼쳐 볼 때 peek 이 푼다.
+      id: d.id, kind: d.kind, title: d.title, body: d.src ? '' : d.body, src: d.src || '', chars: d.src ? model.bodyOf(d).length : 0,
+      isFinal: d.isFinal,
       categoryId: d.categoryId, request: d.request, refIds: d.refIds, targetIds: d.targetIds,
       agentIds: d.agentIds || [],
       versions: (d.versions || []).map((v, i) => ({ i, at: v.at, title: v.title, body: v.body })),
@@ -272,10 +285,13 @@ function stateOf(pid) {
     jobs: p.jobs,
     model: p.model || '',
     models: MODELS,
-    prompts: EDITABLE_CODES.map((code) => ({
+    noCount: p.noCount !== false,
+    prompts: VIEW_CODES.map((code) => ({
       code,
       name: engine.promptFor(p, code).name,
       edited: !!(p.prompts && p.prompts[code]),
+      made: !!(p.agents && p.agents[code]),
+      control: !EDITABLE_CODES.includes(code),
     })),
     agentKind: (p.agents && p.agents.__kind) || '',
     // 준비가 끝났는가 — 끝나지 않았으면 화면이 «다시» 단추를 세운다.

@@ -3,7 +3,7 @@
 // 소설이면 아무것도 만들지 않고 내장 세트를 쓴다. 이미 지어 둔 자리는 다시 짓지 않는다.
 // 프롬프트를 다 지으면 이어서 자료를 한 번 읽어 «자료 분석» 문서를 남긴다.
 
-import { BUILTIN, AGENT_SLOTS, SLOT_DUTY, PERSPECTIVES } from './prompts.mjs';
+import { BUILTIN, AGENT_SLOTS, SLOT_DUTY } from './prompts.mjs';
 import { buildSystem, buildUser, cleanResponse } from './assemble.mjs';
 import { runClaudeCall } from './call.mjs';
 import { promptFor, callWithRetry } from './engine.mjs';
@@ -19,14 +19,15 @@ const building = new Map();
 function ctl(code, extraTask, project, { materials = true, refs = [], request = '' } = {}) {
   const pr = promptFor(project, code);
   return {
-    systemPrompt: buildSystem({ prompt: pr, withFinalRule: false, withNoCount: false }),
+    // 제어 호출에도 싣는다 — 작가의 말이 «모든 에이전트가 매 호출마다»이기 때문이다(사용자 지시).
+    systemPrompt: buildSystem({ prompt: pr, withFinalRule: false, withNoCount: project.noCount !== false }),
     prompt: buildUser({
       project,
       materials: materials ? (project.materials || []).map((m) => ({ id: m.id, name: m.name, text: m.text })) : [],
       refs,
       request,
       task: [pr.task, extraTask].filter(Boolean).join('\n'),
-      noCount: false,
+      noCount: project.noCount !== false,
     }),
   };
 }
@@ -37,12 +38,7 @@ export function readKind(text) {
   const head = (lines[0] || '').trim();
   const m = head.match(/^분류\s*[:：]\s*(.+)$/);
   const kind = m ? m[1].trim() : '';
-  const views = [];
-  for (const ln of lines) {
-    const v = ln.trim().match(/^관점\s*[:：]\s*(.+)$/);
-    if (v && v[1].trim()) views.push(v[1].trim());
-  }
-  return { kind, fiction: kind === '소설', views: views.slice(0, PERSPECTIVES.length) };
+  return { kind, fiction: kind === '소설' };
 }
 
 // 형식대로 온 한 덩이를 다섯 칸으로 가른다. 형식이 깨지면 본문 전체를 작법으로 본다.
@@ -116,7 +112,6 @@ async function prepareAgentsInner(pid, ctx, project, request = '') {
     state.update(pid, (p) => {
       p.agents = p.agents || {};
       p.agents.__kind = info.fiction ? '소설' : info.kind;
-      p.agents.__views = info.views.length === PERSPECTIVES.length ? info.views : PERSPECTIVES.slice();
     });
     if (info.fiction) return { ok: true, fiction: true, kind: '소설' };
     kindName = info.kind;
@@ -154,10 +149,6 @@ async function prepareAgentsInner(pid, ctx, project, request = '') {
   return { ok: true, fiction: false, kind: kindName };
 }
 
-export function perspectivesOf(project) {
-  const v = project && project.agents && project.agents.__views;
-  return Array.isArray(v) && v.length === PERSPECTIVES.length ? v : PERSPECTIVES;
-}
 
 // ---------------------------------------------------------------- 자료 분석
 //

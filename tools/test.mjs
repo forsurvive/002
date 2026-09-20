@@ -27,6 +27,7 @@ const store = await import('./store.mjs');
 const asm = await import('./assemble.mjs');
 const agents = await import('./agents.mjs');
 const prompts = await import('./prompts.mjs');
+const books = await import('./books.mjs');
 
 // ---------------------------------------------------------------- 순수 로직
 
@@ -176,9 +177,8 @@ const prompts = await import('./prompts.mjs');
 {
   const k1 = agents.readKind('분류: 소설\n까닭은 이러하다');
   ok('소설 판정', k1.fiction && k1.kind === '소설');
-  const k2 = agents.readKind('분류: 실무 안내서\n관점: 쓰는 이\n관점: 읽는 이');
+  const k2 = agents.readKind('분류: 실무 안내서\n까닭은 이러하다');
   ok('비소설 판정', !k2.fiction && k2.kind === '실무 안내서');
-  eq('관점 줄을 읽는다', k2.views.length, 2);
   eq('형식이 어긋나면 빈 판정', agents.readKind('아무 말').kind, '');
 
   const a = agents.readAgent('이름: 길잡이\n역할: 안내한다\n할 일: 이것을 쓴다\n작법:\n본문 첫 줄\n본문 둘째 줄', 'S02');
@@ -188,7 +188,6 @@ const prompts = await import('./prompts.mjs');
   const b = agents.readAgent('형식이 깨진 응답', 'S02');
   eq('형식이 깨지면 전체가 작법', b.craft, '형식이 깨진 응답');
   eq('내장 이름으로 물러선다', b.name, prompts.BUILTIN.S02.name);
-  eq('자리 수', agents.perspectivesOf({}).length, prompts.PERSPECTIVES.length);
 }
 
 // ---------------------------------------------------------------- 서버 통합
@@ -218,9 +217,8 @@ async function settle(pid, ms = 20000) {
 // 가짜 응답 — 단계마다 알아볼 수 있는 글을 낸다.
 let KIND = '소설';
 const MOCK_FN = ({ mockKey }) => {
-  if (mockKey === 'F-KIND') return KIND === '소설' ? '분류: 소설' : ('분류: ' + KIND + '\n' + Array.from({ length: 8 }, (_, i) => '관점: 관점' + i).join('\n'));
+  if (mockKey === 'F-KIND') return KIND === '소설' ? '분류: 소설' : ('분류: ' + KIND + '\n그렇게 본 까닭.');
   if (mockKey === 'F-AGENT') return '이름: 지은이\n역할: 그 일을 한다\n할 일: 문서를 쓴다\n작법:\n' + '작'.repeat(2100);
-  if (mockKey === 'F-COUNT') return '3';
   return '(모의) ' + mockKey + ' 본문';
 };
 globalThis.__SE2_MOCK_FN = MOCK_FN;
@@ -331,7 +329,6 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const raw = JSON.parse(readFileSync(join(BOX, 'projects', pid + '.json'), 'utf8'));
   eq('자리마다 프롬프트를 지었다', prompts.AGENT_SLOTS.filter((c) => raw.agents[c] && raw.agents[c].craft).length, prompts.AGENT_SLOTS.length);
   ok('지은 프롬프트는 2000자 이상', prompts.AGENT_SLOTS.every((c) => raw.agents[c].craft.length >= agents.CRAFT_MIN));
-  ok('관점도 새로 지었다', (raw.agents.__views || [])[0] === '관점0');
   ok('비소설도 자료 분석은 남는다', p.docs.some((d) => d.title === '자료 분석'));
   await post('project.delete', { pid });
   KIND = '소설';
@@ -664,7 +661,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('--model 은 --tools 앞에 온다', withModel.indexOf('--model') < withModel.indexOf('--tools'));
   ok('고를 수 있는 값', call.MODELS.includes('opus') && call.MODELS.includes('sonnet') && call.MODELS.includes('fable'));
   ok('«기본값»이라는 빈 칸은 없다', !call.MODELS.includes(''));
-  ok('제어 호출은 고치지 못한다', prompts.CONTROL_CODES.every((c) => !prompts.EDITABLE_CODES.includes(c)));
+  ok('제어 호출도 열어 볼 수 있다', prompts.VIEW_CODES.length === prompts.EDITABLE_CODES.length + prompts.CONTROL_CODES.length);
+  ok('제어 호출은 집필 자리와 갈라져 있다', prompts.CONTROL_CODES.every((c) => !prompts.EDITABLE_CODES.includes(c)));
   ok('집필 프롬프트는 고칠 수 있다', prompts.EDITABLE_CODES.includes('S02') && prompts.EDITABLE_CODES.includes('F-REVIEW'));
 }
 
@@ -969,10 +967,26 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 고칠 수 있는 자리는 «프로그램이 실제로 부르는 여섯»뿐이다.
   eq('고칠 수 있는 자리 일곱', prompts.EDITABLE_CODES.length, 7);
   for (const c of prompts.EDITABLE_CODES) ok('그 자리의 내장 프롬프트가 있다: ' + c, !!prompts.BUILTIN[c]);
-  ok('제어 호출은 고치지 못한다', prompts.CONTROL_CODES.every((c) => !prompts.EDITABLE_CODES.includes(c)));
+  ok('제어 호출도 열어 볼 수 있다', prompts.VIEW_CODES.length === prompts.EDITABLE_CODES.length + prompts.CONTROL_CODES.length);
+  ok('제어 호출은 집필 자리와 갈라져 있다', prompts.CONTROL_CODES.every((c) => !prompts.EDITABLE_CODES.includes(c)));
   ok('즉석으로 짓는 자리도 넷뿐', prompts.AGENT_SLOTS.length === 4 && prompts.AGENT_SLOTS.every((c) => prompts.SLOT_DUTY[c]));
-  // 지난 파이프라인의 프롬프트는 자료 파일에 그대로 둔다(되살릴 날을 위해).
-  ok('자료 파일에는 옛 프롬프트가 남아 있다', !!prompts.BUILTIN.S18C && !!prompts.BUILTIN['F-COUNT']);
+  // 옛 스토리 작법 프롬프트는 흔적까지 걷었다(사용자 지시, 2026-09-20).
+  // 작법서 — 가리키는 문서로 선다(사용자 지시, 2026-09-20)
+  ok('작법서를 읽어 둔다', books.bookList().length >= 2 && books.bookList().every((b) => b.chars > 1000));
+  ok('가리키는 이름으로 글을 푼다', books.bookText(books.bookList()[0].src).length > 1000);
+  ok('없는 이름에는 빈 글', books.bookText('없는 책') === '');
+  // 살아 있는 자리의 잣대가 작가 쪽으로 옮겨 갔는가
+  ok('합평의 잣대는 작가가 세운다', prompts.BUILTIN['F-REVIEW'].craft.includes('잣대는 어디서 오는가')
+    && prompts.BUILTIN['F-REVIEW'].craft.includes('작법서'));
+  ok('배운 이론을 잣대로 삼지 않는다', prompts.BUILTIN['F-REVIEW'].craft.includes('네가 배운 작법 이론을 잣대로 삼지 않는다'));
+  ok('막힌 곳도 규범으로 단정하지 않는다', !prompts.BUILTIN['F-TALK'].craft.includes('장면이 늘어지는 것은 그 장면이 판을 바꾸지 않기 때문이다'));
+  ok('모으는 자리도 무게표를 들고 오지 않는다', prompts.BUILTIN['F-MERGE'].craft.includes('네가 무게표를 따로 들고 오지 마라'));
+  // 계량어 금지 — 작가가 준 말 그대로
+  ok('작가의 말이 머리에 선다', asm.NO_COUNT.startsWith('계량어 사용 금지.') && asm.NO_COUNT.includes('셈 등의 표현'));
+  ok('예외는 그대로 남는다', asm.NO_COUNT.includes('회차 번호, 날짜와 시각'));
+  ok('옛 파이프라인 프롬프트가 남아 있지 않다', !prompts.BUILTIN.S18C && !prompts.BUILTIN['F-COUNT'] && !prompts.BUILTIN.S03);
+  ok('관점 여덟도 없다', !prompts.PERSPECTIVES && !agents.perspectivesOf);
+  ok('자료 파일에는 부르는 아홉만 있다', Object.keys(prompts.BUILTIN).length === 9);
 }
 
 {
@@ -983,9 +997,27 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   });
   const p = await settle(r.pid, 60000);
   eq('준비 작업은 완료', p.jobs.find((j) => j.kind === 'agents').status, 'done');
-  eq('남는 문서는 자료 분석 하나', p.docs.length, 1);
-  eq('그 이름', p.docs[0].title, agents.STUDY_TITLE);
-  ok('작업이 그 문서를 제 것으로 적는다', p.jobs[0].docIds.includes(p.docs[0].id));
+  // 작법서는 만들 때부터 서 있으므로 «지은 문서»만 센다(사용자 지시, 2026-09-20).
+  const made = p.docs.filter((d) => !d.src);
+  eq('지은 문서는 자료 분석 하나', made.length, 1);
+  eq('그 이름', made[0].title, agents.STUDY_TITLE);
+  ok('작업이 그 문서를 제 것으로 적는다', p.jobs[0].docIds.includes(made[0].id));
+  // 작법서는 가리키기만 한다 — 프로젝트 파일에 본문이 베껴지지 않는다.
+  const books = p.docs.filter((d) => d.src);
+  ok('작법서가 문서로 선다', books.length >= 2);
+  ok('작법서는 본문을 내려 주지 않는다', books.every((d) => !d.body && d.chars > 1000));
+  ok('작법서는 제 구획에 선다', p.categories.some((c) => c.name === '작법서' && c.docIds.length === books.length));
+  ok('작법서는 확정본이 아니다', books.every((d) => !d.isFinal));
+  ok('작법서는 참조로도 대상으로도 걸려 있지 않다', books.every((d) => !d.refIds.length && !d.targetIds.length));
+  // 가리키는 문서는 고쳐 쓰지 못한다
+  await post('doc.write', { pid: r.pid, id: books[0].id, body: '내 맘대로 고친다' });
+  const after = (await stateOf(r.pid)).project.docs.find((d) => d.id === books[0].id);
+  ok('가리키는 문서의 본문은 고쳐지지 않는다', !after.body && after.chars > 1000);
+  // 펼쳐 보면 글이 온다
+  const pk = await post('peek', { pid: r.pid, id: books[0].id });
+  ok('펼쳐 보면 글이 온다', pk.ok && pk.one.text.length > 1000);
+  // 갱신 한 번이 나르는 짐이 가벼운가 — 십만 자가 흐르면 안 된다
+  ok('갱신에 작법서 본문이 실리지 않는다', JSON.stringify(await stateOf(r.pid)).length < 60000);
   ok('준비가 끝났다고 알린다', p.prepared);
   await post('project.delete', { pid: r.pid });
 }
@@ -1001,7 +1033,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const pid = r.pid;
   let p = await settle(pid, 60000);
   eq('준비가 실패한다', p.jobs.find((j) => j.kind === 'agents').status, 'failed');
-  eq('그때는 문서가 없다', p.docs.length, 0);
+  eq('그때는 지은 문서가 없다', p.docs.filter((d) => !d.src).length, 0);
   ok('준비가 안 되었다고 알린다', !p.prepared);
 
   // 다시 걸면서 적은 요청사항이 그 호출에 실린다(저장하지는 않는다)
@@ -1065,6 +1097,13 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('결과와 옛 판은 읽는 칸으로 보인다', /id: 'd-out'[^\n]*readonly/.test(app) && app.includes("'#d-out'"));
   ok('맞댈 것이 둘은 있어야 한다', app.includes("'대상 또는 참조'") && /\(d\.targetIds \|\| \[\]\)\.length \+ \(d\.refIds \|\| \[\]\)\.length >= 2/.test(app));
   ok('치는 칸이 없을 때를 막는다', /'d-body' in S\.typed && \$\('d-body'\)/.test(app));
+  // 계량어 금지 토글(사용자 지시, 2026-09-20)
+  ok('설정에 계량어 토글이 선다', app.includes("text: '계량어 금지'") && /noCount: !p\.noCount/.test(app));
+  ok('그 누름은 mousedown 으로 받는다', /onmousedown: \(\) => api\('project\.spec', \{ noCount/.test(app));
+  // 작법서 창은 읽는 자리다
+  ok('작법서는 읽는 칸만 둔다', /d\.src \? h\('textarea', \{ id: 'd-out'/.test(app) && /d\.src \? null : refLine\('참조'/.test(app));
+  ok('작법서 글은 열 때 받아 온다', /function fetchSrc\(/.test(app) && /if \(d\.src\) fetchSrc\(d\.id\)/.test(app));
+  ok('지어진 자리에 표가 선다', app.includes("pr.made ? h('span', { class: 'when', text: '지음' })"));
   ok('설정에 자료 치는 칸이 없다', !app.includes("area('set-mat'"));
   ok('차림표에도 자료가 없다', !app.includes("type: 'newmat'") && !/function makeMat\(/.test(app));
   ok('설정에는 목록과 삭제가 남는다', app.includes("api('material.delete'"));
@@ -1179,17 +1218,18 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 // ---------------------------------------------------------------- 프롬프트 정본
 
 {
-  const need = ['S02', 'S03', 'S04', 'S05', 'S06', 'S07', 'S08', 'S09', 'S10', 'S11', 'S12', 'S14', 'S15', 'S17', 'S18A', 'S18B', 'S18C',
-    'F-UPDATE', 'F-TALK', 'F-THREADDOC', 'F-CONTRA', 'F-REVIEW', 'F-KIND', 'F-AGENT', 'F-COUNT'];
-  for (const c of need) ok('내장 프롬프트 ' + c, !!prompts.BUILTIN[c]);
-  const placeholder = prompts.BUILTIN.S02.craft.includes('임시');
+  // 부르는 자리 아홉 — 이 목록과 자료 파일이 딱 맞아야 한다(둘이 어긋나면 한쪽이 잔해다).
+  const need = [...prompts.VIEW_CODES];
+  eq('자료 파일과 목록이 맞는다', Object.keys(prompts.BUILTIN).sort().join(','), need.slice().sort().join(','));
+  // BUILTIN[c] 가 없으면 아래에서 시험이 «실패»가 아니라 «중단»된다 — 먼저 거른다.
+  const have = need.filter((c) => { ok('내장 프롬프트 ' + c, !!prompts.BUILTIN[c]); return !!prompts.BUILTIN[c]; });
+  const placeholder = (prompts.BUILTIN.S02 || {}).craft === undefined || prompts.BUILTIN.S02.craft.includes('임시');
   if (!placeholder) {
-    for (const c of need) {
-      if (c === 'F-COUNT') continue;
+    for (const c of have) {
       ok('작법이 넉넉하다 ' + c, (prompts.BUILTIN[c].craft || '').length >= 2000, String((prompts.BUILTIN[c].craft || '').length));
     }
     // 제목 줄을 «쓰라»고 시키는 대목이 있으면 안 된다(제목은 프로그램이 붙인다).
-    for (const c of need) ok('제목 줄을 시키지 않는다 ' + c, !/제목을\s*(쓴다|써라|적는다|적어라|붙여라|단다)/.test(prompts.BUILTIN[c].craft || ''));
+    for (const c of have) ok('제목 줄을 시키지 않는다 ' + c, !/제목을\s*(쓴다|써라|적는다|적어라|붙여라|단다)/.test(prompts.BUILTIN[c].craft || ''));
   }
 }
 

@@ -12,18 +12,14 @@ const raw = JSON.parse(readFileSync(join(HERE, 'prompts.data.json'), 'utf8'));
 export const BUILTIN = {};
 for (const p of raw.prompts || []) BUILTIN[p.code] = { code: p.code, name: p.name, role: p.role, task: p.task, craft: p.craft };
 
-// 기획 문서를 쓰는 여덟 관점(소설 기준). 비소설이면 종류 판정 호출이 같은 자리를 다른 이름으로 채운다.
-export const PERSPECTIVES = [
-  '주인공 중심', '세계 중심', '갈등 중심', '관계 중심',
-  '구조·형식 중심', '정서 중심', '주제 중심', '독자 경험 중심',
-];
-
-// 프로그램이 실제로 부르는 집필 자리 — 자동 집필을 뺀 뒤 남은 여섯이다.
-// (자료 파일에는 지난 파이프라인의 프롬프트가 그대로 남아 있다. 되살릴 날을 위해 지우지 않았다.)
+// 프로그램이 부르는 집필 자리 일곱 — 자료 파일에는 이 일곱과 제어 둘, 모두 아홉만 있다.
 export const EDITABLE_CODES = ['S02', 'F-UPDATE', 'F-TALK', 'F-THREADDOC', 'F-CONTRA', 'F-REVIEW', 'F-MERGE'];
 
-// 답의 «꼴»이 정해져 있어 프로그램이 읽는 자리 — 손대면 읽지 못하므로 고치는 목록에서 뺀다.
+// 답의 «꼴»이 정해져 있어 프로그램이 읽는 자리. 고칠 수는 있으나 꼴이 깨지면 그 작업만 실패한다.
 export const CONTROL_CODES = ['F-KIND', 'F-AGENT'];
+
+// 설정에서 열어 볼 수 있는 자리 — 짓는 자리와 제어 자리를 모두 본다(사용자 지시, 2026-09-20).
+export const VIEW_CODES = [...EDITABLE_CODES, ...CONTROL_CODES];
 
 // 비소설일 때 프롬프트를 새로 짓는 자리들.
 export const AGENT_SLOTS = ['S02', 'F-REVIEW', 'F-CONTRA', 'F-MERGE'];
@@ -36,5 +32,3 @@ export const SLOT_DUTY = {
   'F-MERGE': '여러 사람이 따로 내놓은 합평을 읽고 하나의 합평 문서로 모은다. 새 지적을 보태지 않고, 엇갈리는 말은 갈린 까닭과 함께 세운다.',
 };
 
-export function has(code) { return !!BUILTIN[code]; }
-export const CODES = Object.keys(BUILTIN);

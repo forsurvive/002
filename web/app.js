@@ -21,6 +21,7 @@ const S = {
   focusNext: '',   // 다시 그린 뒤 이 칸에 커서를 둔다
   redrawing: false,// 다시 그리는 중 — 그때 떨어지는 포커스는 저장이 아니다
   tour: null,      // 튜토리얼이 도는 중 — 걸음 목록을 도는 틀 하나(web/tour.js)
+  srcText: null,   // 지금 펼쳐 둔 작법서의 글 { id, text } — 갱신마다 오지 않으므로 열 때 한 번 받는다
   last: '',
 };
 
@@ -462,6 +463,10 @@ function settings() {
     h('div', null,
       h('div', { class: 'lab', text: '모델' }),
       modelRow(p.models, p.model, (m) => api('project.spec', { model: m }))),
+    // 누름을 click 이 아니라 mousedown 으로 받는다 — 위 칸에 글을 치던 중이면 click 이 오기 전에 다시 그려진다.
+    h('div', { class: 'line' },
+      h('div', { class: 'lab', style: 'margin:0', text: '계량어 금지' }),
+      h('button', { class: 'tg' + (p.noCount ? ' on' : ''), onmousedown: () => api('project.spec', { noCount: !p.noCount }) })),
     (p.prompts || []).length ? h('details', { open: S.fold['prompts'] ? 'open' : null },
       h('summary', { text: '기본 에이전트', onclick: () => { S.fold['prompts'] = !S.fold['prompts']; } }),
       (p.prompts || []).map((pr) => h('div', {
@@ -469,6 +474,7 @@ function settings() {
       },
       h('span', { class: 'mark', text: pr.code }),
       h('div', { class: 'name', text: pr.name }),
+      pr.made ? h('span', { class: 'when', text: '지음' }) : null,
       pr.edited ? h('span', { class: 'when', style: 'color:var(--red)', text: '고침' }) : null))) : null,
     h('div', { style: 'padding-top:20px' },
       h('button', {
@@ -574,7 +580,7 @@ function promptPanel(close) {
       h('span', { class: 'mark', text: one.code }),
       h('div', { class: 'name', text: one.name }),
       one.edited ? h('button', {
-        class: 'btn-text red', text: '내장으로 되돌리기',
+        class: 'btn-text red', text: one.made ? '지은 것으로 되돌리기' : '내장으로 되돌리기',
         onclick: async () => { S.typed = {}; await api('prompt.reset', { code: one.code }); openPrompt(one.code); },
       }) : null,
       h('button', { class: 'x', text: '×', onclick: close })),
@@ -698,10 +704,21 @@ function missingFor(d) {
   return has ? '' : '요청사항 또는 참조';
 }
 
+// 작법서는 가리키기만 하는 문서다 — 본문이 갱신에 실려 오지 않으므로 열 때 한 번 받아 둔다.
+async function fetchSrc(id) {
+  if (S.srcText && S.srcText.id === id) return;
+  S.srcText = { id, text: '' };
+  const r = await api('peek', { id });
+  if (!S.srcText || S.srcText.id !== id) return;
+  S.srcText = { id, text: r.ok ? r.one.text : '' };
+  render();
+}
+
 function docPanel(close) {
   const d = (S.project.docs || []).find((x) => x.id === S.open.id);
   if (!d) return h('div', { class: 'panel narrow' }, h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '없음' }), h('button', { class: 'x', text: '×', onclick: close })));
   const byId = refIndex();
+  if (d.src) fetchSrc(d.id);   // 가리키는 문서는 열 때 한 번 글을 받아 온다
   const peeking = S.peek && S.peek.docId === d.id ? d.versions.find((v) => v.i === S.peek.i) : null;
   const busy = (S.project.jobs || []).some((j) => j.status === 'running' && j.targetId === d.id);
   // 아직 한 번도 채워진 적 없는 문서에는 갱신할 것이 없다 — 그때는 «생성»이다.
@@ -744,17 +761,19 @@ function docPanel(close) {
       // 옛 판 펼쳐보기도 같은 읽기 칸을 쓴다. 치는 칸과 id 를 갈라 두어야
       // 옛 판을 펼친 채로 창을 닫을 때 그 글이 지금 본문을 덮지 않는다.
       // 모순 검사에는 치는 칸이 없다 — 결과가 나온 뒤에만 읽는 칸이 선다(빈 칸을 세워 두면 치는 자리로 보인다).
-      peeking ? h('textarea', { id: 'd-out', class: 'body-edit', value: peeking.body, readonly: 'readonly' })
-        : d.kind === 'check'
-          ? (String(d.body || '').trim() ? h('textarea', { id: 'd-out', class: 'body-edit', value: d.body, readonly: 'readonly' }) : null)
-          : area('d-body', BODY_HINT, d.body, { class: 'body-edit', onblur: saveFields }),
+      // 작법서는 읽는 자리다 — 치는 칸도, 지을 거리도 두지 않는다.
+      d.src ? h('textarea', { id: 'd-out', class: 'body-edit', value: (S.srcText && S.srcText.id === d.id ? S.srcText.text : ''), readonly: 'readonly' })
+        : peeking ? h('textarea', { id: 'd-out', class: 'body-edit', value: peeking.body, readonly: 'readonly' })
+          : d.kind === 'check'
+            ? (String(d.body || '').trim() ? h('textarea', { id: 'd-out', class: 'body-edit', value: d.body, readonly: 'readonly' }) : null)
+            : area('d-body', BODY_HINT, d.body, { class: 'body-edit', onblur: saveFields }),
       h('div', null, h('div', { class: 'lab', text: '카테고리' }), h('div', { class: 'line' }, catPicker(d))),
-      h('div', null, h('div', { class: 'lab', text: '요청사항' }), area('d-req', '요청사항', d.request, { onblur: saveFields })),
-      d.kind === 'doc' ? null : refLine('대상', d.targetIds, byId, (ids) => api('doc.write', { id: d.id, targetIds: ids }), d.id),
-      refLine('참조', d.refIds, byId, (ids) => api('doc.write', { id: d.id, refIds: ids }), d.id),
-      refLine('에이전트', d.agentIds, crewIndex(), (ids) => api('doc.write', { id: d.id, agentIds: ids }), null, 'agent',
+      d.src ? null : h('div', null, h('div', { class: 'lab', text: '요청사항' }), area('d-req', '요청사항', d.request, { onblur: saveFields })),
+      d.src || d.kind === 'doc' ? null : refLine('대상', d.targetIds, byId, (ids) => api('doc.write', { id: d.id, targetIds: ids }), d.id),
+      d.src ? null : refLine('참조', d.refIds, byId, (ids) => api('doc.write', { id: d.id, refIds: ids }), d.id),
+      d.src ? null : refLine('에이전트', d.agentIds, crewIndex(), (ids) => api('doc.write', { id: d.id, agentIds: ids }), null, 'agent',
         seatNames(d.kind === 'review' && (d.agentIds || []).length > 1 ? KIND_SEAT.review : [KIND_SEAT[d.kind][0]])),
-      h('div', { class: 'line' }, S.open.err ? h('span', { class: 'notice', text: S.open.err }) : null, h('button', {
+      d.src ? null : h('div', { class: 'line' }, S.open.err ? h('span', { class: 'notice', text: S.open.err }) : null, h('button', {
         class: 'btn', text: busy ? verb + ' 중' : verb, disabled: busy,
         onclick: async () => {
           await saveFields();

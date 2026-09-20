@@ -52,7 +52,6 @@ export function mockResponse({ mockKey, prompt, systemPrompt, model }) {
   // 제어 호출은 형식이 정해져 있다 — 모의로 돌려도 그 형식을 지킨다.
   if (k === 'F-KIND') return '분류: 소설\n모의 판정.';
   if (k === 'F-AGENT') return '이름: 모의 집필자\n역할: 그 자리의 일을 한다\n할 일: 문서를 쓴다\n작법:\n' + '모의 작법. '.repeat(240);
-  if (k === 'F-COUNT') return '3';
   return '(모의) ' + k + ' — 받은 프롬프트 ' + String(prompt || '').length + '자에 대한 응답 본문.';
 }
 

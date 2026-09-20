@@ -73,6 +73,7 @@ export function blankProject(id, name) {
     trash: [],
     jobs: [],
     model: 'opus',    // 쓸 클로드 모델 — 늘 하나로 정해져 있다(사람이 따로 정하지 않은 자리가 이것을 쓴다)
+    noCount: true,    // 계량어 금지를 매 호출에 싣는가(작가가 끌 수 있다)
     prompts: {},      // 작가가 고친 작법 프롬프트 (코드 → {name, role, task, craft})
     crew: [],         // 작가가 지은 에이전트 — 문서에 걸면 그 사람이 쓴다
     agents: null,
@@ -111,9 +112,11 @@ export function loadProject(id) {
     threads: p.threads || [],
     trash: p.trash || [],
     jobs: p.jobs || [],
+    agents: p.agents && typeof p.agents === 'object' ? p.agents : null,
   };
   // 옛 파일에는 «기본값»이라는 빈 칸이 있었다 — 정해진 모델로 내려 읽는다.
   if (!MODELS.includes(out.model)) out.model = 'opus';
+  out.noCount = out.noCount !== false;   // 적혀 있지 않은 옛 파일은 켜 둔 것으로 읽는다
   for (const a of out.crew) if (!MODELS.includes(a.model)) a.model = out.model;
   return out;
 }

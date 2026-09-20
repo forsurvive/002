@@ -26,10 +26,15 @@ export function promptFor(project, code) {
 
 // 화면이 보여 줄 한 자리의 지금 값과, 작가가 고친 자리인지 여부
 export function promptView(project, code) {
-  return { code, ...promptFor(project, code), edited: !!(project && project.prompts && project.prompts[code]) };
+  return {
+    code,
+    ...promptFor(project, code),
+    edited: !!(project && project.prompts && project.prompts[code]),   // 작가가 고쳤다
+    made: !!(project && project.agents && project.agents[code]),       // 프로젝트를 만들 때 지어졌다
+  };
 }
 
-const asItem = (d) => ({ id: d.id, name: d.title, text: d.body });
+const asItem = (d) => ({ id: d.id, name: d.title, text: model.bodyOf(d) });
 
 export function docsByIds(project, ids = []) {
   const out = [];
@@ -70,7 +75,7 @@ export function materialsByIds(project, ids = []) {
 export async function callOnce({
   pid, code, refIds = [], targetIds = [], agentIds = [], request = '', taskExtra = '',
   materials = false, allFinals = false, talk = [], prev = '', next = '',
-  signal = null, noCount = true, finalFirst = false, keepSeat = false,
+  signal = null, noCount = null, finalFirst = false, keepSeat = false,
   extraTargets = [], modelPick = '',
 }) {
   const project = state.get(pid);
@@ -114,12 +119,14 @@ export async function callOnce({
   // 아니면 «제 모델을 정해 둔 첫 사람», 그도 없으면 프로젝트의 것.
   const bringsModel = picked.find((c) => String(c.model || '').trim());
   const useModel = String(modelPick || '').trim() || (bringsModel ? bringsModel.model : project.model);
-  const systemPrompt = buildSystem({ prompt: pr, prev, next, crew, withFinalRule: finals.length > 0, withNoCount: noCount });
+  // 부르는 쪽이 따로 정하지 않았으면 작품에 걸어 둔 토글을 따른다.
+  const nc = noCount == null ? project.noCount !== false : !!noCount;
+  const systemPrompt = buildSystem({ prompt: pr, prev, next, crew, withFinalRule: finals.length > 0, withNoCount: nc });
   const prompt = buildUser({
     project,
     // 자동 집필의 자료 단계는 자료를 통째로, 손으로 여는 자리는 «고른 자료»만 싣는다.
     materials: materials ? materialItems(project) : pickedMats,
-    refs, finals, targets, talk, request, task, noCount,
+    refs, finals, targets, talk, request, task, noCount: nc,
   });
 
   const r = await runClaudeCall({ systemPrompt, prompt, mockKey: code, signal, model: useModel });

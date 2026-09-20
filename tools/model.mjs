@@ -6,6 +6,7 @@
 //     그래서 비면 저절로 사라지고, 새 문서가 생기면 저절로 돌아온다.
 
 import { newId, MODELS } from './store.mjs';
+import { bookText } from './books.mjs';
 
 export const INBOX = '__inbox__';
 export const THREAD_NAME = '논의';
@@ -24,9 +25,16 @@ export function findThread(p, id) { return p.threads.find((t) => t.id === id) ||
 
 // ---------------------------------------------------------------- 문서
 
+// 문서의 본문 — src 를 가진 문서(작법서)는 그때그때 파일에서 푼다.
+// 프로젝트 파일에도, 1.5초마다 도는 갱신에도 그 글자가 실리지 않는다.
+export function bodyOf(d) {
+  return d && d.src ? bookText(d.src) : str(d && d.body);
+}
+
 export function docCreate(p, fields = {}) {
   const d = {
     id: newId('d'),
+    src: str(fields.src) || '',
     kind: fields.kind === 'check' || fields.kind === 'review' ? fields.kind : 'doc',
     title: str(fields.title).trim() || '제목 없음',
     body: str(fields.body),
@@ -55,7 +63,7 @@ export function docWrite(p, id, next = {}, { keepHistory = true } = {}) {
   // 폰은 이 시각이 그대로면 문서를 다시 받아 오지 않는다 — 여기서 안 찍으면 폰 화면이 옛 값에 머문다.
   const before = JSON.stringify([d.request, d.refIds, d.targetIds, d.agentIds, d.categoryId]);
   if (next.title != null) d.title = str(next.title).trim() || '제목 없음';
-  if (next.body != null) d.body = str(next.body);
+  if (next.body != null && !d.src) d.body = str(next.body);   // 가리키는 문서는 고쳐 쓰지 않는다
   if (next.request != null) d.request = str(next.request);
   if (next.refIds != null) d.refIds = next.refIds.slice();
   if (next.targetIds != null) d.targetIds = next.targetIds.slice();
@@ -362,7 +370,7 @@ export function trashPurge(p, trashId) {
 // ---------------------------------------------------------------- 내려받기
 
 export function docToText(d) {
-  return '# ' + d.title + '\n\n' + d.body + '\n';
+  return '# ' + d.title + '\n\n' + bodyOf(d) + '\n';
 }
 
 export function categoryToText(p, catId) {
