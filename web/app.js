@@ -691,15 +691,17 @@ function refIndex() {
   return m;
 }
 
-// 그 문서를 지으려면 무엇이 있어야 하는가 — 없으면 그 이름을 돌려준다.
+// 그 문서를 지으려면 무엇이 있어야 하는가 — 없으면 그 이름들을 돌려준다.
 function missingFor(d) {
-  // 모순 검사는 «맞대어» 보는 자리다 — 대상 하나로는 견줄 것이 없다.
-  // 대상 하나에 참조를 걸어 견주는 길도 열어 둔다(사용자 지시).
-  if (d.kind === 'check') {
-    if (!(d.targetIds || []).length) return '대상';
-    return (d.targetIds || []).length + (d.refIds || []).length >= 2 ? '' : '대상 또는 참조';
+  // 합평회와 모순 검사는 «이번에 무엇을 보라»는 말이 있어야 선다 — 요청사항이 그 자리의 미션이다(사용자 지시).
+  // 모순 검사는 거기에 더해 맞댈 것이 둘은 있어야 한다(대상 둘, 또는 대상 하나에 참조 하나).
+  if (d.kind === 'check' || d.kind === 'review') {
+    const miss = [];
+    if (!(d.targetIds || []).length) miss.push('대상');
+    else if (d.kind === 'check' && (d.targetIds || []).length + (d.refIds || []).length < 2) miss.push('대상 또는 참조');
+    if (!String(d.request || '').trim()) miss.push('요청사항');
+    return miss.join(' · ');
   }
-  if (d.kind === 'review') return (d.targetIds || []).length ? '' : '대상';
   const has = String(d.body || '').trim() || String(d.request || '').trim() || (d.refIds || []).length;
   return has ? '' : '요청사항 또는 참조';
 }
@@ -777,8 +779,10 @@ function docPanel(close) {
         class: 'btn', text: busy ? verb + ' 중' : verb, disabled: busy,
         onclick: async () => {
           await saveFields();
+          // 저장한 뒤의 것을 보고 따진다 — 손에 쥔 d 는 그리기 때의 것이라 방금 친 요청사항이 없다.
+          const fresh = (S.project.docs || []).find((x) => x.id === d.id) || d;
           // 시킬 것이 하나도 없으면 부르지 않는다 — 무엇이 없는지 짚어 준다.
-          const miss = missingFor(d);
+          const miss = missingFor(fresh);
           if (miss) { S.open.err = '필수 항목 누락 — ' + miss; return render(); }
           S.open.err = '';
           const m = await pickOneModel(d.agentIds);

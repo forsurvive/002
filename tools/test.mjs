@@ -969,7 +969,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   for (const c of prompts.EDITABLE_CODES) ok('그 자리의 내장 프롬프트가 있다: ' + c, !!prompts.BUILTIN[c]);
   ok('제어 호출도 열어 볼 수 있다', prompts.VIEW_CODES.length === prompts.EDITABLE_CODES.length + prompts.CONTROL_CODES.length);
   ok('제어 호출은 집필 자리와 갈라져 있다', prompts.CONTROL_CODES.every((c) => !prompts.EDITABLE_CODES.includes(c)));
-  ok('즉석으로 짓는 자리도 넷뿐', prompts.AGENT_SLOTS.length === 4 && prompts.AGENT_SLOTS.every((c) => prompts.SLOT_DUTY[c]));
+  // 맞춤 에이전트는 부르는 집필 자리 전부를 짓는다(사용자 지시, 2026-09-20).
+  ok('짓는 자리가 집필 자리 전부다', prompts.AGENT_SLOTS.join(',') === prompts.EDITABLE_CODES.join(','));
+  ok('자리마다 할 일이 적혀 있다', prompts.AGENT_SLOTS.every((c) => prompts.SLOT_DUTY[c]));
+  ok('제어 자리는 짓지 않는다', prompts.CONTROL_CODES.every((c) => !prompts.AGENT_SLOTS.includes(c)));
   // 옛 스토리 작법 프롬프트는 흔적까지 걷었다(사용자 지시, 2026-09-20).
   // 작법서 — 가리키는 문서로 선다(사용자 지시, 2026-09-20)
   ok('작법서를 읽어 둔다', books.bookList().length >= 2 && books.bookList().every((b) => b.chars > 1000));
@@ -1095,7 +1098,12 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('모순 검사에는 본문 치는 칸이 없다', /d\.kind === 'check'\s*\n?\s*\? \(String\(d\.body \|\| ''\)\.trim\(\)/.test(app));
   ok('결과가 없으면 빈 칸도 세우지 않는다', /\.trim\(\) \? h\('textarea', \{ id: 'd-out'[^\n]*\) : null\)/.test(app));
   ok('결과와 옛 판은 읽는 칸으로 보인다', /id: 'd-out'[^\n]*readonly/.test(app) && app.includes("'#d-out'"));
-  ok('맞댈 것이 둘은 있어야 한다', app.includes("'대상 또는 참조'") && /\(d\.targetIds \|\| \[\]\)\.length \+ \(d\.refIds \|\| \[\]\)\.length >= 2/.test(app));
+  ok('맞댈 것이 둘은 있어야 한다', app.includes("'대상 또는 참조'") && /\(d\.targetIds \|\| \[\]\)\.length \+ \(d\.refIds \|\| \[\]\)\.length < 2/.test(app));
+  // 합평회·모순 검사는 요청사항이 그 자리의 미션이다(사용자 지시, 2026-09-20)
+  ok('검사·합평은 요청사항이 있어야 선다', /d\.kind === 'check' \|\| d\.kind === 'review'[\s\S]{0,400}miss\.push\('요청사항'\)/.test(app));
+  ok('빠진 것을 한꺼번에 이른다', /return miss\.join\(' · '\)/.test(app));
+  ok('작법도 요청사항을 미션이라 이른다', prompts.BUILTIN['F-REVIEW'].craft.includes('그것이 이번 합평의 미션이다')
+    && prompts.BUILTIN['F-CONTRA'].craft.includes('그것이 이 검사의 미션이다'));
   ok('치는 칸이 없을 때를 막는다', /'d-body' in S\.typed && \$\('d-body'\)/.test(app));
   // 계량어 금지 토글(사용자 지시, 2026-09-20)
   ok('설정에 계량어 토글이 선다', app.includes("text: '계량어 금지'") && /noCount: !p\.noCount/.test(app));
