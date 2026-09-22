@@ -899,6 +899,20 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   cloud.linkWrite({ license: mint({ uid: 'u_1', rights: ['bridge'], exp: Date.now() - 1000 }) });
   ok('지난 열쇠는 듣지 않는다', !cloud.mayCall().ok);
   ok('왜 막혔는지 이른다', cloud.view().why.includes('지났'));
+  // **작가의 말로 이른다** — «열쇠»·«공개키»·«서명»은 우리끼리 쓰는 말이다.
+  // 홈 화면에 그대로 찍히는 줄이라 여기서 막는다(브라우저에서 보고 고쳤다).
+  const JARGON = ['열쇠', '공개키', '서명', 'license', 'token'];
+  const says = [];
+  cloud.linkWrite({ license: '' });
+  says.push(cloud.view().why, cloud.mayCall().why);
+  cloud.linkWrite({ license: mint({ uid: 'u_1', rights: ['bridge'], exp: Date.now() - 1000 }) });
+  says.push(cloud.view().why, cloud.mayCall().why);
+  cloud.linkWrite({ license: 'AAAA.BBBB' });
+  says.push(cloud.view().why, cloud.mayCall().why);
+  cloud.linkWrite({ license: mint({ uid: 'u_1', rights: ['guide.무협'], exp: far }) });
+  says.push(cloud.view().why, cloud.mayCall().why);
+  for (const s of says) ok('우리끼리 쓰는 말이 화면에 나가지 않는다 — «' + s + '»', !JARGON.some((j) => s.includes(j)));
+  ok('무엇을 해야 하는지 이른다', says.every((s) => s.includes('구독')));
 
   // 권리가 있어도 bridge 가 없으면 못 부른다
   cloud.linkWrite({ license: mint({ uid: 'u_1', rights: ['guide.무협'], exp: far }) });
@@ -921,6 +935,25 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('내려받기는 문지기를 지나지 않는다', !/downloadOf[\s\S]{0,300}mayCall/.test(src));
   ok('상태 읽기도 지나지 않는다', !/function stateOf[\s\S]{0,600}mayCall/.test(src));
   ok('문지기는 부르는 자리에만 있다', readFileSync(join(HERE, 'engine.mjs'), 'utf8').split('cloud.mayCall').length === 2);
+
+  // ── 홈의 단추 하나 (사용자 지시, 2026-09-22)
+  //
+  // 「상점 버튼의 명칭을 '구독하기' 로 바꾸고, 만약 이미 구독 중이라면 그 버튼을 없애고
+  //   '상점' 버튼만 뜨게 해. 구독자만 상점에 접근할 수 있게 하는 거야.」
+  // 그리고 「상점을 별도 페이지로 열면 안돼」.
+  //
+  // 새 창은 잇기까지 망가뜨린다 — 상점이 열쇠를 실어 **그 새 창으로** 되돌려 보내므로
+  // 창이 둘이 되고 처음 창은 제가 이어진 줄을 모른 채 남는다.
+  const app = readFileSync(join(ROOT, 'web', 'app.js'), 'utf8');
+  const btn = app.slice(app.indexOf('function shopButton'), app.indexOf('function shopLine'));
+  ok('단추 자리를 찾았다', btn.length > 80);
+  ok('**새 창으로 열지 않는다**', !btn.includes('window.open'));
+  ok('같은 창에서 다녀온다', btn.includes('location.href'));
+  ok('구독 중이면 상점이라 적는다', /subscribed\s*\?\s*'상점'\s*:\s*'구독하기'/.test(btn));
+  ok('둘이 함께 서지 않는다', btn.split('h(\'button\'').length === 2);
+  ok('구독 여부는 상점이 준 값으로 본다', /subscribed\s*=\s*!!\(c && c\.ok\)/.test(btn));
+  // 아직 안 이었으면 «잇는 자리»로 가야 한다 — 그냥 상점으로 보내면 열쇠가 돌아오지 않는다
+  ok('안 이었으면 잇는 자리로 간다', btn.includes('c.linked) ? r.shop : r.link'));
 
   cloud.disconnect();
 }

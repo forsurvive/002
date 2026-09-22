@@ -66,6 +66,20 @@ export function linkWrite(next = {}) {
   return view();
 }
 
+// 왜 막혔는지를 **작가의 말로** 옮긴다.
+//
+// 「열쇠」·「공개키」·「서명」은 우리끼리 쓰는 말이다. 화면에 그대로 내보내면
+// 글을 쓰러 온 사람이 제가 무엇을 해야 하는지 알 수 없다. 할 일은 하나다 — 구독.
+// (브라우저에서 «열쇠가 없습니다»가 홈에 찍히는 것을 보고 고쳤다.)
+export function whyHuman(l = link(), lic = null, now = Date.now()) {
+  const v = lic || readLicense(l, now);
+  if (!l.token) return '아직 잇지 않았습니다';
+  if (v.ok && (v.rights || []).includes('bridge')) return '';
+  if (!l.license || v.ok) return '구독이 없습니다';
+  if (String(v.why || '').includes('지났')) return '구독 기간이 지났습니다';
+  return '구독을 확인하지 못했습니다';
+}
+
 // 화면에 내려 주는 꼴 — **열쇠는 돌려주지 않는다**(들어 있는지만 이른다).
 export function view(now = Date.now()) {
   const l = link();
@@ -79,7 +93,7 @@ export function view(now = Date.now()) {
     ok: !!(lic && lic.ok),
     rights: lic && lic.rights ? lic.rights : [],
     until: lic && lic.exp ? lic.exp : 0,
-    why: lic ? lic.why : '아직 잇지 않았습니다',
+    why: whyHuman(l, lic, now),
   };
 }
 
@@ -115,10 +129,8 @@ export function mayCall(now = Date.now()) {
   if (!l.token) return { ok: true, why: '' };       // 아직 상점에 잇지 않았다
   const lic = readLicense(l, now);
   if (lic.ok && (lic.rights || []).includes('bridge')) return { ok: true, why: '' };
-  // 작가에게는 사람 말로 이른다. 열쇠가 비어 있다는 것은 «상점이 아니라고 했다»는 뜻이다.
-  if (!l.license) return { ok: false, why: '구독이 없습니다' };
-  if (lic.ok) return { ok: false, why: '구독이 없습니다' };   // 열쇠는 맞는데 bridge 가 없다
-  return { ok: false, why: lic.why };
+  // 작가에게는 사람 말로 이른다 — 한 자리에서 옮긴다(whyHuman).
+  return { ok: false, why: whyHuman(l, lic, now) };
 }
 
 // ── 상점 두드리기
