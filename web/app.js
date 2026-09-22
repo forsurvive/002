@@ -20,7 +20,8 @@ const S = {
   askOpen: null,   // 새로 만드는 창이 «닫기 전에 물어볼 것»을 여기 걸어 둔다
   focusNext: '',   // 다시 그린 뒤 이 칸에 커서를 둔다
   redrawing: false,// 다시 그리는 중 — 그때 떨어지는 포커스는 저장이 아니다
-  tour: null,      // 튜토리얼이 도는 중 — 걸음 목록을 도는 틀 하나(web/tour.js)
+  tour: null,
+  cloud: null,        // 상점에 이었는가 — 프로그램 전체의 일이라 홈에서도 본다      // 튜토리얼이 도는 중 — 걸음 목록을 도는 틀 하나(web/tour.js)
   srcText: null,   // 지금 펼쳐 둔 작법서의 글 { id, text } — 갱신마다 오지 않으므로 열 때 한 번 받는다
   last: '',
 };
@@ -119,6 +120,37 @@ function limitSay(L) {
 }
 
 // 작업 한 줄이 말하는 것 — 그리기와 초침이 같은 글을 쓰도록 한 자리에 둔다.
+// 상점 단추 — **프로그램 전체의 일**이므로 프로젝트 설정이 아니라 홈에 둔다(사용자 지시).
+//
+// 잇지 않았으면 [상점] 한 번으로 끝난다: 상점이 열리고 → 로그인하고 → [잇기] 한 번 →
+// 상점이 열쇠를 실어 이 프로그램으로 되돌려 보낸다. 사람이 무엇을 베껴 옮기지 않는다.
+// 이었으면 [상점] 이 그냥 상점을 연다(구독하러 가는 길).
+function shopButton() {
+  const c = S.cloud;
+  const label = !c || !c.linked ? '상점' : (c.ok ? '상점' : '구독하기');
+  return h('button', {
+    class: c && c.linked && !c.ok ? 'btn' : 'btn-line',
+    text: label,
+    onclick: async () => {
+      const r = await api('cloud.urls');
+      if (!r || !r.ok) return;
+      // 잇지 않았으면 «잇는 자리»로, 이었으면 그냥 상점으로.
+      window.open((c && c.linked) ? r.shop : r.link, '_blank', 'noopener');
+    },
+  });
+}
+
+// 이어져 있으면 한 줄로 이른다 — 누구의 계정이고 언제까지인지.
+function shopLine() {
+  const c = S.cloud;
+  if (!c || !c.linked) return null;
+  const left = c.ok ? Math.max(0, Math.ceil((c.until - Date.now()) / 86400000)) : 0;
+  return h('div', { class: 'line', style: 'padding:0 0 18px' },
+    h('span', { class: 'when', text: (c.email ? c.email + ' · ' : '') + (c.ok ? '구독 중 — ' + left + '일 남음' : (c.why || '구독이 없습니다')) }),
+    h('button', { class: 'btn-text', text: '다시 확인', onclick: () => api('cloud.check') }),
+    h('button', { class: 'btn-text red', text: '끊기', onclick: () => api('cloud.disconnect') }));
+}
+
 function jobLine(j) {
   // 한도에 닿아 물음이 매달린 자리 — 무엇이 닫혔고 언제 풀리는지 이른다.
   if (j.ask) {
@@ -164,9 +196,11 @@ async function pull(force) {
   let d;
   try { d = await (await fetch(url)).json(); } catch { return; }
   if (d.projects) S.projects = d.projects;
+  if (d.cloud) S.cloud = d.cloud;
+  else if (d.project && d.project.cloud) S.cloud = d.project.cloud;
   if (S.pid && d.ok === false) { S.pid = null; S.project = null; }
   else if (d.project) S.project = d.project;
-  const sig = JSON.stringify([S.pid, S.projects, S.project]);
+  const sig = JSON.stringify([S.pid, S.projects, S.project, S.cloud]);
   if (!force && sig === S.last) return;
   S.last = sig;
   render();
@@ -232,8 +266,10 @@ function projectList() {
         brandMark('margin-bottom:6px'),
         h('div', { class: 'top-name', style: 'font-size:30px', text: '스토리 엔진' })),
       h('div', { class: 'line', style: 'flex:none' },
+        shopButton(),
         h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: startTour }),
         h('button', { class: 'plus', text: '+', onclick: () => { S.draft = []; S.open = { type: 'newproject' }; render(); } }))),
+    shopLine(),
     h('div', { class: 'cards' }, S.projects.map((p) => h('div', {
       class: 'card', onclick: () => { S.pid = p.id; S.tab = '작업실'; S.project = null; pull(true); },
     },
@@ -498,8 +534,6 @@ function settings() {
     h('div', null,
       h('div', { class: 'lab', text: '모델' }),
       modelRow(p.models, p.model, (m) => api('project.spec', { model: m }))),
-    // 상점과 잇기 — 구독이 여기서 온다. 열쇠는 한 번 붙여 넣고 잊는 것이다.
-    cloudBlock(p.cloud),
     // 무엇으로 돈이 나가는가 — 구독인지 API 키인지. 사람이 고른다(사용자 지시, 2026-09-22).
     // 「구독으로 돕니다」라고 말하면서 물려받은 환경 변수 때문에 말없이 종량 과금되면 안 된다.
     h('div', null,
@@ -545,47 +579,6 @@ function openAgent(id, back) { S.open = { type: 'agent', id, model: null, back: 
 // 쓸 모델 고르기 — 하나만 켜지는 네모. 프로젝트에도, 사람마다에도 같은 꼴로 쓴다.
 // 누름을 click 이 아니라 mousedown 으로 받는다: 바로 위 칸에 글을 치던 중이면 click 이 오기 전에
 // blur → 저장 → 다시 그리기가 지나가며 이 네모가 갈려 버려 첫 누름이 먹히지 않는다.
-// 상점과 잇는 자리.
-//
-// 이었으면 «언제까지»만 한 줄로 이른다. 잇지 않았으면 두 칸과 단추 하나.
-// 열쇠는 화면으로 되돌아오지 않는다 — 상태만 온다.
-function cloudSay(c) {
-  if (!c || !c.linked) return '잇지 않음';
-  if (c.ok) {
-    const left = Math.max(0, Math.ceil((c.until - Date.now()) / 86400000));
-    return '구독 중 — ' + left + '일 남음';
-  }
-  return c.why || '구독이 없습니다';
-}
-
-function cloudBlock(c) {
-  if (c && c.linked) {
-    return h('div', null,
-      h('div', { class: 'lab', text: '상점' }),
-      h('div', { class: 'line' },
-        h('div', { class: 'grow', text: cloudSay(c) }),
-        h('button', { class: 'btn-text', text: '다시 확인', onclick: () => api('cloud.check') }),
-        h('button', { class: 'btn-text red', text: '끊기', onclick: () => api('cloud.disconnect') })),
-      c.lastError ? h('div', { class: 'when', style: 'color:var(--red)', text: c.lastError }) : null);
-  }
-  return h('div', null,
-    h('div', { class: 'lab', text: '상점' }),
-    textbox('cl-site', '상점 주소', (c && c.site) || ''),
-    h('div', { class: 'line', style: 'margin-top:8px' },
-      h('div', { class: 'grow' }, textbox('cl-token', '브리지 열쇠', '')),
-      h('button', {
-        class: 'btn-line', text: '잇기',
-        onclick: async () => {
-          const site = String(S.typed['cl-site'] || '').trim();
-          const token = String(S.typed['cl-token'] || '').trim();
-          clearTyped('cl-token');
-          await api('cloud.connect', { site, token });
-          // 되지 않았으면 상태의 lastError 가 그 까닭을 들고 온다 — 창을 따로 띄우지 않는다.
-        },
-      })),
-    c && c.lastError ? h('div', { class: 'when', style: 'color:var(--red)', text: c.lastError }) : null);
-}
-
 // 무엇으로 도는가 — 셋 가운데 하나. modelRow 와 같은 결로 둔다.
 //   그대로 : 그 PC 의 환경이 정하는 대로(손대지 않는다)
 //   구독   : 물려받은 API 키를 지워 구독으로만 돌린다

@@ -26,6 +26,27 @@ export const VERSION = '1.0.0';
 // 비어 있으면 처음 이을 때 /bridge/key 에서 받아 적어 둔다.
 const b64u = (s) => Buffer.from(String(s || ''), 'base64url');
 
+// 상점이 어디 있는가. 도메인을 받으면 이 값을 바꾼다(그때까지는 집에서 띄운 상점).
+export const DEFAULT_SITE = String(process.env.SE2_STORE || 'http://127.0.0.1:8811').replace(/\/+$/, '');
+
+// 한 번 눌러 잇는 길 — 상점을 열면서 «여기로 돌려보내라»를 달고 간다.
+// 상점은 loopback 만 받아 주므로 이 주소는 그 사람의 기계 안에서만 쓴다.
+export function linkUrl(port) {
+  const site = link().site || DEFAULT_SITE;
+  const back = 'http://127.0.0.1:' + port + '/link';
+  return site + '/link?back=' + encodeURIComponent(back);
+}
+
+// 상점을 그냥 열 때(구독하러 가기 등)
+export function shopUrl() {
+  return link().site || DEFAULT_SITE;
+}
+
+// 돌아온 열쇠를 받는다 — 주소는 우리가 이미 안다.
+export async function take(token) {
+  return connect(link().site || DEFAULT_SITE, token);
+}
+
 export function link() {
   const v = readJson(LINK_FILE(), null) || {};
   return {
@@ -33,6 +54,7 @@ export function link() {
     token: String(v.token || ''),
     publicKey: String(v.publicKey || ''),
     license: String(v.license || ''),
+    email: String(v.email || ''),
     checkedAt: Number(v.checkedAt) || 0,
     lastError: String(v.lastError || ''),
   };
@@ -49,7 +71,8 @@ export function view(now = Date.now()) {
   const l = link();
   const lic = readLicense(l, now);
   return {
-    site: l.site,
+    site: l.site || DEFAULT_SITE,
+    email: l.email,
     linked: !!l.token,
     checkedAt: l.checkedAt,
     lastError: l.lastError,
@@ -155,7 +178,7 @@ export async function check(now = Date.now()) {
     linkWrite({ lastError: String((got && got.error) || '되지 않았습니다') });
     return { ok: false, error: String((got && got.error) || '되지 않았습니다'), view: view(now) };
   }
-  linkWrite({ license: String(got.license || ''), checkedAt: now, lastError: '' });
+  linkWrite({ license: String(got.license || ''), email: String(got.email || ''), checkedAt: now, lastError: '' });
   return { ok: true, view: view(now) };
 }
 

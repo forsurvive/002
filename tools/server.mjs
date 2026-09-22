@@ -265,6 +265,8 @@ const OPS = {
 
   // 상점과 잇기 — 열쇠는 내려 주지 않는다(이었는지만 이른다).
   'cloud.read': () => ok({ cloud: cloud.view() }),
+  // 상점을 여는 주소 — 화면이 이것을 새 창으로 연다.
+  'cloud.urls': () => ok({ link: cloud.linkUrl(PORT), shop: cloud.shopUrl() }),
   'cloud.connect': async (b) => {
     const r = await cloud.connect(b.site, b.token);
     return r.ok ? ok({ cloud: r.view }) : bad(r.error);
@@ -380,11 +382,19 @@ export const server = createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/state') {
       const pid = url.searchParams.get('pid') || '';
-      if (!pid) return send(res, 200, JSON.stringify({ ok: true, projects: state.list() }));
+      // 상점 상태는 프로젝트의 것이 아니라 프로그램 전체의 것이다 — 홈에서도 온다.
+      if (!pid) return send(res, 200, JSON.stringify({ ok: true, projects: state.list(), cloud: cloud.view() }));
       const st = stateOf(pid);
       if (!st) return send(res, 200, JSON.stringify({ ok: false, error: '없음' }));
       return send(res, 200, JSON.stringify({ ok: true, project: st, projects: state.list() }));
     }
+    // 상점이 열쇠를 실어 돌려보내는 자리. 받아 두고 처음으로 보낸다.
+    if (req.method === 'GET' && url.pathname === '/link') {
+      const t = url.searchParams.get('token') || '';
+      if (t) await cloud.take(t);
+      return send(res, 303, '', 'text/plain; charset=utf-8', { location: '/' });
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/download') {
       const d = downloadOf(url.searchParams.get('pid'), url.searchParams.get('kind'), url.searchParams.get('id'));
       if (!d) return send(res, 404, '없음', 'text/plain; charset=utf-8');
