@@ -498,6 +498,8 @@ function settings() {
     h('div', null,
       h('div', { class: 'lab', text: '모델' }),
       modelRow(p.models, p.model, (m) => api('project.spec', { model: m }))),
+    // 상점과 잇기 — 구독이 여기서 온다. 열쇠는 한 번 붙여 넣고 잊는 것이다.
+    cloudBlock(p.cloud),
     // 무엇으로 돈이 나가는가 — 구독인지 API 키인지. 사람이 고른다(사용자 지시, 2026-09-22).
     // 「구독으로 돕니다」라고 말하면서 물려받은 환경 변수 때문에 말없이 종량 과금되면 안 된다.
     h('div', null,
@@ -543,6 +545,47 @@ function openAgent(id, back) { S.open = { type: 'agent', id, model: null, back: 
 // 쓸 모델 고르기 — 하나만 켜지는 네모. 프로젝트에도, 사람마다에도 같은 꼴로 쓴다.
 // 누름을 click 이 아니라 mousedown 으로 받는다: 바로 위 칸에 글을 치던 중이면 click 이 오기 전에
 // blur → 저장 → 다시 그리기가 지나가며 이 네모가 갈려 버려 첫 누름이 먹히지 않는다.
+// 상점과 잇는 자리.
+//
+// 이었으면 «언제까지»만 한 줄로 이른다. 잇지 않았으면 두 칸과 단추 하나.
+// 열쇠는 화면으로 되돌아오지 않는다 — 상태만 온다.
+function cloudSay(c) {
+  if (!c || !c.linked) return '잇지 않음';
+  if (c.ok) {
+    const left = Math.max(0, Math.ceil((c.until - Date.now()) / 86400000));
+    return '구독 중 — ' + left + '일 남음';
+  }
+  return c.why || '구독이 없습니다';
+}
+
+function cloudBlock(c) {
+  if (c && c.linked) {
+    return h('div', null,
+      h('div', { class: 'lab', text: '상점' }),
+      h('div', { class: 'line' },
+        h('div', { class: 'grow', text: cloudSay(c) }),
+        h('button', { class: 'btn-text', text: '다시 확인', onclick: () => api('cloud.check') }),
+        h('button', { class: 'btn-text red', text: '끊기', onclick: () => api('cloud.disconnect') })),
+      c.lastError ? h('div', { class: 'when', style: 'color:var(--red)', text: c.lastError }) : null);
+  }
+  return h('div', null,
+    h('div', { class: 'lab', text: '상점' }),
+    textbox('cl-site', '상점 주소', (c && c.site) || ''),
+    h('div', { class: 'line', style: 'margin-top:8px' },
+      h('div', { class: 'grow' }, textbox('cl-token', '브리지 열쇠', '')),
+      h('button', {
+        class: 'btn-line', text: '잇기',
+        onclick: async () => {
+          const site = String(S.typed['cl-site'] || '').trim();
+          const token = String(S.typed['cl-token'] || '').trim();
+          clearTyped('cl-token');
+          await api('cloud.connect', { site, token });
+          // 되지 않았으면 상태의 lastError 가 그 까닭을 들고 온다 — 창을 따로 띄우지 않는다.
+        },
+      })),
+    c && c.lastError ? h('div', { class: 'when', style: 'color:var(--red)', text: c.lastError }) : null);
+}
+
 // 무엇으로 도는가 — 셋 가운데 하나. modelRow 와 같은 결로 둔다.
 //   그대로 : 그 PC 의 환경이 정하는 대로(손대지 않는다)
 //   구독   : 물려받은 API 키를 지워 구독으로만 돌린다

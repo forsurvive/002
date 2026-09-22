@@ -5,6 +5,7 @@ import { BUILTIN } from './prompts.mjs';
 import { buildSystem, buildUser, cleanResponse } from './assemble.mjs';
 import { runClaudeCall } from './call.mjs';
 import * as auth from './auth.mjs';
+import * as cloud from './cloud.mjs';
 import * as state from './state.mjs';
 import * as model from './model.mjs';
 
@@ -79,6 +80,12 @@ export async function callOnce({
   signal = null, noCount = null, finalFirst = false, keepSeat = false,
   extraTargets = [], modelPick = '',
 }) {
+  // 상점에 이었다면 구독이 살아 있어야 새로 부른다.
+  // **잠기는 것은 여기뿐이다** — 읽기·내보내기·되짚기는 이 문을 지나지 않는다.
+  // 잇지 않은 프로그램은 늘 통과한다(상점을 붙이기 전의 쓰임을 막지 않는다).
+  const may = cloud.mayCall();
+  if (!may.ok) return { ok: false, error: may.why, reason: 'sub' };
+
   const project = state.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
   const pr = promptFor(project, code);

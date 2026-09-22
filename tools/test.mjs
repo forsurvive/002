@@ -855,6 +855,77 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
+  // ⑧-2 상점과 잇는 자리 — 열쇠를 **네트워크 없이** 혼자 검사한다 (2026-09-22)
+  const cloud = await import('./cloud.mjs');
+  const { generateKeyPairSync, sign: edSign, createPublicKey } = await import('node:crypto');
+  const b64u = (b) => Buffer.from(b).toString('base64url');
+
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const pub = b64u(createPublicKey(privateKey).export({ type: 'spki', format: 'der' }));
+  const mint = (body) => {
+    const raw = b64u(JSON.stringify(body));
+    return raw + '.' + b64u(edSign(null, Buffer.from(raw), privateKey));
+  };
+
+  // 잇지 않았으면 늘 통과한다 — 상점을 붙이기 전의 프로그램이 멈추면 안 된다
+  cloud.disconnect();
+  ok('잇지 않았으면 부를 수 있다', cloud.mayCall().ok);
+  ok('잇지 않았다고 이른다', !cloud.view().linked);
+
+  // 이었는데 열쇠가 없으면 막힌다
+  cloud.linkWrite({ site: 'https://가게', token: 'tok', publicKey: pub, license: '' });
+  ok('열쇠가 없으면 못 부른다', !cloud.mayCall().ok);
+
+  // 제대로 된 열쇠면 통과한다
+  const far = Date.now() + 3 * 86400000;
+  cloud.linkWrite({ license: mint({ uid: 'u_1', rights: ['bridge', 'guide.무협'], exp: far }) });
+  ok('열쇠가 맞으면 부른다', cloud.mayCall().ok);
+  ok('가진 권리를 안다', cloud.has('bridge') && cloud.has('guide.무협'));
+  ok('없는 권리는 없다고 한다', !cloud.has('guide.로맨스판타지'));
+  eq('언제까지인지 안다', cloud.view().until, far);
+
+  // 손대면 듣지 않는다
+  const good = cloud.link().license;
+  cloud.linkWrite({ license: good.slice(0, -4) + 'AAAA' });
+  ok('손댄 열쇠는 듣지 않는다', !cloud.mayCall().ok);
+
+  // 남의 열쇠로도 안 된다
+  const other = generateKeyPairSync('ed25519').privateKey;
+  const raw = b64u(JSON.stringify({ uid: 'u_1', rights: ['bridge'], exp: far }));
+  cloud.linkWrite({ license: raw + '.' + b64u(edSign(null, Buffer.from(raw), other)) });
+  ok('남이 서명한 열쇠는 듣지 않는다', !cloud.mayCall().ok);
+
+  // 지난 열쇠도 안 된다 — 체험이 사흘인데 열쇠가 열나흘 가면 안 되는 그 자리
+  cloud.linkWrite({ license: mint({ uid: 'u_1', rights: ['bridge'], exp: Date.now() - 1000 }) });
+  ok('지난 열쇠는 듣지 않는다', !cloud.mayCall().ok);
+  ok('왜 막혔는지 이른다', cloud.view().why.includes('지났'));
+
+  // 권리가 있어도 bridge 가 없으면 못 부른다
+  cloud.linkWrite({ license: mint({ uid: 'u_1', rights: ['guide.무협'], exp: far }) });
+  ok('팩만 있으면 못 부른다', !cloud.mayCall().ok);
+
+  // 열쇠는 화면으로 나가지 않는다
+  cloud.linkWrite({ token: '비밀-열쇠-값', license: mint({ uid: 'u_1', rights: ['bridge'], exp: far }) });
+  ok('열쇠가 화면으로 나가지 않는다', !JSON.stringify(cloud.view()).includes('비밀-열쇠-값'));
+  ok('이었다고만 이른다', cloud.view().linked === true);
+
+  // 새 호출이 막히면 사유가 위로 이어진다
+  const eng2 = await import('./engine.mjs');
+  cloud.linkWrite({ license: '' });
+  const blocked = await eng2.callOnce({ pid: 'p_아무거나', code: 'F-UPDATE' });
+  ok('막히면 사유가 온다', !blocked.ok && blocked.reason === 'sub');
+  ok('구독 탓임을 이른다', String(blocked.error).includes('열쇠') || String(blocked.error).includes('구독'));
+
+  // **읽기와 내보내기는 이 문을 지나지 않는다** — 작가의 글을 인질로 잡지 않는다
+  const src = readFileSync(join(HERE, 'server.mjs'), 'utf8');
+  ok('내려받기는 문지기를 지나지 않는다', !/downloadOf[\s\S]{0,300}mayCall/.test(src));
+  ok('상태 읽기도 지나지 않는다', !/function stateOf[\s\S]{0,600}mayCall/.test(src));
+  ok('문지기는 부르는 자리에만 있다', readFileSync(join(HERE, 'engine.mjs'), 'utf8').split('cloud.mayCall').length === 2);
+
+  cloud.disconnect();
+}
+
+{
   // ⑨ 한도에 닿으면 죽이지 않고 물어본다 (사용자 지시, 2026-09-22)
   // 「구독 사용량을 모두 사용하고 나면 api로 전환할지, 클로드 크레딧을 구매해 이어갈지를 물어보는 기능」
   const MAT = [{ name: '자', text: '자료 본문' }];

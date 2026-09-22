@@ -289,6 +289,9 @@ textarea { resize: vertical; min-height: 88px; line-height: 1.65; }
 .panel-body { padding: 20px 22px 26px; overflow: auto; }
 .panel-body > * + * { margin-top: 18px; }
 .lab { font-size: 13px; font-weight: 500; color: var(--dim); margin-bottom: 7px; }
+/* 늘어나 남은 자리를 먹는 칸 — 상점 자리에서 쓴다. */
+.grow { flex: 1; min-width: 0; }
+
 .line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .chip {
   display: inline-flex; align-items: center; gap: 7px; background: var(--group);
