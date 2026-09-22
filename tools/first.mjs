@@ -107,9 +107,22 @@ export async function main(argv = process.argv) {
   const nodeExe = String(argOf(argv, 'node') || '');
   const desktop = String(argOf(argv, 'desktop') || '');
 
-  if (!site || !code) {
-    line('  [ERROR] usage: first.mjs --site <url> --code <code>');
+  if (!site) {
+    line('  [ERROR] usage: first.mjs --site <url> [--code <code>]');
     return 2;
+  }
+
+  // **표 없이 받아 간 판** — 아직 누구의 것도 아니다.
+  // 상점 주소만 적어 두고 물러난다. 프로그램이 뜨면 [구독하기] 가 그 주소로 데려가고,
+  // 거기서 한 번 누르면 열쇠가 실려 돌아온다. 프로그램이 앞문이라는 것이 이런 뜻이다.
+  if (!code) {
+    const cloud = await import('./cloud.mjs');
+    cloud.linkWrite({ site });
+    line('  Store       : ' + site);
+    line('  Not signed in yet - press the blue button in the program.');
+    const put0 = putLauncher(desktop, nodeExe);
+    if (put0.ok) line('  Desktop     : ' + put0.name);
+    return 0;
   }
 
   const got = await redeem(site, code);

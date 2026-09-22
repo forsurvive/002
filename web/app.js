@@ -571,15 +571,13 @@ function settings() {
     h('div', { class: 'line' },
       h('div', { class: 'lab', style: 'margin:0', text: '계량어 금지' }),
       h('button', { class: 'tg' + (p.noCount ? ' on' : ''), onmousedown: () => api('project.spec', { noCount: !p.noCount }) })),
-    (p.prompts || []).length ? h('details', { open: S.fold['prompts'] ? 'open' : null },
-      h('summary', { text: '기본 에이전트', onclick: () => { S.fold['prompts'] = !S.fold['prompts']; } }),
-      (p.prompts || []).map((pr) => h('div', {
-        class: 'row', onclick: () => openPrompt(pr.code),
-      },
-      h('span', { class: 'mark', text: pr.code }),
-      h('div', { class: 'name', text: pr.name }),
-      pr.made ? h('span', { class: 'when', text: '지음' }) : null,
-      pr.edited ? h('span', { class: 'when', style: 'color:var(--red)', text: '고침' }) : null))) : null,
+    // 에이전트 목록 — **고칠 수 있다는 것이 보여야 한다**(사용자 지시).
+    //
+    // 고치는 길은 전부터 있었다(이름·역할·이번에 할 일·프롬프트, 그리고 되돌리기).
+    // 그런데 이름이 「기본 에이전트」였고 접혀 있어서, 이 작품에 맞춰 지어진 것이라는 걸
+    // 알 길이 없었다. **있는데 못 찾는 것은 없는 것과 같다.**
+    // 지어진 자리가 있으면 펴 둔다 — 작가가 한 번 접으면 그다음부터는 그 뜻을 따른다.
+    (p.prompts || []).length ? agentList(p) : null,
     h('div', { style: 'padding-top:20px' },
       h('button', {
         class: 'btn-red', text: '프로젝트 삭제',
@@ -672,6 +670,30 @@ async function makeAgent() {
   await api('agent.create', body);
   closeLayer(true);
   return true;
+}
+
+// 이 작품이 쓰는 사람들. 누르면 이름·역할·이번에 할 일·프롬프트를 고친다.
+//
+// 비소설이면 프로그램이 작품 규격을 읽고 자리마다 새로 짓는다(agents.mjs).
+// 소설이면 내장 아홉을 그대로 쓴다. 어느 쪽이든 **여기서 고칠 수 있고, 되돌릴 수 있다.**
+function agentList(p) {
+  const rows = p.prompts || [];
+  const made = rows.some((pr) => pr.made);
+  const open = S.fold['prompts'] === undefined ? made : S.fold['prompts'];
+  return h('details', { open: open ? 'open' : null },
+    h('summary', {
+      text: made ? ('이 작품의 에이전트' + (p.agentKind ? ' — ' + p.agentKind : '')) : '에이전트',
+      onclick: () => { S.fold['prompts'] = !open; },
+    }),
+    h('div', { class: 'when', style: 'padding:2px 0 8px',
+      text: made ? '이 작품에 맞춰 지었습니다. 눌러서 고치십시오.' : '눌러서 고치십시오.' }),
+    rows.map((pr) => h('div', {
+      class: 'row', onclick: () => openPrompt(pr.code),
+    },
+    h('span', { class: 'mark', text: pr.code }),
+    h('div', { class: 'name', text: pr.name }),
+    pr.made ? h('span', { class: 'when', text: '지음' }) : null,
+    pr.edited ? h('span', { class: 'when', style: 'color:var(--red)', text: '고침' }) : null)));
 }
 
 async function openPrompt(code) {

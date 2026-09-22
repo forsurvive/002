@@ -16,6 +16,8 @@
 import { join } from 'node:path';
 import { createPublicKey, verify as edVerify } from 'node:crypto';
 import { DATA_DIR, readJson, writeJson } from './store.mjs';
+import * as prompts from './prompts.mjs';
+import { createHash } from 'node:crypto';
 
 export const LINK_FILE = () => join(DATA_DIR, 'link.json');
 
@@ -142,6 +144,10 @@ export function has(code, now = Date.now()) {
 // 잇지 않았으면 «그렇다» — 상점을 붙이기 전의 프로그램이 멈추면 안 된다.
 export function mayCall(now = Date.now()) {
   const l = link();
+  // **일할 줄을 모르면 부를 것이 없다.** 일꾼 아홉의 «일하는 법»은 열쇠와 함께 온다.
+  // 파는 판에는 그것이 들어 있지 않으므로, 베낀 폴더는 여기서 선다 —
+  // 빗장을 따로 걸지 않아도 이 한 줄이 곧 빗장이다(지운다고 열리지 않는다).
+  if (!prompts.haveBrain()) return { ok: false, why: '구독이 없습니다' };
   if (!l.token) return { ok: true, why: '' };       // 아직 상점에 잇지 않았다
   const lic = readLicense(l, now);
   if (lic.ok && (lic.rights || []).includes('bridge')) return { ok: true, why: '' };
@@ -196,7 +202,10 @@ export async function check(now = Date.now()) {
   if (!l.token || !l.site) return { ok: false, error: '아직 잇지 않았습니다', view: view(now) };
   let got;
   try {
-    got = await post(l.site, 'bridge.check', { version: VERSION, os: process.platform }, l.token);
+    // 들고 있는 것의 지문을 함께 보낸다 — 같으면 상점이 다시 싣지 않는다(64KB 를 날마다 나르지 않게).
+    got = await post(l.site, 'bridge.check', {
+      version: VERSION, os: process.platform, brain: brainHash(),
+    }, l.token);
   } catch {
     // 닿지 않아도 죽지 않는다 — 들고 있는 열쇠로 버틴다. 그것이 오프라인 유예다.
     linkWrite({ lastError: '상점에 닿지 않았습니다' });
@@ -210,8 +219,20 @@ export async function check(now = Date.now()) {
     linkWrite({ lastError: String((got && got.error) || '되지 않았습니다') });
     return { ok: false, error: String((got && got.error) || '되지 않았습니다'), view: view(now) };
   }
+  // 일하는 법이 실려 왔으면 적어 두고 곧바로 갈아 끼운다.
+  // **내려오는 것뿐이다** — 이 길로 올라가는 것은 판과 OS 와 지문뿐이다.
+  if (got.brain) { try { prompts.saveBrain(got.brain); } catch { /* 못 적어도 이번 걸음은 산다 */ } }
   linkWrite({ license: String(got.license || ''), email: String(got.email || ''), checkedAt: now, lastError: '' });
   return { ok: true, view: view(now) };
+}
+
+// 들고 있는 «일하는 법»의 지문. 없으면 빈 값이라 상점이 통째로 실어 준다.
+export function brainHash() {
+  const codes = Object.keys(prompts.BUILTIN).sort();
+  if (!codes.length) return '';
+  const h = createHash('sha256');
+  for (const c of codes) h.update(c).update(String(prompts.BUILTIN[c].craft || ''));
+  return h.digest('base64url').slice(0, 22);
 }
 
 // 하루에 한 번이면 넉넉하다. 띄울 때 한 번 두드리고 그 뒤로는 하루마다.

@@ -1,16 +1,58 @@
-// 내장 작법 프롬프트 — 본문은 prompts.data.json 에 있다(따옴표·역따옴표가 섞인 긴 산문이라 자료로 따로 뒀다).
+// 일꾼 아홉의 «일하는 법» — 본문은 자료 파일에 있다(따옴표·역따옴표가 섞인 긴 산문이라 따로 뒀다).
 // 프롬프트 한 종 = { code, name, role, task, craft }.
+//
+// ── 두 곳에서 찾는다
+//
+//   ① tools/prompts.data.json   — 소스 판. 개발과 직접 받아 간 판이 이 길로 간다.
+//   ② data/brain.json           — 상점이 열쇠와 함께 내려 준 것. 팔려 나간 판이 이 길로 간다.
+//
+// **파는 판에는 ①이 없다.** 이것이 베끼기에 대한 답이다 —
+// 자바스크립트라 검사하는 줄은 고칠 수 있지만, 없는 글을 지어낼 수는 없다.
+// 이 아홉이 없으면 소설도(내장을 그대로 쓰므로) 비소설도(짓는 일꾼이 이 안에 있으므로) 돌지 않는다.
+//
+// 자물쇠가 아니라 얼개다. 그리고 한 번 받아 두면 그대로 두므로
+// **상점이 누워 있어도 작가는 쓴다** — 열쇠와 똑같은 유예를 받는다.
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DATA_DIR, writeJson } from './store.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-const raw = JSON.parse(readFileSync(join(HERE, 'prompts.data.json'), 'utf8'));
+export const SRC_FILE = () => join(HERE, 'prompts.data.json');
+export const BRAIN_FILE = () => join(DATA_DIR, 'brain.json');
 
 export const BUILTIN = {};
-for (const p of raw.prompts || []) BUILTIN[p.code] = { code: p.code, name: p.name, role: p.role, task: p.task, craft: p.craft };
+
+function readRaw() {
+  // 소스 곁에 있으면 그것이 먼저다 — 개발 중에 상점을 붙이지 않고도 돌아야 한다.
+  try { return JSON.parse(readFileSync(SRC_FILE(), 'utf8')); } catch { /* 파는 판에는 없다 */ }
+  try { return JSON.parse(readFileSync(BRAIN_FILE(), 'utf8')); } catch { /* 아직 안 받았다 */ }
+  return null;
+}
+
+// 제자리에서 갈아 끼운다 — BUILTIN 을 이미 들고 있는 쪽이 다시 부르지 않아도 되게.
+export function loadPrompts() {
+  for (const k of Object.keys(BUILTIN)) delete BUILTIN[k];
+  const raw = readRaw();
+  for (const p of (raw && raw.prompts) || []) {
+    BUILTIN[p.code] = { code: p.code, name: p.name, role: p.role, task: p.task, craft: p.craft };
+  }
+  return Object.keys(BUILTIN).length;
+}
+
+// 상점에서 받은 것을 적어 두고 곧바로 갈아 끼운다.
+export function saveBrain(raw) {
+  if (!raw || !Array.isArray(raw.prompts) || !raw.prompts.length) return 0;
+  writeJson(BRAIN_FILE(), raw);
+  return loadPrompts();
+}
+
+// 일할 줄을 아는가. 모르면 새 호출을 걸어도 아무것도 나오지 않는다.
+export function haveBrain() { return Object.keys(BUILTIN).length > 0; }
+
+loadPrompts();
 
 // 프로그램이 부르는 집필 자리 일곱 — 자료 파일에는 이 일곱과 제어 둘, 모두 아홉만 있다.
 export const EDITABLE_CODES = ['S02', 'F-UPDATE', 'F-TALK', 'F-THREADDOC', 'F-CONTRA', 'F-REVIEW', 'F-MERGE'];

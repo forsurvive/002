@@ -955,6 +955,18 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 아직 안 이었으면 «잇는 자리»로 가야 한다 — 그냥 상점으로 보내면 열쇠가 돌아오지 않는다
   ok('안 이었으면 잇는 자리로 간다', btn.includes('c.linked) ? r.shop : r.link'));
 
+  // ── 지어진 에이전트를 작가가 고칠 수 있는가 (사용자 지시, 2026-09-22)
+  //
+  // 고치는 길은 전부터 있었다. 문제는 **찾을 수가 없었다는 것**이다 —
+  // 이름이 「기본 에이전트」였고 접혀 있어서 이 작품에 맞춰 지어진 것임을 알 길이 없었다.
+  // 있는데 못 찾는 것은 없는 것과 같다.
+  const lst = app.slice(app.indexOf('function agentList'), app.indexOf('async function openPrompt'));
+  ok('지어진 자리가 있으면 펴 둔다', lst.includes("S.fold['prompts'] === undefined ? made"));
+  ok('이 작품의 것이라고 이른다', lst.includes('이 작품의 에이전트'));
+  ok('고칠 수 있다고 이른다', lst.includes('눌러서 고치십시오'));
+  ok('무슨 갈래로 지었는지 보인다', lst.includes('p.agentKind'));
+  ok('지은 자리와 고친 자리를 표시한다', lst.includes("text: '지음'") && lst.includes("text: '고침'"));
+
   // ── 같은 창이라 생기는 값 (검토가 찾아낸 것, 2026-09-22)
   //
   // 새 창이던 때는 프로그램이 뒤에 그대로 있었다. 같은 창이면 **작가의 화면이 덮인다.**
@@ -1526,7 +1538,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 자루에 남은 옛 id 때문에 «켜진 네모가 없는데 손질거리가 서 있는» 일이 있었다(사용자가 본 버그).
   ok('구획을 떠난 것은 세지 않는다', /const pickedOf = \(sel, ids\) => ids\.filter/.test(app) && !/\[\.\.\.sel\]/.test(app));
   ok('작업 순서 첫 걸음은 프로젝트다', app.includes('① 프로젝트를 만든다') && !app.includes('① 작품을 만든다'));
-  ok('설정의 자리 목록은 «기본 에이전트»다', app.includes("text: '기본 에이전트'") && !app.includes("text: '작법 프롬프트'"));
+  // 「기본 에이전트」에서 「이 작품의 에이전트」로 바뀌었다 — 지어진 것임을 알려야 하기 때문이다(사용자 지시).
+  ok('설정의 자리 목록은 «에이전트»다', app.includes("'이 작품의 에이전트'") && !app.includes("text: '작법 프롬프트'"));
   ok('«+» 는 글자가 아니라 막대로 그린다', /\.plus \{[^}]*font-size: 0/.test(readFileSync(join(ROOT, 'web', 'style.css'), 'utf8')));
   ok('문서에도 자리 사람이 칩으로 선다', app.includes('KIND_SEAT') && /seatNames\(d\.kind === 'review'/.test(app));
   ok('합평회에 둘이면 모으는 자리도 보인다', /KIND_SEAT = \{ doc: \['F-UPDATE'\], check: \['F-CONTRA'\], review: \['F-REVIEW', 'F-MERGE'\] \}/.test(app));
