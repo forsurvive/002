@@ -13,7 +13,28 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.SE2_PORT || 8801);
 const line = (s = '') => console.log(s);
 
-const R = resolveCliDetailed();
+let R = resolveCliDetailed();
+
+// 없으면 **여기서 깐다.** 설치기가 이미 한 번 해 보지만, 그 뒤로 지워졌을 수도 있고
+// 옛 방식으로 깐 사람이 바탕화면 파일만 눌렀을 수도 있다. 그때 「직접 깔아 오십시오」로 끝내면
+// 그 사람의 하루가 거기서 멎는다. 받는 곳은 앤트로픽의 공식 자리 하나뿐이다.
+if (!R.found) {
+  line('  ------------------------------------------------------------');
+  line('   Claude Code is not on this computer yet. Installing it now.');
+  line('   Source: https://claude.ai/install' + (process.platform === 'win32' ? '.cmd' : '.sh'));
+  line('  ------------------------------------------------------------');
+  line();
+  await new Promise((resolve) => {
+    const p = process.platform === 'win32'
+      ? spawn('cmd', ['/c', 'curl -fsSL https://claude.ai/install.cmd -o "%TEMP%\\cc-install.cmd" && "%TEMP%\\cc-install.cmd" && del "%TEMP%\\cc-install.cmd"'], { stdio: 'inherit' })
+      : spawn('bash', ['-c', 'curl -fsSL https://claude.ai/install.sh | bash'], { stdio: 'inherit' });
+    p.on('error', () => resolve());
+    p.on('close', () => resolve());
+  });
+  line();
+  R = resolveCliDetailed();
+}
+
 if (!R.found) {
   line('  [ERROR] Could not find the Claude Code executable.');
   line('  Searched:');
@@ -49,6 +70,16 @@ if (!before.loggedIn) {
   line('  [LOGIN OK] Starting the app...');
   line();
 }
+
+// 어느 계정에 이어져 있는지 한 줄로 보여 준다 — 「내 것이 맞나」를 창을 열기 전에 알 수 있게.
+try {
+  const v = (await import('./cloud.mjs')).view();
+  if (v.linked) {
+    line('  Store       : ' + v.site);
+    line('  Account     : ' + (v.email || '-') + '  (' + (v.ok ? 'subscribed' : 'no subscription') + ')');
+    line();
+  }
+} catch { /* 못 읽어도 프로그램은 뜬다 */ }
 
 if (process.env.SE2_LAUNCH_CHECK_ONLY) {
   line('  [CHECK ONLY] Login OK. Server start skipped.');

@@ -1591,6 +1591,58 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   }
 }
 
+// ---------------------------------------------------------------- 첫 걸음
+//
+// 설치기가 한 번 부르는 자리. 여기가 깨지면 **새로 산 사람이 못 들어온다** —
+// 시험이 가장 값진 곳 가운데 하나다.
+
+{
+  const first = await import('./first.mjs');
+
+  // ── 깃발 읽기
+  eq('깃발을 읽는다', first.argOf(['node', 'x', '--site', 'https://a'], 'site'), 'https://a');
+  eq('값이 없으면 빈 값', first.argOf(['node', 'x', '--site', '--code', 'c'], 'site'), '');
+  eq('없는 깃발은 빈 값', first.argOf(['node', 'x'], 'code'), '');
+
+  // ── 바탕화면에 둘 한 장
+  //
+  // **여기가 급소다.** 사용자 이름이 한글이면 %LOCALAPPDATA% 를 펼친 경로에 한글이 들어가고,
+  // 배치 파일은 옛 코드페이지로 읽히므로 그 글자가 깨져 다음번에 아무것도 안 열린다.
+  const L = first.launcherText(true);
+  ok('바탕화면 파일이 ASCII 뿐이다', /^[\x00-\x7f]*$/.test(L));
+  ok('경로를 펼치지 않는다', L.includes('%LOCALAPPDATA%\\StoryEngine'));
+  ok('우리가 깐 노드를 쓴다', L.includes('"%NODEDIR%\\node.exe"'));
+  ok('프로그램을 띄운다', L.includes('tools\\launch.mjs'));
+  ok('창을 닫지 않게 이른다', L.includes('pause'));
+  ok('줄 끝이 CRLF 다', L.includes('\r\n') && !/[^\r]\n/.test(L));
+  ok('없어졌으면 그렇다고 이른다', L.includes(':gone'));
+  ok('PATH 의 노드면 그냥 node 라고 적는다', first.launcherText(false).includes('\nnode "%APP%'));
+
+  const SH = first.shLauncherText(true);
+  ok('맥 것도 ASCII 뿐이다', /^[\x00-\x7f]*$/.test(SH));
+  ok('맥 것도 없으면 이른다', SH.includes('not installed'));
+
+  // ── 표를 바꾸는 길
+  //
+  // 상점이 닿지 않아도 **죽지 않는다**. 사람에게 까닭을 이르고 물러난다.
+  const un = await first.redeem('http://127.0.0.1:1', 'x.y');
+  ok('닿지 않으면 그렇다고 이른다', !un.ok && un.unreachable);
+  eq('닿지 않을 때 1 로 물러난다', await first.main(['node', 'first.mjs', '--site', 'http://127.0.0.1:1', '--code', 'x.y']), 1);
+  eq('깃발이 모자라면 2 로 물러난다', await first.main(['node', 'first.mjs']), 2);
+
+  // 클로드가 있는지는 0/1 로만 답한다 — 이 PC 에 깔려 있으므로 0 이어야 한다
+  const found = await first.main(['node', 'first.mjs', '--have-claude']);
+  ok('클로드가 있는지 0/1 로 답한다', found === 0 || found === 1);
+
+  // 바탕화면에 못 두어도 설치가 엎어지지 않는다
+  const bad = first.putLauncher(join(BOX, '없는', '폴더'), 'node');
+  ok('못 두어도 던지지 않는다', bad && bad.ok === false);
+  const good = first.putLauncher(BOX, join('C:', 'x', 'StoryEngine', 'node', 'node.exe'));
+  ok('둘 수 있으면 둔다', good.ok, good.why);
+  ok('둔 파일이 ASCII 뿐이다',
+    /^[\x00-\x7f]*$/.test(readFileSync(join(BOX, 'Story Engine.cmd'), 'latin1')));
+}
+
 server.close();
 rmSync(BOX, { recursive: true, force: true });
 
