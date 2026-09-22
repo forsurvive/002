@@ -664,6 +664,101 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('제어 호출도 열어 볼 수 있다', prompts.VIEW_CODES.length === prompts.EDITABLE_CODES.length + prompts.CONTROL_CODES.length);
   ok('제어 호출은 집필 자리와 갈라져 있다', prompts.CONTROL_CODES.every((c) => !prompts.EDITABLE_CODES.includes(c)));
   ok('집필 프롬프트는 고칠 수 있다', prompts.EDITABLE_CODES.includes('S02') && prompts.EDITABLE_CODES.includes('F-REVIEW'));
+
+  // 남의 것이 딸려 오지 않게 — 실측으로 정한 깃발 둘(2026-09-22).
+  // `--tools ''` 는 내장 도구만 끈다. 이것 없이는 MCP 커넥터의 도구 열아홉(Gmail·드라이브 포함)이 실렸다.
+  const callSrc = readFileSync(join(HERE, 'call.mjs'), 'utf8');
+  ok('커넥터를 걷는 깃발이 선다', plain.includes('--strict-mcp-config'));
+  ok('설정 자리를 걷는 깃발이 선다',
+    plain.includes('--setting-sources') && plain[plain.indexOf('--setting-sources') + 1] === '');
+  ok('새 깃발도 --tools 앞에 온다',
+    plain.indexOf('--strict-mcp-config') < plain.indexOf('--tools')
+    && plain.indexOf('--setting-sources') < plain.indexOf('--tools'));
+  ok('cwd 를 빈 임시 폴더로 못박는다', /cwd: dir/.test(callSrc));
+  ok('버리던 값을 거둔다', callSrc.includes('total_cost_usd'));
+  ok('무엇으로 돈이 나갔는지 읽는다', callSrc.includes('apiKeySource'));
+}
+
+{
+  // ⑤ 실패의 «갈래» — 구조화된 칸을 먼저 보고 문구는 마지막 수단이다(2026-09-22).
+  const call = await import('./call.mjs');
+  const eng = await import('./engine.mjs');
+  const c = call.classify;
+
+  // 한도는 제 칸으로 온다 — 문구를 긁지 않는다
+  eq('다섯 시간 창', c({ limitInfo: { status: 'rejected', rateLimitType: 'five_hour' } }), 'quota-session');
+  eq('주간 창', c({ limitInfo: { status: 'rejected', rateLimitType: 'seven_day' } }), 'quota-week');
+  eq('모르는 창 이름은 주간으로 떨어뜨린다', c({ limitInfo: { status: 'rejected', rateLimitType: 'opus_week' } }), 'quota-week');
+  ok('경고는 소진이 아니다', c({ limitInfo: { status: 'allowed_warning', rateLimitType: 'seven_day', utilization: 0.91 } }) !== 'quota-week');
+  eq('허용은 아무 갈래도 아니다', c({ limitInfo: { status: 'allowed' } }), 'other');
+
+  // HTTP 상태로 갈린다
+  eq('크레딧 모자람', c({ finalResult: { api_error_status: 402 } }), 'credit');
+  eq('로그인', c({ finalResult: { api_error_status: 401 } }), 'auth');
+  eq('모델 못 씀', c({ finalResult: { api_error_status: 404 } }), 'model');
+  eq('잠깐 밀림', c({ finalResult: { api_error_status: 429 } }), 'rate');
+  eq('서버 쪽 일시 오류도 밀림', c({ finalResult: { api_error_status: 529 } }), 'rate');
+
+  // 사람이 세운 것과 시간 넘김이 앞선다
+  eq('세움이 먼저', c({ aborted: true, finalResult: { api_error_status: 429 } }), 'stopped');
+  eq('시간 넘김', c({ timedOut: true }), 'timeout');
+
+  // 문구는 마지막 수단
+  eq('문구로도 크레딧을 알아본다', c({ stderr: 'Your credit balance is too low' }), 'credit');
+  eq('문구로도 로그인을 알아본다', c({ stderr: 'Invalid API key' }), 'auth');
+
+  ok('갈래 이름이 표에 다 있다', ['quota-session', 'quota-week', 'rate', 'auth', 'credit', 'model', 'timeout', 'stopped', 'empty', 'other']
+    .every((r) => call.REASONS.includes(r)));
+
+  // 다시 부를 값이 있을 때만 다시 부른다
+  ok('한도에는 다시 부르지 않는다', !eng.RETRY_REASONS.has('quota-session') && !eng.RETRY_REASONS.has('quota-week'));
+  ok('로그인·크레딧·모델에도 다시 부르지 않는다',
+    !eng.RETRY_REASONS.has('auth') && !eng.RETRY_REASONS.has('credit') && !eng.RETRY_REASONS.has('model'));
+  ok('밀린 것만 다시 부른다', eng.RETRY_REASONS.has('rate'));
+
+  // 고삐 — 동시에 띄우는 수에 상한이 있다
+  ok('동시 호출 상한이 있다', call.MAX_CALLS >= 1 && Number.isFinite(call.MAX_CALLS));
+  eq('모의는 고삐를 지나지 않는다(자리가 새지 않는다)', call.callsRunning(), 0);
+
+  // 빈 프롬프트는 부르지 않는다
+  const empty = await call.runClaudeCall({ prompt: '' });
+  ok('빈 프롬프트는 부르지 않는다', !empty.ok);
+  eq('빈 프롬프트의 갈래', empty.reason, 'empty');
+}
+
+{
+  // ⑥ 한도 소진을 흉내낸다 — 실제로 다 쓸 수는 없으니 모의가 갈래를 돌려준다.
+  const call = await import('./call.mjs');
+  const eng = await import('./engine.mjs');
+  const LIM = { status: 'rejected', rateLimitType: 'five_hour', resetsAt: 1790058600, utilization: 1 };
+
+  call.forgetLimit();
+  globalThis.__SE2_MOCK_FN = () => ({ reason: 'quota-session', error: '', limit: LIM });
+  const r = await call.runClaudeCall({ prompt: '한 줄', mockKey: 'F-UPDATE' });
+  ok('모의가 한도를 흉내낸다', !r.ok && r.reason === 'quota-session');
+  ok('무엇 때문인지 사람 말로도 이른다', r.error.includes('구독 한도'));
+  ok('한도 표가 남는다', !!call.lastLimit() && call.lastLimit().rateLimitType === 'five_hour');
+  eq('풀리는 시각이 온다', call.lastLimit().resetsAt, 1790058600);
+
+  // 다시 부르는가 — 진짜 프로젝트가 있어야 callOnce 가 모의까지 간다
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  const rp = await post('project.create', { name: '갈래 시험', spec: { form: '소설' }, materials: [{ name: '자', text: '자료' }] });
+  await settle(rp.pid, 60000);
+
+  let calls = 0;
+  globalThis.__SE2_MOCK_FN = () => { calls += 1; return { reason: 'quota-week', limit: LIM }; };
+  const q = await eng.callWithRetry({ pid: rp.pid, code: 'F-UPDATE', request: '이어 써라' });
+  eq('한도면 한 번만 부른다', calls, 1);
+  eq('갈래가 위로 이어진다', q.reason, 'quota-week');
+
+  calls = 0;
+  globalThis.__SE2_MOCK_FN = () => { calls += 1; return { reason: 'rate' }; };
+  await eng.callWithRetry({ pid: rp.pid, code: 'F-UPDATE', request: '이어 써라' });
+  eq('밀린 것이면 두 번 부른다', calls, 2);
+
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  await post('project.delete', { pid: rp.pid });
+  call.forgetLimit();
 }
 
 {
@@ -974,10 +1069,15 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('자리마다 할 일이 적혀 있다', prompts.AGENT_SLOTS.every((c) => prompts.SLOT_DUTY[c]));
   ok('제어 자리는 짓지 않는다', prompts.CONTROL_CODES.every((c) => !prompts.AGENT_SLOTS.includes(c)));
   // 옛 스토리 작법 프롬프트는 흔적까지 걷었다(사용자 지시, 2026-09-20).
-  // 작법서 — 가리키는 문서로 선다(사용자 지시, 2026-09-20)
-  ok('작법서를 읽어 둔다', books.bookList().length >= 2 && books.bookList().every((b) => b.chars > 1000));
-  ok('가리키는 이름으로 글을 푼다', books.bookText(books.bookList()[0].src).length > 1000);
+  // 작법서 — 글은 걷었고 그릇만 남겼다(사용자 지시, 2026-09-22).
+  // 남의 책 요약본을 파는 물건에 실으면 저작권 침해가 된다. 집필의 잣대는
+  // 프로젝트를 만들 때 지어지는 에이전트 프롬프트가 든다.
+  ok('기본 작법서를 두지 않는다', books.bookList().length === 0);
   ok('없는 이름에는 빈 글', books.bookText('없는 책') === '');
+  ok('가리키는 이름이 아니라고 이른다', !books.isBook('없는 책'));
+  // 그릇은 살아 있다 — 나중에 파는 가이드를 이 자리에 얹는다.
+  ok('가리키는 문서는 제 본문을 쓰지 않는다', model.bodyOf({ src: '없는 책', body: '베낀 글' }) === '');
+  ok('가리키지 않는 문서는 제 본문을 쓴다', model.bodyOf({ body: '그냥 글' }) === '그냥 글');
   // 살아 있는 자리의 잣대가 작가 쪽으로 옮겨 갔는가
   ok('합평의 잣대는 작가가 세운다', prompts.BUILTIN['F-REVIEW'].craft.includes('잣대는 어디서 오는가')
     && prompts.BUILTIN['F-REVIEW'].craft.includes('작법서'));
@@ -1000,27 +1100,16 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   });
   const p = await settle(r.pid, 60000);
   eq('준비 작업은 완료', p.jobs.find((j) => j.kind === 'agents').status, 'done');
-  // 작법서는 만들 때부터 서 있으므로 «지은 문서»만 센다(사용자 지시, 2026-09-20).
   const made = p.docs.filter((d) => !d.src);
   eq('지은 문서는 자료 분석 하나', made.length, 1);
   eq('그 이름', made[0].title, agents.STUDY_TITLE);
   ok('작업이 그 문서를 제 것으로 적는다', p.jobs[0].docIds.includes(made[0].id));
-  // 작법서는 가리키기만 한다 — 프로젝트 파일에 본문이 베껴지지 않는다.
-  const books = p.docs.filter((d) => d.src);
-  ok('작법서가 문서로 선다', books.length >= 2);
-  ok('작법서는 본문을 내려 주지 않는다', books.every((d) => !d.body && d.chars > 1000));
-  ok('작법서는 제 구획에 선다', p.categories.some((c) => c.name === '작법서' && c.docIds.length === books.length));
-  ok('작법서는 확정본이 아니다', books.every((d) => !d.isFinal));
-  ok('작법서는 참조로도 대상으로도 걸려 있지 않다', books.every((d) => !d.refIds.length && !d.targetIds.length));
-  // 가리키는 문서는 고쳐 쓰지 못한다
-  await post('doc.write', { pid: r.pid, id: books[0].id, body: '내 맘대로 고친다' });
-  const after = (await stateOf(r.pid)).project.docs.find((d) => d.id === books[0].id);
-  ok('가리키는 문서의 본문은 고쳐지지 않는다', !after.body && after.chars > 1000);
-  // 펼쳐 보면 글이 온다
-  const pk = await post('peek', { pid: r.pid, id: books[0].id });
-  ok('펼쳐 보면 글이 온다', pk.ok && pk.one.text.length > 1000);
-  // 갱신 한 번이 나르는 짐이 가벼운가 — 십만 자가 흐르면 안 된다
-  ok('갱신에 작법서 본문이 실리지 않는다', JSON.stringify(await stateOf(r.pid)).length < 60000);
+  // 작법서를 걷었으므로 가리키는 문서도 그 구획도 서지 않는다(사용자 지시, 2026-09-22).
+  ok('가리키는 문서가 서지 않는다', p.docs.every((d) => !d.src));
+  ok('작법서 구획이 서지 않는다', !(p.categories || []).some((c) => c.name === books.BOOK_CATEGORY));
+  ok('그래도 프로젝트는 선다', p.prepared && p.docs.length === 1);
+  // 갱신 한 번이 나르는 짐이 가벼운가
+  ok('갱신이 가볍다', JSON.stringify(await stateOf(r.pid)).length < 60000);
   ok('준비가 끝났다고 알린다', p.prepared);
   await post('project.delete', { pid: r.pid });
 }

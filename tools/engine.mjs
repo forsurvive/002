@@ -130,17 +130,23 @@ export async function callOnce({
   });
 
   const r = await runClaudeCall({ systemPrompt, prompt, mockKey: code, signal, model: useModel });
-  if (!r.ok) return { ok: false, error: r.error };
+  // 사유(reason)와 한도(limit)를 떨어뜨리지 않는다 — 작업이 이것으로 «멈출까 실패할까»를 가른다.
+  if (!r.ok) return { ok: false, error: r.error, reason: r.reason, limit: r.limit };
   const text = cleanResponse(r.text);
-  if (!text) return { ok: false, error: '빈 응답' };
-  return { ok: true, text, usage: r.usage };
+  if (!text) return { ok: false, error: '빈 응답', reason: 'empty', limit: r.limit };
+  return { ok: true, text, usage: r.usage, limit: r.limit, authSource: r.authSource };
 }
 
-// 실패하면 한 번만 다시 부른다. 두 번째도 실패하면 그대로 실패다(지어내지 않는다).
+// 다시 부를 값이 있을 때만 다시 부른다.
+// 전에는 사유를 몰라 한도 소진에도 한 번 더 불렀다 — 될 리 없는 호출에 구독을 두 번 태운 셈이다.
+// 잠깐 밀린 것('rate')만 다시 부른다. 한도·로그인·크레딧·모델은 다시 불러도 같은 답이다.
+export const RETRY_REASONS = new Set(['rate', 'other']);
+
 export async function callWithRetry(args) {
   const first = await callOnce(args);
   if (first.ok) return first;
   if (args.signal && args.signal.aborted) return first;
+  if (first.reason && !RETRY_REASONS.has(first.reason)) return first;
   return callOnce(args);
 }
 
