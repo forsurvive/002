@@ -762,6 +762,99 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
+  // ⑦ 파일이 무거워지지 않게 — 판 상한 · 쓰레기통 짐 · 보관 기한 (2026-09-22)
+  // 실측으로 시작한 일이다: 한 프로젝트 파일 414,797바이트 가운데 쓰레기통이 135,369자였다.
+  const p = store.blankProject('p_w', '무게');
+  const d = model.docCreate(p, { title: '1화', body: '처음' });
+
+  for (let i = 1; i <= model.KEEP_VERSIONS + 5; i++) model.docWrite(p, d.id, { body: '판 ' + i });
+  eq('판에 상한이 있다', d.versions.length, model.KEEP_VERSIONS);
+  ok('오래된 것부터 버린다', !d.versions.some((v) => v.body === '처음'));
+  ok('최근 판은 남아 있다', d.versions.some((v) => v.body === '판 ' + (model.KEEP_VERSIONS + 4)));
+  ok('상한은 고칠 수 있다', model.KEEP_VERSIONS >= 1 && Number.isFinite(model.KEEP_VERSIONS));
+
+  // 쓰레기통에 담는 짐 — 지금 본문은 담고 판 이력은 «있었다»만 남긴다
+  const last = d.body;
+  model.docDelete(p, d.id);
+  const e = p.trash[p.trash.length - 1];
+  eq('버린 것이 쓰레기통에 든다', e.kind, 'doc');
+  eq('지금 본문은 담는다(되살리면 돌아와야 한다)', e.payload.body, last);
+  ok('판 이력의 본문은 담지 않는다', e.payload.versions.every((v) => v.body == null));
+  ok('대신 얼마나 길었는지만 적는다', e.payload.versions.every((v) => typeof v.chars === 'number' && v.chars > 0));
+  ok('짐이 가볍다', JSON.stringify(e.payload).length < JSON.stringify(d).length);
+
+  // 되살리면 그 글이 돌아온다
+  model.trashRestore(p, e.id);
+  const back = model.findDoc(p, d.id);
+  ok('되살리면 문서가 돌아온다', !!back);
+  eq('본문도 돌아온다', back.body, last);
+  eq('마른 판은 되살릴 수 없다', model.docRestoreVersion(p, back.id, 0), null);
+
+  // 기한이 지난 것은 새로 버릴 때 함께 쓸어 낸다
+  const d2 = model.docCreate(p, { title: '2화', body: '둘' });
+  model.docDelete(p, d2.id);
+  p.trash[p.trash.length - 1].at = Date.now() - (model.TRASH_DAYS + 5) * 86400000;
+  const d3 = model.docCreate(p, { title: '3화', body: '셋' });
+  model.docDelete(p, d3.id);
+  ok('기한이 지난 것은 쓸려 나간다', !p.trash.some((x) => x.title === '2화'));
+  ok('갓 버린 것은 남는다', p.trash.some((x) => x.title === '3화'));
+  ok('보관 기한이 있다', model.TRASH_DAYS >= 1 && Number.isFinite(model.TRASH_DAYS));
+}
+
+{
+  // ⑧ 남의 작업을 건드리지 못한다 — 계정이 갈리기 전에 막아 둔다 (2026-09-22)
+  const jobs = await import('./jobs.mjs');
+  const MAT = [{ name: '자', text: '자료 본문' }];
+  const A = await post('project.create', { name: '가 작품', spec: { form: '소설' }, materials: MAT });
+  const B = await post('project.create', { name: '나 작품', spec: { form: '소설' }, materials: MAT });
+  await settle(A.pid, 60000);
+  await settle(B.pid, 60000);
+
+  // 가 쪽에 좀 오래 도는 작업을 하나 띄운다
+  let release = null;
+  const held = new Promise((r) => { release = r; });
+  const st = jobs.start(A.pid, { kind: 'call', title: '붙들린 일', run: async () => { await held; return { ok: true }; } });
+  ok('작업이 떴다', st.ok && st.jobId);
+
+  // 나의 pid 로 가의 jobId 를 건드려 본다
+  eq('남의 pid 로는 멈출 수 없다', jobs.pause(B.pid, st.jobId).ok, false);
+  eq('남의 pid 로는 이을 수 없다', jobs.resume(B.pid, st.jobId).ok, false);
+  jobs.stop(B.pid, st.jobId);
+  let pa = await stateOf(A.pid);
+  eq('남의 pid 로 세워도 그대로 돈다', pa.project.jobs.find((j) => j.id === st.jobId).status, 'running');
+
+  // 제 pid 로는 된다
+  eq('제 pid 로는 멈춘다', jobs.pause(A.pid, st.jobId).ok, true);
+  pa = await stateOf(A.pid);
+  eq('멈춤이 적힌다', pa.project.jobs.find((j) => j.id === st.jobId).status, 'paused');
+  eq('제 pid 로는 잇는다', jobs.resume(A.pid, st.jobId).ok, true);
+
+  release();
+  await sleep(40);
+
+  // 재시작이 «멈춤»을 삼킬 때 까닭을 남긴다
+  const state = await import('./state.mjs');
+  const C = await post('project.create', { name: '다 작품', spec: { form: '소설' }, materials: MAT });
+  await settle(C.pid, 60000);
+  const s2 = jobs.start(C.pid, { kind: 'call', title: '멈춘 일', run: async () => ({ ok: true }) });
+  const cj = s2.jobId;
+  await sleep(40);
+  // 그 일은 이미 끝나 손잡이가 사라졌다 — 재시작 전에 «멈춤»으로 적혀 있던 꼴을 흉내낸다
+  state.update(C.pid, (p) => {
+    const x = p.jobs.find((y) => y.id === cj);
+    if (x) { x.status = 'paused'; x.error = ''; }
+  });
+  jobs.healStale(C.pid);
+  const healed = (await stateOf(C.pid)).project.jobs.find((x) => x.id === cj);
+  eq('재시작이 멈춤을 내린다', healed.status, 'stopped');
+  ok('까닭을 남긴다', String(healed.error || '').includes('다시 떠서'));
+
+  await post('project.delete', { pid: A.pid });
+  await post('project.delete', { pid: B.pid });
+  await post('project.delete', { pid: C.pid });
+}
+
+{
   // ④ 프롬프트를 찾는 순서 — 고친 것 → 즉석 생성본 → 내장
   const eng = await import('./engine.mjs');
   const p = store.blankProject('p_pr', '순서');

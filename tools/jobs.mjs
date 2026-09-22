@@ -6,12 +6,22 @@ import * as state from './state.mjs';
 
 const live = new Map(); // jobId → { controller, pid, paused, wake }
 
+// 그 프로젝트의 작업일 때만 손잡이를 내어 준다.
+//
+// 전에는 live.get(jobId) 만 보아 pid 를 견주지 않았다. 사람이 하나일 때는 드러나지 않지만,
+// 계정이 갈리면 **남의 jobId 하나로 남의 작업을 멈추고 abort 시킬 수 있다.**
+// 문지기를 한 자리에 두어 pause·resume·stop 이 모두 이 문을 지나게 한다.
+function mine(pid, jobId) {
+  const h = live.get(jobId);
+  return h && h.pid === pid ? h : null;
+}
+
 export const STATUS = { running: '진행 중', paused: '멈춤', done: '완료', stopped: '중지됨', failed: '실패' };
 
 // 멈춤 — 돌던 호출 한 건은 끝까지 두고, 다음 호출 앞에서 선다.
 // (호출을 중간에 끊으면 그 호출은 버려지고 구독만 나간다.)
 export function pause(pid, jobId) {
-  const h = live.get(jobId);
+  const h = mine(pid, jobId);
   if (!h) return { ok: false, error: '도는 작업이 아닙니다' };
   h.paused = true;
   state.update(pid, (p) => {
@@ -22,7 +32,7 @@ export function pause(pid, jobId) {
 }
 
 export function resume(pid, jobId) {
-  const h = live.get(jobId);
+  const h = mine(pid, jobId);
   if (!h) return { ok: false, error: '도는 작업이 아닙니다' };
   h.paused = false;
   if (h.wake) { const w = h.wake; h.wake = null; w(); }
@@ -98,7 +108,7 @@ export function start(pid, { kind = 'call', title = '작업', targetId = '', run
 }
 
 export function stop(pid, jobId) {
-  const h = live.get(jobId);
+  const h = mine(pid, jobId);
   if (h) {
     h.controller.abort();
     h.paused = false;
@@ -140,11 +150,21 @@ export function remove(pid, jobId) {
 
 export function aborted(ctx) { return !!(ctx && ctx.signal && ctx.signal.aborted); }
 
-// 서버가 죽었다 살아나면 지난 실행의 «진행 중»은 거짓이다 — 중지됨으로 내린다.
+// 서버가 죽었다 살아나면 지난 실행의 «진행 중»·«멈춤»은 거짓이다 — 중지됨으로 내린다.
+//
+// 멈춘 자리에서 이어 가려면 메모리의 손잡이(controller·wake)가 있어야 하는데 재시작으로 사라졌다.
+// 그래서 내리는 것이 맞다. 다만 **한도 때문에 멈춰 물음을 매달아 둔 작업**까지 함께 삼키므로,
+// 왜 끊겼는지를 적어 둔다 — 적지 않으면 작가는 제 작업이 까닭 없이 사라진 줄로 안다.
 export function healStale(pid) {
   state.update(pid, (p) => {
-    // 'paused' 는 일시중지를 빼기 전에 저장된 옛 상태다 — 그대로 두면 화면이 «실패»라 쓴다.
-    for (const j of p.jobs) if ((j.status === 'running' || j.status === 'paused') && !live.has(j.id)) { j.status = 'stopped'; j.endedAt = Date.now(); j.step = ''; }
+    for (const j of p.jobs) {
+      if ((j.status === 'running' || j.status === 'paused') && !live.has(j.id)) {
+        if (j.status === 'paused' && !j.error) j.error = '프로그램이 다시 떠서 멈춘 자리에서 잇지 못했습니다';
+        j.status = 'stopped';
+        j.endedAt = Date.now();
+        j.step = '';
+      }
+    }
   });
 }
 

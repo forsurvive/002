@@ -52,13 +52,46 @@ export function docCreate(p, fields = {}) {
   return d;
 }
 
+// 남기는 판의 수. 넘으면 오래된 것부터 버린다.
+//
+// 까닭: 전에는 상한이 없어 고침 횟수만큼 본문이 선형으로 쌓였다.
+// 회차 50 × 고침 20 이면 본문 1,000벌이 한 파일에 든다는 뜻이고,
+// 그것을 stateOf 가 통째로 실어 1.5초마다 내려보낸다. 쓸 수 없는 꼴이다.
+// 스무 판이면 되짚기에 넉넉하다(되짚을 일은 대개 직전 몇 판이다).
+export const KEEP_VERSIONS = Math.max(1, Number(process.env.SE2_KEEP_VERSIONS) || 20);
+
+// 쓰레기통에 며칠 두는가. 지난 것은 새로 버릴 때 함께 쓸어 낸다.
+export const TRASH_DAYS = Math.max(1, Number(process.env.SE2_TRASH_DAYS) || 30);
+
+// 쓰레기통에 담는 짐은 가볍게 — 판 이력의 본문까지 통째 넣으면 쓰레기통이 파일을 삼킨다.
+// 실측: 한 프로젝트 파일 414,797바이트 가운데 쓰레기통이 135,369자였다(파일의 3분의 1).
+// 지금 본문은 그대로 담는다(되살리면 그 글이 돌아와야 한다). 판 이력은 «있었다»만 남긴다.
+function lighten(d) {
+  return {
+    ...d,
+    versions: (d.versions || []).map((v) => ({ at: v.at, title: v.title, chars: String(v.body || '').length })),
+  };
+}
+
+// 기한이 지난 것을 쓸어 낸다. 새로 버릴 때마다 지나가므로 따로 시계를 두지 않는다.
+export function trashSweep(p, days = TRASH_DAYS) {
+  const cut = now() - days * 86400000;
+  const before = p.trash.length;
+  p.trash = p.trash.filter((e) => (e.at || 0) >= cut);
+  return before - p.trash.length;
+}
+
 // 편집·갱신·복원이 모두 이 문을 지난다 — 지나기 직전의 판이 이력에 남는다.
 export function docWrite(p, id, next = {}, { keepHistory = true } = {}) {
   const d = findDoc(p, id);
   if (!d) return null;
   // 이력에 판을 남길 만한 바뀜은 제목·본문뿐이다.
   const changed = (next.title != null && str(next.title) !== d.title) || (next.body != null && str(next.body) !== d.body);
-  if (changed && keepHistory) d.versions.push({ at: d.updatedAt || d.createdAt, title: d.title, body: d.body });
+  if (changed && keepHistory) {
+    d.versions.push({ at: d.updatedAt || d.createdAt, title: d.title, body: d.body });
+    // 상한을 넘으면 오래된 것부터 버린다. stateOf 가 i 를 매번 다시 세므로 번호가 밀려도 어긋나지 않는다.
+    if (d.versions.length > KEEP_VERSIONS) d.versions.splice(0, d.versions.length - KEEP_VERSIONS);
+  }
   // «언제 손댔는가»는 참조·대상·에이전트·요청사항·그릇까지 센다.
   // 폰은 이 시각이 그대로면 문서를 다시 받아 오지 않는다 — 여기서 안 찍으면 폰 화면이 옛 값에 머문다.
   const before = JSON.stringify([d.request, d.refIds, d.targetIds, d.agentIds, d.categoryId]);
@@ -81,7 +114,8 @@ export function docRestoreVersion(p, id, index) {
   const d = findDoc(p, id);
   if (!d) return null;
   const v = d.versions[index];
-  if (!v) return null;
+  // 쓰레기통을 지나온 문서의 판은 본문이 말라 있다 — 되살릴 것이 없다.
+  if (!v || v.body == null) return null;
   return docWrite(p, id, { title: v.title, body: v.body });
 }
 
@@ -112,7 +146,8 @@ export function docDelete(p, id) {
   const i = p.docs.findIndex((d) => d.id === id);
   if (i < 0) return null;
   const [d] = p.docs.splice(i, 1);
-  p.trash.push({ id: newId('t'), at: now(), kind: 'doc', from: KIND_NAME[d.kind] || '문서', title: d.title, payload: d });
+  trashSweep(p);
+  p.trash.push({ id: newId('t'), at: now(), kind: 'doc', from: KIND_NAME[d.kind] || '문서', title: d.title, payload: lighten(d) });
   return d;
 }
 
@@ -131,6 +166,7 @@ export function categoryDelete(p, id) {
   const [c] = p.categories.splice(i, 1);
   const memberIds = [];
   for (const d of p.docs) if (d.categoryId === id) { memberIds.push(d.id); d.categoryId = null; d.orphanFrom = id; }
+  trashSweep(p);
   p.trash.push({ id: newId('t'), at: now(), kind: 'category', from: '카테고리', title: c.name, payload: c, memberIds });
   return c;
 }
@@ -254,6 +290,7 @@ export function threadDelete(p, id) {
   const i = p.threads.findIndex((t) => t.id === id);
   if (i < 0) return null;
   const [t] = p.threads.splice(i, 1);
+  trashSweep(p);
   p.trash.push({ id: newId('t'), at: now(), kind: 'thread', from: '논의 스레드', title: t.title, payload: t });
   return t;
 }
