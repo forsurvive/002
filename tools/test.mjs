@@ -1641,6 +1641,20 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('둘 수 있으면 둔다', good.ok, good.why);
   ok('둔 파일이 ASCII 뿐이다',
     /^[\x00-\x7f]*$/.test(readFileSync(join(BOX, 'Story Engine.cmd'), 'latin1')));
+
+  // ── 더블클릭하는 파일 그 자체
+  //
+  // **cmd.exe 는 배치 파일을 UTF-8 이 아니라 옛 코드페이지로 읽는다.**
+  // 두 번째 줄의 chcp 는 그 아래 줄들을 구해 주지 못한다.
+  // 상점 쪽에서 실측했다(2026-09-22): rem 줄에 쓴 한글이 **다음 줄의 앞부분을 먹어**
+  // «set SES_ADMIN_EMAIL=...» 이 «IL» 이 되었고 관리자 문이 조용히 닫혔다.
+  // 조용히 닫히는 것이 고약하다 — 아무도 못 들어오는데 아무 말도 없다.
+  const cmd = readFileSync(join(ROOT, '스토리 엔진.cmd'), 'latin1');
+  ok('더블클릭하는 파일이 ASCII 뿐이다', /^[\x00-\x7f]*$/.test(cmd),
+    (cmd.match(/[^\x00-\x7f]/g) || []).slice(0, 8).join(''));
+  ok('바이트 표식(BOM)이 없다', cmd.charCodeAt(0) !== 0xef);
+  // 여러 줄 괄호 묶음이 있는 파일이라 줄 끝이 더 중요하다
+  ok('줄 끝이 CRLF 다', cmd.includes('\r\n') && !/[^\r]\n/.test(cmd));
 }
 
 server.close();
