@@ -140,6 +140,15 @@ function shopButton() {
     onclick: async () => {
       const r = await api('cloud.urls');
       if (!r || !r.ok) return;
+      // **닿지 않으면 가지 않는다.** 같은 창으로 옮겨 가므로, 여기서 그냥 보내면
+      // 작가가 보던 화면이 죽은 쪽으로 덮인다. 한 번 물어보고 아니면 그 자리에 선다.
+      if (!r.up) {
+        S.confirm = {
+          text: '상점에 닿지 않습니다',
+          acts: [{ label: '알겠습니다', class: 'btn', run: () => { S.confirm = null; render(); } }],
+        };
+        return render();
+      }
       // 아직 안 이었으면 «잇는 자리»로 — 로그인하고 [잇기] 한 번이면 열쇠가 실려 돌아온다.
       location.href = (c && c.linked) ? r.shop : r.link;
     },
@@ -1335,5 +1344,11 @@ document.addEventListener('keydown', (e) => {
   else if (S.open) closeLayer();
 });
 
-pull(true);
+// 띄울 때 한 번 상점을 두드린다 — **값을 치르고 돌아온 자리가 여기이기 때문이다.**
+// 같은 창으로 다니므로 상점에서 돌아오면 이 쪽이 새로 뜬다. 그때 다시 묻지 않으면
+// 단추가 [구독하기] 로 남고 새 호출이 하루까지 잠긴 채다(하루 한 번 두드리는 것이 기본이므로).
+// 닿지 않아도 그냥 지나간다 — 이 한 번 때문에 프로그램이 안 뜨면 안 된다.
+pull(true).then(() => {
+  if (S.cloud && S.cloud.linked) api('cloud.check').then(() => pull(true)).catch(() => {});
+});
 setInterval(() => pull(false), 1500);

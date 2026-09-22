@@ -955,6 +955,29 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 아직 안 이었으면 «잇는 자리»로 가야 한다 — 그냥 상점으로 보내면 열쇠가 돌아오지 않는다
   ok('안 이었으면 잇는 자리로 간다', btn.includes('c.linked) ? r.shop : r.link'));
 
+  // ── 같은 창이라 생기는 값 (검토가 찾아낸 것, 2026-09-22)
+  //
+  // 새 창이던 때는 프로그램이 뒤에 그대로 있었다. 같은 창이면 **작가의 화면이 덮인다.**
+  // 그래서 세 가지를 지켜야 한다: 닿지 않으면 가지 않는다 · 돌아올 길을 달고 간다 ·
+  // 돌아오면 다시 묻는다.
+  ok('**닿지 않으면 가지 않는다**', btn.includes('if (!r.up)'));
+  ok('닿지 않으면 사람에게 이른다', btn.includes('상점에 닿지 않습니다'));
+  ok('돌아오면 다시 묻는다', app.includes("api('cloud.check')") && /pull\(true\)\.then/.test(app));
+
+  // 돌아올 주소를 달고 간다 — loopback 이고, 포트가 없으면 달지 않는다
+  ok('상점 주소에 돌아올 자리를 단다', cloud.shopUrl(8801).includes('back=' + encodeURIComponent('http://127.0.0.1:8801/')));
+  ok('포트를 모르면 달지 않는다', !cloud.shopUrl().includes('back='));
+
+  // **끊어도 상점 주소는 남는다** — 주소까지 지우면 다음 [구독하기] 가 집 안으로 떨어진다
+  cloud.linkWrite({ site: 'https://가게.example.com', token: 'tok', license: '' });
+  cloud.disconnect();
+  eq('끊어도 상점 주소는 남는다', cloud.link().site, 'https://가게.example.com');
+  eq('끊으면 열쇠는 사라진다', cloud.link().token, '');
+  ok('끊긴 뒤에도 갈 곳이 있다', cloud.shopUrl().startsWith('https://가게'));
+
+  // 닿는지 물어보는 자리 — 없는 곳은 «아니오»로 답하고 던지지 않는다
+  eq('없는 곳은 아니라고 답한다', await cloud.reachable('http://127.0.0.1:1', 800), false);
+
   cloud.disconnect();
 }
 

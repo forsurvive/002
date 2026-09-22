@@ -266,7 +266,13 @@ const OPS = {
   // 상점과 잇기 — 열쇠는 내려 주지 않는다(이었는지만 이른다).
   'cloud.read': () => ok({ cloud: cloud.view() }),
   // 상점을 여는 주소 — 화면이 이것을 새 창으로 연다.
-  'cloud.urls': () => ok({ link: cloud.linkUrl(PORT), shop: cloud.shopUrl() }),
+  // **가기 전에 상점이 서 있는지 물어본다.** 같은 창으로 옮겨 가므로,
+  // 닿지 않는 곳으로 보내면 작가의 화면이 죽은 쪽으로 덮인다.
+  'cloud.urls': async () => ok({
+    link: cloud.linkUrl(PORT),
+    shop: cloud.shopUrl(PORT),
+    up: await cloud.reachable(),
+  }),
   'cloud.connect': async (b) => {
     const r = await cloud.connect(b.site, b.token);
     return r.ok ? ok({ cloud: r.view }) : bad(r.error);

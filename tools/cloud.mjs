@@ -37,9 +37,25 @@ export function linkUrl(port) {
   return site + '/link?back=' + encodeURIComponent(back);
 }
 
-// 상점을 그냥 열 때(구독하러 가기 등)
-export function shopUrl() {
-  return link().site || DEFAULT_SITE;
+// 상점을 그냥 열 때(구독하러 가기 등).
+//
+// **돌아올 주소를 달고 간다.** 같은 창에서 다녀오게 바뀐 뒤로 이것이 없으면
+// 상점에 닿은 사람이 제 원고로 돌아올 길이 브라우저의 «뒤로» 뿐이다.
+// 결제를 다녀오면 그 «뒤로»마저 여러 칸이 된다. 상점은 이 주소가 loopback 일 때만 쓴다.
+export function shopUrl(port = 0) {
+  const site = link().site || DEFAULT_SITE;
+  if (!port) return site;
+  return site + '/?back=' + encodeURIComponent('http://127.0.0.1:' + port + '/');
+}
+
+// 상점이 지금 서 있는가. **가기 전에 물어본다** —
+// 같은 창으로 옮겨 가므로, 닿지 않는 곳으로 보내면 작가의 화면이 죽은 쪽으로 덮인다.
+export async function reachable(site = '', ms = 4000) {
+  const base = String(site || link().site || DEFAULT_SITE).replace(/\/+$/, '');
+  try {
+    const r = await fetch(base + '/health', { signal: AbortSignal.timeout(ms) });
+    return r.ok;
+  } catch { return false; }
 }
 
 // 돌아온 열쇠를 받는다 — 주소는 우리가 이미 안다.
@@ -165,8 +181,12 @@ export async function connect(site, token) {
   return check();
 }
 
+// 끊는다 — **상점 주소는 남긴다.**
+// 주소까지 지우면 다음에 [구독하기] 를 눌렀을 때 갈 곳이 집 안(127.0.0.1)으로 되돌아가고,
+// 거기엔 아무것도 없다. 같은 창으로 옮겨 가므로 그 순간 작가의 화면이 죽은 쪽으로 덮인다.
 export function disconnect() {
-  writeJson(LINK_FILE(), {});
+  const l = link();
+  writeJson(LINK_FILE(), l.site ? { site: l.site } : {});
   return view();
 }
 
