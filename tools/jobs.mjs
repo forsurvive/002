@@ -43,6 +43,16 @@ export function resume(pid, jobId) {
   return { ok: true };
 }
 
+// 사람이 고른 것을 얹고 문지기를 풀어 준다. 고를 것: 'wait' | 'api' | 'stop'
+export function answer(pid, jobId, choice) {
+  const h = mine(pid, jobId);
+  if (!h) return { ok: false, error: '도는 작업이 아닙니다' };
+  const c = String(choice || '');
+  if (c === 'stop') return stop(pid, jobId);
+  h.answer = c;
+  return resume(pid, jobId);
+}
+
 function put(pid, jobId, patch) {
   state.update(pid, (p) => {
     const j = p.jobs.find((x) => x.id === jobId);
@@ -63,12 +73,15 @@ export function start(pid, { kind = 'call', title = '작업', targetId = '', run
   const job = {
     id, kind, title, targetId,
     status: 'running', step: '', stepAt: now, error: '',
+    // 한도에 닿으면 여기에 물음이 매달린다 — { at, reason, resetsAt, canApi }.
+    // 화면은 이것이 있으면 작업 줄에 고를 것을 세운다.
+    ask: null,
     startedAt: now, endedAt: 0, docIds: [],
   };
   state.update(pid, (pr) => { pr.jobs.push(job); });
 
   const controller = new AbortController();
-  const handle = { controller, pid, paused: false, wake: null };
+  const handle = { controller, pid, paused: false, wake: null, answer: null };
   live.set(id, handle);
 
   const ctx = {
@@ -82,6 +95,31 @@ export function start(pid, { kind = 'call', title = '작업', targetId = '', run
         await new Promise((resolve) => { handle.wake = resolve; });
       }
       return !controller.signal.aborted;
+    },
+    // 한도에 닿았을 때 — 실패로 적지 않고 멈춤으로 돌리고 물음을 매달아 둔다.
+    //
+    // 문지기(gate)는 호출과 호출 «사이»에 선다. 소진된 호출은 이미 실패한 뒤이므로,
+    // 사람이 고르면 engine 의 callAsking 이 **그 호출부터** 다시 부른다.
+    // 합평회처럼 여러 호출로 된 일도 앞서 받은 것을 잃지 않는다(said[] 가 그대로 남는다).
+    async askLimit(info = {}) {
+      put(pid, id, {
+        status: 'paused',
+        // «API 로 갈아탈 수 있나»는 여기에 굳히지 않는다 — 물음이 매달린 뒤에 키를 넣을 수 있으므로
+        // 화면이 지금의 auth 를 보고 판단한다(실측: 굳혀 두면 키를 넣어도 단추가 서지 않았다).
+        ask: {
+          at: Date.now(),
+          reason: String(info.reason || ''),
+          resetsAt: Number(info.resetsAt) || 0,
+        },
+        stepAt: Date.now(),
+      });
+      handle.paused = true;
+      handle.answer = null;
+      const alive = await ctx.gate();
+      const choice = String(handle.answer || '');
+      handle.answer = null;
+      put(pid, id, { ask: null });
+      return alive ? choice : '';
     },
     addDoc(docId) {
       state.update(pid, (pr) => {
@@ -117,7 +155,7 @@ export function stop(pid, jobId) {
   // 이미 끝난 작업의 «완료»·«실패»를 «중지됨»으로 뒤집지 않는다.
   state.update(pid, (p) => {
     const j = p.jobs.find((x) => x.id === jobId);
-    if (j && (j.status === 'running' || j.status === 'paused')) { j.status = 'stopped'; j.endedAt = Date.now(); j.step = ''; }
+    if (j && (j.status === 'running' || j.status === 'paused')) { j.status = 'stopped'; j.endedAt = Date.now(); j.step = ''; j.ask = null; }
   });
   return { ok: true };
 }
@@ -163,6 +201,7 @@ export function healStale(pid) {
         j.status = 'stopped';
         j.endedAt = Date.now();
         j.step = '';
+        j.ask = null;
       }
     }
   });

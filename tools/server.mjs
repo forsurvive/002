@@ -13,7 +13,8 @@ import * as model from './model.mjs';
 import * as jobs from './jobs.mjs';
 import * as engine from './engine.mjs';
 import { prepareAgents, agentsReady, runStudy, STUDY_TITLE } from './agents.mjs';
-import { killAllCalls, MODELS } from './call.mjs';
+import { killAllCalls, MODELS, lastLimit } from './call.mjs';
+import * as auth from './auth.mjs';
 import { bookList, BOOK_CATEGORY } from './books.mjs';
 import { EDITABLE_CODES, VIEW_CODES } from './prompts.mjs';
 
@@ -254,6 +255,12 @@ const OPS = {
   'job.pause': (b) => jobs.pause(b.pid, b.id),
   'job.resume': (b) => jobs.resume(b.pid, b.id),
   'job.remove': (b) => jobs.remove(b.pid, b.id),
+  // 한도에 닿아 멈춘 작업에 사람이 답한다 — 'wait' | 'api' | 'stop'
+  'job.answer': (b) => jobs.answer(b.pid, b.id, b.choice),
+
+  // 무엇으로 돈이 나가는가 — 사람이 고른다. 키는 내려 주지 않는다(들어 있는지만 이른다).
+  'auth.read': () => ok({ auth: auth.view() }),
+  'auth.write': (b) => ok({ auth: auth.write({ mode: b.mode, apiKey: b.apiKey }) }),
 };
 
 export const OP_NAMES = Object.keys(OPS);
@@ -294,6 +301,13 @@ function stateOf(pid) {
       control: !EDITABLE_CODES.includes(code),
     })),
     agentKind: (p.agents && p.agents.__kind) || '',
+    // 무엇으로 돈이 나가는가 — 화면에 반드시 보여 준다.
+    // 「구독으로 돕니다」라고 말하면서 물려받은 ANTHROPIC_API_KEY 때문에 말없이 종량 과금되면
+    // 그것은 표시광고 문제다(실측으로 그럴 수 있음을 확인했다).
+    auth: auth.view(),
+    // 마지막으로 본 한도 — 닿기 전에 남은 양을 보여 줄 재료. 호출이 흐르는 동안만 갱신된다.
+    // 문턱(0.75) 아래면 이벤트가 안 흐르므로 null 일 수 있다.
+    limit: lastLimit(),
     // 준비가 끝났는가 — 끝나지 않았으면 화면이 «다시» 단추를 세운다.
     prepared: prepared(p),
   };

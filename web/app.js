@@ -99,8 +99,33 @@ function since(t) {
   return Math.floor(min / 60) + '시간 ' + (min % 60) + '분';
 }
 
+// 풀리는 시각 — 그 날 안이면 시·분만, 넘으면 날짜까지.
+function atTime(sec) {
+  if (!sec) return '';
+  const d = new Date(sec * 1000);
+  const two = (n) => String(n).padStart(2, '0');
+  const today = d.toDateString() === new Date().toDateString();
+  return (today ? '' : (d.getMonth() + 1) + '/' + d.getDate() + ' ') + two(d.getHours()) + ':' + two(d.getMinutes());
+}
+
+// 남은 양 — 숫자로만 이른다(진행 막대는 두지 않는다).
+function limitSay(L) {
+  if (!L) return '';
+  const w = L.unifiedWindows || {};
+  const pct = (x) => (x && typeof x.utilization === 'number' ? Math.round(x.utilization * 100) + '%' : '');
+  const five = pct(w.five_hour);
+  const week = pct(w.seven_day);
+  return [five ? '5시간 ' + five : '', week ? '주간 ' + week : ''].filter((s) => s).join(' · ');
+}
+
 // 작업 한 줄이 말하는 것 — 그리기와 초침이 같은 글을 쓰도록 한 자리에 둔다.
 function jobLine(j) {
+  // 한도에 닿아 물음이 매달린 자리 — 무엇이 닫혔고 언제 풀리는지 이른다.
+  if (j.ask) {
+    const what = j.ask.reason === 'quota-week' ? '주간 한도' : '구독 한도';
+    const when = atTime(j.ask.resetsAt);
+    return what + (when ? ' · ' + when + ' 에 풀림' : '');
+  }
   if (j.status === 'running') return (j.step || '진행 중') + ' · ' + since(j.stepAt || j.startedAt);
   if (j.status === 'paused') return '멈춤' + (j.step ? ' · ' + j.step : '');
   if (j.status === 'done') return '완료';
@@ -266,13 +291,23 @@ function jobRow(j) {
     h('div', { class: 'job-name', text: j.title }),
     h('div', { class: 'job-step' + (j.status === 'failed' ? ' fail' : ''), id: 'jstep-' + j.id, text: jobLine(j) }),
     h('div', { class: 'job-acts' },
-      // 중지는 두지 않는다 — 삭제가 멈추고 치운다(사용자 지시).
-      j.status === 'running' || j.status === 'paused'
-        ? h('button', {
-          text: j.status === 'paused' ? '이어 하기' : '일시중지',
-          onclick: (e) => { stop(e); api(j.status === 'paused' ? 'job.resume' : 'job.pause', { id: j.id }); },
-        })
-        : null,
+      // 한도에 닿았으면 «무엇으로 이어갈까»를 고른다. 그만둘 길은 삭제가 이미 맡고 있다.
+      // API 키가 없으면 그 갈래를 세우지 않는다 — 고를 수 없는 것을 보여 주지 않는다(키는 설정에서 넣는다).
+      j.ask
+        ? [
+          h('button', { text: '기다렸다 잇기', onclick: (e) => { stop(e); api('job.answer', { id: j.id, choice: 'wait' }); } }),
+          // 굳은 값이 아니라 «지금» 키가 있는가를 본다 — 한도에 닿은 뒤 설정에서 키를 넣을 수 있다.
+          S.project && S.project.auth && S.project.auth.hasKey
+            ? h('button', { text: 'API로', onclick: (e) => { stop(e); api('job.answer', { id: j.id, choice: 'api' }); } })
+            : null,
+        ]
+        // 중지는 두지 않는다 — 삭제가 멈추고 치운다(사용자 지시).
+        : j.status === 'running' || j.status === 'paused'
+          ? h('button', {
+            text: j.status === 'paused' ? '이어 하기' : '일시중지',
+            onclick: (e) => { stop(e); api(j.status === 'paused' ? 'job.resume' : 'job.pause', { id: j.id }); },
+          })
+          : null,
       h('button', { text: '삭제', onclick: (e) => { stop(e); api('job.remove', { id: j.id }); } })));
 }
 
@@ -463,6 +498,24 @@ function settings() {
     h('div', null,
       h('div', { class: 'lab', text: '모델' }),
       modelRow(p.models, p.model, (m) => api('project.spec', { model: m }))),
+    // 무엇으로 돈이 나가는가 — 구독인지 API 키인지. 사람이 고른다(사용자 지시, 2026-09-22).
+    // 「구독으로 돕니다」라고 말하면서 물려받은 환경 변수 때문에 말없이 종량 과금되면 안 된다.
+    h('div', null,
+      h('div', { class: 'lab', text: '무엇으로' }),
+      authRow(p.auth),
+      h('div', { class: 'line', style: 'margin-top:8px' },
+        textbox('set-key', 'API 키', '', {
+          onblur: async () => {
+            const v = String(S.typed['set-key'] || '').trim();
+            if (!v) return;
+            clearTyped('set-key');
+            await api('auth.write', { apiKey: v });
+          },
+        }),
+        p.auth && p.auth.hasKey
+          ? h('button', { class: 'btn-text red', text: '키 지우기', onclick: () => api('auth.write', { apiKey: '' }) })
+          : null),
+      p.limit ? h('div', { class: 'when', text: limitSay(p.limit) }) : null),
     // 누름을 click 이 아니라 mousedown 으로 받는다 — 위 칸에 글을 치던 중이면 click 이 오기 전에 다시 그려진다.
     h('div', { class: 'line' },
       h('div', { class: 'lab', style: 'margin:0', text: '계량어 금지' }),
@@ -490,6 +543,23 @@ function openAgent(id, back) { S.open = { type: 'agent', id, model: null, back: 
 // 쓸 모델 고르기 — 하나만 켜지는 네모. 프로젝트에도, 사람마다에도 같은 꼴로 쓴다.
 // 누름을 click 이 아니라 mousedown 으로 받는다: 바로 위 칸에 글을 치던 중이면 click 이 오기 전에
 // blur → 저장 → 다시 그리기가 지나가며 이 네모가 갈려 버려 첫 누름이 먹히지 않는다.
+// 무엇으로 도는가 — 셋 가운데 하나. modelRow 와 같은 결로 둔다.
+//   그대로 : 그 PC 의 환경이 정하는 대로(손대지 않는다)
+//   구독   : 물려받은 API 키를 지워 구독으로만 돌린다
+//   API 키 : 담아 둔 키로 돈다
+const AUTH_SAY = { auto: '그대로', sub: '구독', api: 'API 키' };
+
+function authRow(a) {
+  const cur = (a && a.mode) || 'auto';
+  const list = (a && a.modes) || ['auto', 'sub', 'api'];
+  return h('div', { class: 'line' }, list.map((m) => h('div', {
+    class: 'line', style: 'gap:6px;cursor:pointer',
+    onmousedown: () => api('auth.write', { mode: m }),
+  },
+  h('button', { class: 'ck' + (cur === m ? ' on' : '') }),
+  h('span', { text: AUTH_SAY[m] || m }))));
+}
+
 function modelRow(list, cur, pick) {
   return h('div', { class: 'line' }, (list || []).map((m) => h('div', {
     class: 'line', style: 'gap:6px;cursor:pointer',

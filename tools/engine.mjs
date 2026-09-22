@@ -4,6 +4,7 @@
 import { BUILTIN } from './prompts.mjs';
 import { buildSystem, buildUser, cleanResponse } from './assemble.mjs';
 import { runClaudeCall } from './call.mjs';
+import * as auth from './auth.mjs';
 import * as state from './state.mjs';
 import * as model from './model.mjs';
 
@@ -150,6 +151,37 @@ export async function callWithRetry(args) {
   return callOnce(args);
 }
 
+// 한도에 닿으면 죽이지 않고 물어본다(사용자 지시, 2026-09-22).
+//
+// 「구독 사용량을 모두 사용하고 나면 api로 전환할지, 클로드 크레딧을 구매해 이어갈지를 물어보는 기능」
+//
+// 고를 것 셋:
+//   wait : 그 자리에서 다시 부른다. 풀렸으면 이어지고 아직이면 또 묻는다.
+//          (크레딧을 사 오는 길도 이것이다 — 사 오면 구독으로 그냥 이어진다.)
+//   api  : 담아 둔 API 키로 갈아탄다. **돈이 나가는 결정이므로 사람이 눌러야 한다.**
+//   stop : 거기서 끝낸다.
+//
+// «그 자리에서» 다시 부르는 것이 값이다 — 합평회는 사람 수 + 1 번 부르는데,
+// 가운데서 소진되어도 앞서 받은 합평들이 호출하는 쪽의 said[] 에 그대로 남는다.
+// 물음을 기다리는 동안은 문지기에 갇혀 있으므로 헛돌지 않는다.
+export async function callAsking(args, ctx) {
+  for (;;) {
+    const r = await callWithRetry(args);
+    if (r.ok) return r;
+    if (!String(r.reason || '').startsWith('quota')) return r;
+    if (!ctx || typeof ctx.askLimit !== 'function') return r;
+    const choice = await ctx.askLimit({
+      reason: r.reason,
+      resetsAt: (r.limit && r.limit.resetsAt) || 0,
+    });
+    // 키가 없으면 갈아탈 것이 없다 — 화면이 그 단추를 세우지 않지만 여기서도 한 번 더 본다.
+    if (choice === 'api' && auth.canApi()) { auth.write({ mode: 'api' }); continue; }
+    if (choice === 'api') continue;
+    if (choice === 'wait') continue;
+    return r;   // 세웠거나 답이 없다
+  }
+}
+
 // ---------------------------------------------------------------- 손 작업
 
 const KIND_CODE = { doc: 'F-UPDATE', check: 'F-CONTRA', review: 'F-REVIEW' };
@@ -178,7 +210,7 @@ export async function runUpdate(pid, docId, ctx, { modelPick = '' } = {}) {
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   const r = d.kind === 'review' && agentIds.length > 1
     ? await runPanelReview(pid, d, agentIds, common, ctx)
-    : await callWithRetry({ ...common, code: KIND_CODE[d.kind] || 'F-UPDATE', agentIds });
+    : await callAsking({ ...common, code: KIND_CODE[d.kind] || 'F-UPDATE', agentIds }, ctx);
   if (!r.ok) return r;
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
 
@@ -191,14 +223,14 @@ export async function runUpdate(pid, docId, ctx, { modelPick = '' } = {}) {
 async function runPanelReview(pid, d, agentIds, common, ctx) {
   const project = state.get(pid);
   const crew = model.agentsByIds(project, agentIds);
-  if (crew.length < 2) return callWithRetry({ ...common, code: 'F-REVIEW', agentIds });
+  if (crew.length < 2) return callAsking({ ...common, code: 'F-REVIEW', agentIds }, ctx);
 
   const said = [];
   for (const one of crew) {
     if (ctx && ctx.gate) await ctx.gate();
     if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
     if (ctx) ctx.step(d.title + ' — ' + one.name);
-    const r = await callWithRetry({ ...common, code: 'F-REVIEW', agentIds: [one.id] });
+    const r = await callAsking({ ...common, code: 'F-REVIEW', agentIds: [one.id] }, ctx);
     if (!r.ok) return r;
     said.push({ id: '', name: one.name + '의 합평', text: r.text });
   }
@@ -207,7 +239,7 @@ async function runPanelReview(pid, d, agentIds, common, ctx) {
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   if (ctx) ctx.step(d.title + ' — 모으기');
   // 모으는 자리에는 사람을 걸지 않는다 — 누구의 편도 들지 않아야 한다.
-  return callWithRetry({ ...common, code: 'F-MERGE', agentIds: [], extraTargets: said });
+  return callAsking({ ...common, code: 'F-MERGE', agentIds: [], extraTargets: said }, ctx);
 }
 
 // 논의 한 마디 — 작가의 말을 얹고, 답을 받아 얹는다.
@@ -236,10 +268,10 @@ export async function runTalk(pid, threadId, text, ctx, { modelPick = '' } = {})
   const path = model.threadPath(t, askedId);
   const talk = path.map((m) => ({ name: m.role === 'user' ? '작가' : '너', text: m.text }));
 
-  const r = await callWithRetry({
+  const r = await callAsking({
     pid, code: 'F-TALK', refIds: (t.refIds || []).slice(), agentIds: (t.agentIds || []).slice(), talk,
     keepSeat: true, modelPick, signal: ctx && ctx.signal,
-  });
+  }, ctx);
   if (!r.ok) return r;
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   // 답은 «물은 그 말» 밑에 붙는다 — 기다리는 사이 머리가 옮겨 가도 엉뚱한 가지로 새지 않는다.
@@ -266,10 +298,10 @@ export async function runThreadDoc(pid, threadId, request, ctx, { modelPick = ''
   if (ctx) ctx.step(t.title);
   const talk = model.threadPath(t).map((m) => ({ name: m.role === 'user' ? '작가' : '너', text: m.text }));
 
-  const r = await callWithRetry({
+  const r = await callAsking({
     pid, code: 'F-THREADDOC', refIds: (t.refIds || []).slice(), agentIds: (t.agentIds || []).slice(), talk, request,
     keepSeat: true, modelPick, signal: ctx && ctx.signal,
-  });
+  }, ctx);
   if (!r.ok) return r;
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
 

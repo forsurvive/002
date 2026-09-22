@@ -27,6 +27,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveCliDetailed, childEnv } from './claude-cli.mjs';
+import * as auth from './auth.mjs';
 
 const R = resolveCliDetailed();
 export const CLI = R.cli;
@@ -230,7 +231,8 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
     const spFile = join(dir, 'system-prompt.txt');
     writeFileSync(spFile, String(systemPrompt || ''), 'utf8');
     // cwd 를 빈 임시 폴더로 못박는다 — 그 자리의 CLAUDE.md 가 딸려 오지 않게.
-    p = spawn(CLI, buildCallArgs(spFile, model), { env: childEnv(), windowsHide: true, cwd: dir });
+    // 고른 갈래를 따른다 — 구독인지 API 키인지는 사람이 정한다(tools/auth.mjs).
+    p = spawn(CLI, buildCallArgs(spFile, model), { env: childEnv(auth.read()), windowsHide: true, cwd: dir });
     LIVE.add(p);
     try { p.stdin.write(String(prompt), 'utf8'); } catch {}
     try { p.stdin.end(); } catch {}

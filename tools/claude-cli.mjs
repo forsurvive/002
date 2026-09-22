@@ -95,10 +95,27 @@ export function resolveCli() {
   return resolveCliDetailed().cli;
 }
 
-// 더블클릭 실행과 동일한 조건 — 부모가 물려준 CLAUDE_* 제거
-export function childEnv() {
+// 지우지 않는 CLAUDE_* — 클로드가 제 안에 갖춘 «로그인하는 길»이다.
+//
+// 상업 약관이 못박았다: 「The Claude Code binary must not be modified …
+// customers may not remove, disable, or restrict any authentication method built into it」.
+// 브리지를 상품으로 배포하는 순간 이 조항이 걸리므로, 인증에 쓰이는 변수는 통과시킨다.
+// (전에는 CLAUDE_* 를 통째로 지워 CLAUDE_CODE_OAUTH_TOKEN 까지 함께 걷었다.)
+const KEEP_CLAUDE = new Set(['CLAUDE_CODE_OAUTH_TOKEN']);
+
+// 더블클릭 실행과 동일한 조건 — 부모가 물려준 CLAUDE_* 제거(인증 수단은 남긴다).
+//
+// auth 를 주면 «무엇으로 돈이 나가는가»를 사람이 고른 대로 따른다(tools/auth.mjs).
+//   auto : 손대지 않는다. 그 PC 의 환경이 정하는 대로.
+//   sub  : ANTHROPIC_API_KEY 를 지운다 — 「구독으로 돕니다」라고 말하면서 말없이 종량 과금되는 것을 막는다.
+//          (실측: 그 변수가 있으면 apiKeySource 가 none → ANTHROPIC_API_KEY 로 바뀐다.)
+//   api  : 담아 둔 키를 싣는다. 공식 문서: 「In non-interactive mode (-p), the key is always used when present」.
+export function childEnv(auth = null) {
   const e = { ...process.env };
-  for (const k of Object.keys(e)) if (k.startsWith('CLAUDE_')) delete e[k];
+  for (const k of Object.keys(e)) if (k.startsWith('CLAUDE_') && !KEEP_CLAUDE.has(k)) delete e[k];
+  const mode = auth && auth.mode;
+  if (mode === 'api' && auth.apiKey) e.ANTHROPIC_API_KEY = auth.apiKey;
+  else if (mode === 'sub') delete e.ANTHROPIC_API_KEY;
   return e;
 }
 

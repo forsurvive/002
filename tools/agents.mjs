@@ -6,7 +6,7 @@
 import { BUILTIN, AGENT_SLOTS, SLOT_DUTY } from './prompts.mjs';
 import { buildSystem, buildUser, cleanResponse } from './assemble.mjs';
 import { runClaudeCall } from './call.mjs';
-import { promptFor, callWithRetry } from './engine.mjs';
+import { promptFor, callWithRetry, callAsking } from './engine.mjs';
 import * as state from './state.mjs';
 import * as model from './model.mjs';
 
@@ -165,7 +165,7 @@ export async function runStudy(pid, ctx, request = '') {
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   if (ctx) ctx.step(STUDY_TITLE);
 
-  const r = await callWithRetry({ pid, code: 'S02', materials: true, allFinals: true, request, signal: ctx && ctx.signal });
+  const r = await callAsking({ pid, code: 'S02', materials: true, allFinals: true, request, signal: ctx && ctx.signal }, ctx);
   if (!r.ok) return r;
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
 

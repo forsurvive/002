@@ -855,6 +855,102 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
+  // ⑨ 한도에 닿으면 죽이지 않고 물어본다 (사용자 지시, 2026-09-22)
+  // 「구독 사용량을 모두 사용하고 나면 api로 전환할지, 클로드 크레딧을 구매해 이어갈지를 물어보는 기능」
+  const MAT = [{ name: '자', text: '자료 본문' }];
+  const r = await post('project.create', { name: '물음', spec: { form: '소설' }, materials: MAT });
+  await settle(r.pid, 60000);
+  const dc = await post('doc.create', { pid: r.pid, title: '1화' });
+  await post('doc.write', { pid: r.pid, id: dc.id, request: '이어 써라' });
+
+  // 첫 호출은 한도에 걸리고, 그 뒤로는 잘 된다
+  let hits = 0;
+  globalThis.__SE2_MOCK_FN = (a) => {
+    if (a.mockKey !== 'F-UPDATE') return MOCK_FN(a);
+    hits += 1;
+    if (hits === 1) {
+      return { reason: 'quota-session', limit: { status: 'rejected', rateLimitType: 'five_hour', resetsAt: 1790058600 } };
+    }
+    return '한도가 풀린 뒤에 들어온 본문';
+  };
+
+  await post('doc.update', { pid: r.pid, id: dc.id });
+
+  // 물음이 매달릴 때까지 기다린다
+  let ja = null;
+  for (let i = 0; i < 200 && !ja; i++) {
+    const st = await stateOf(r.pid);
+    ja = (st.project.jobs || []).find((j) => j.ask);
+    if (!ja) await sleep(20);
+  }
+  ok('물음이 매달린다', !!ja);
+  eq('실패로 적지 않는다 — 멈춤이다', ja.status, 'paused');
+  eq('어느 창이 닫혔는지 이른다', ja.ask.reason, 'quota-session');
+  eq('풀리는 시각이 온다', ja.ask.resetsAt, 1790058600);
+  ok('물음에는 굳은 «API 가능» 칸을 두지 않는다', !('canApi' in ja.ask));
+  ok('화면이 지금의 auth 를 보고 API 단추를 세운다',
+    readFileSync(join(ROOT, 'web', 'app.js'), 'utf8').includes('S.project.auth.hasKey'));
+  eq('그 자리까지 한 번만 불렀다', hits, 1);
+
+  // 답한다 — 기다렸다가 이어 간다
+  const ans = await post('job.answer', { pid: r.pid, id: ja.id, choice: 'wait' });
+  ok('답이 받아진다', ans.ok);
+  const done = await settle(r.pid, 60000);
+  const j2 = done.jobs.find((j) => j.id === ja.id);
+  eq('이어져서 끝난다', j2.status, 'done');
+  ok('물음이 거둬진다', !j2.ask);
+  eq('그 호출부터 다시 불렀다', hits, 2);
+  const d2 = done.docs.find((d) => d.id === dc.id);
+  eq('글이 들어왔다', d2.body, '한도가 풀린 뒤에 들어온 본문');
+
+  // 남의 pid 로는 답할 수 없다
+  const other = await post('project.create', { name: '남', spec: { form: '소설' }, materials: MAT });
+  await settle(other.pid, 60000);
+  eq('남의 pid 로는 답할 수 없다', (await post('job.answer', { pid: other.pid, id: ja.id, choice: 'wait' })).ok, false);
+
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  await post('project.delete', { pid: r.pid });
+  await post('project.delete', { pid: other.pid });
+}
+
+{
+  // ⑩ 무엇으로 돈이 나가는가 — 사람이 고른다. 키는 화면으로 돌려주지 않는다.
+  const cli = await import('./claude-cli.mjs');
+
+  let a = await post('auth.read');
+  eq('손대지 않는 것이 기본이다', a.auth.mode, 'auto');
+  eq('키는 없다', a.auth.hasKey, false);
+  ok('고를 수 있는 갈래 셋', a.auth.modes.join(',') === 'auto,sub,api');
+
+  a = await post('auth.write', { mode: 'api', apiKey: 'sk-ant-시험-키' });
+  eq('갈래가 바뀐다', a.auth.mode, 'api');
+  eq('키가 들었다고만 이른다', a.auth.hasKey, true);
+  ok('키를 내려 주지 않는다', !JSON.stringify(a).includes('sk-ant-시험-키'));
+  // 상태가 내려 주는 것도 view() 다 — read() 를 쓰면 키가 화면까지 간다
+  ok('상태는 view() 를 쓴다', readFileSync(join(HERE, 'server.mjs'), 'utf8').includes('auth: auth.view()'));
+
+  // childEnv 가 고른 갈래를 따른다
+  const withKey = cli.childEnv({ mode: 'api', apiKey: 'sk-ant-xyz' });
+  eq('api 면 키를 싣는다', withKey.ANTHROPIC_API_KEY, 'sk-ant-xyz');
+  const subOnly = cli.childEnv({ mode: 'sub', apiKey: 'sk-ant-xyz' });
+  ok('sub 면 키를 지운다', !subOnly.ANTHROPIC_API_KEY);
+  ok('auto 면 손대지 않는다', cli.childEnv({ mode: 'auto' }).ANTHROPIC_API_KEY === process.env.ANTHROPIC_API_KEY);
+
+  // 내장 인증 수단은 지우지 않는다 — 상업 약관이 못박은 자리다
+  process.env.CLAUDE_CODE_OAUTH_TOKEN = 'tok-시험';
+  process.env.CLAUDE_SOMETHING_ELSE = '지워야 할 것';
+  const e = cli.childEnv();
+  eq('내장 로그인 수단은 남긴다', e.CLAUDE_CODE_OAUTH_TOKEN, 'tok-시험');
+  ok('그 밖의 CLAUDE_* 는 지운다', !e.CLAUDE_SOMETHING_ELSE);
+  delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  delete process.env.CLAUDE_SOMETHING_ELSE;
+
+  // 뒤에 오는 시험이 흔들리지 않게 되돌린다
+  await post('auth.write', { mode: 'auto', apiKey: '' });
+  eq('되돌렸다', (await post('auth.read')).auth.mode, 'auto');
+}
+
+{
   // ④ 프롬프트를 찾는 순서 — 고친 것 → 즉석 생성본 → 내장
   const eng = await import('./engine.mjs');
   const p = store.blankProject('p_pr', '순서');
@@ -1146,7 +1242,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 일시중지는 자동 집필과 함께 나갔다가 사용자 지시로 돌아왔다(2026-09-19) — 이번에는 모든 작업에.
   for (const back of ['job.pause', 'job.resume']) ok('서버에 «' + back + '» 문이 있다', OP_NAMES.includes(back));
   const app = readFileSync(join(ROOT, 'web', 'app.js'), 'utf8');
-  ok('화면에 자동 집필이 없다', !app.includes('자동 집필') && !app.includes("'auto'"));
+  // 표식을 정확히 잡는다 — 'auto' 홑낱말은 이제 «무엇으로 도는가»의 갈래 이름이라 표식으로 쓸 수 없다(2026-09-22).
+  ok('화면에 자동 집필이 없다', !app.includes('자동 집필') && !app.includes("'auto.") && !app.includes("kind: 'auto'"));
   ok('작업마다 일시중지가 붙는다', app.includes('일시중지') && app.includes('이어 하기') && app.includes("'job.pause'"));
   ok('작업 줄이 «멈춤»을 말한다', app.includes("'멈춤'"));
   ok('중지 단추는 없다', !app.includes("'job.stop'") && !/text: '중지'/.test(app));
