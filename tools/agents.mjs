@@ -6,7 +6,7 @@
 import { BUILTIN, AGENT_SLOTS, SLOT_DUTY } from './prompts.mjs';
 import { buildSystem, buildUser, cleanResponse } from './assemble.mjs';
 import { runClaudeCall } from './call.mjs';
-import { promptFor, callWithRetry, callAsking } from './engine.mjs';
+import { promptFor, callWithRetry, callAsking, promptsMissing } from './engine.mjs';
 import * as state from './state.mjs';
 import * as model from './model.mjs';
 
@@ -81,6 +81,10 @@ export function agentsReady(project) {
 export async function prepareAgents(pid, ctx, request = '') {
   const project = state.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
+  // 판정·짓기는 callOnce 를 지나지 않고 곧장 부른다 — 그래서 같은 문을 여기서 한 번 더 본다.
+  // 안 보면 새 프로젝트마다 빈 자리 프롬프트로 구독을 태우고, 비소설이면 그 빈 것을 작품에 지어 넣는다.
+  const missing = promptsMissing();
+  if (missing) return missing;
   if (building.has(pid)) {
     if (ctx) ctx.step('에이전트 준비');
     return building.get(pid);

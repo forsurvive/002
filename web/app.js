@@ -119,7 +119,6 @@ function limitSay(L) {
 }
 
 // 작업 한 줄이 말하는 것 — 그리기와 초침이 같은 글을 쓰도록 한 자리에 둔다.
-// (상점 단추는 걷었다 — 개인판은 상점에 묶이지 않는다. 사용자 지시, 2026-09-23)
 function jobLine(j) {
   // 한도에 닿아 물음이 매달린 자리 — 무엇이 닫혔고 언제 풀리는지 이른다.
   if (j.ask) {
@@ -1316,6 +1315,5 @@ document.addEventListener('keydown', (e) => {
   else if (S.open) closeLayer();
 });
 
-// 띄운다 — 개인판은 상점을 두드리지 않는다.
 pull(true);
 setInterval(() => pull(false), 1500);

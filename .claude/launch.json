@@ -2,7 +2,7 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "story-engine-bn2",
+      "name": "story-engine-personal",
       "runtimeExecutable": "node",
       "runtimeArgs": ["tools/server.mjs"],
       "port": 8801

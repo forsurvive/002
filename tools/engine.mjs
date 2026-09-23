@@ -1,11 +1,10 @@
 // 호출 하나를 만드는 자리 — 프롬프트를 고르고, 구획을 채우고, 클로드를 부르고, 결과를 문서에 넣는다.
 // 자동 집필과 손 작업이 모두 이 문을 지난다.
 
-import { BUILTIN } from './prompts.mjs';
+import { BUILTIN, haveBrain } from './prompts.mjs';
 import { buildSystem, buildUser, cleanResponse } from './assemble.mjs';
 import { runClaudeCall } from './call.mjs';
 import * as auth from './auth.mjs';
-import * as cloud from './cloud.mjs';
 import * as state from './state.mjs';
 import * as model from './model.mjs';
 
@@ -70,6 +69,15 @@ export function materialsByIds(project, ids = []) {
   return out;
 }
 
+// 일하는 법(tools/prompts.data.json)을 읽지 못했으면 부르지 않는다.
+// 그 파일 없이 부르면 구독만 태우고 빈 자리로 쓴 글이 나온다 — 폴더를 옮기다 빠뜨린 때가 그렇다.
+// **부르는 문마다 이 하나를 본다** — callOnce 도, 그 문을 지나지 않고 곧장 부르는 에이전트 준비도.
+// 막을 까닭이 없으면 null, 있으면 그대로 돌려줄 실패 한 벌.
+export function promptsMissing() {
+  if (haveBrain()) return null;
+  return { ok: false, error: '내장 프롬프트를 읽지 못했습니다 — 폴더를 통째로 다시 옮겨 주십시오', reason: 'prompts' };
+}
+
 /**
  * 호출 하나. 돌려주는 값: { ok, text, error }
  * refIds/targetIds 는 문서 id. finals 를 따로 넘기면 그것을 쓰고, 아니면 고른 참조 중 확정본을 옮긴다.
@@ -80,11 +88,9 @@ export async function callOnce({
   signal = null, noCount = null, finalFirst = false, keepSeat = false,
   extraTargets = [], modelPick = '',
 }) {
-  // 상점에 이었다면 구독이 살아 있어야 새로 부른다.
-  // **잠기는 것은 여기뿐이다** — 읽기·내보내기·되짚기는 이 문을 지나지 않는다.
-  // 잇지 않은 프로그램은 늘 통과한다(상점을 붙이기 전의 쓰임을 막지 않는다).
-  const may = cloud.mayCall();
-  if (!may.ok) return { ok: false, error: may.why, reason: 'sub' };
+  // **막히는 것은 새 호출뿐이다** — 읽기·내보내기·되짚기는 이 문을 지나지 않는다.
+  const missing = promptsMissing();
+  if (missing) return missing;
 
   const project = state.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };

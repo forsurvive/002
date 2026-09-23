@@ -1,0 +1,4 @@
+# 줄 끝을 못박는다 — 어느 PC 에서 받아도(autocrlf 가 무엇이든) 같은 바이트가 나오게.
+# 더블클릭하는 .cmd 만 CRLF 다: cmd.exe 는 LF 뿐인 배치 파일에서 괄호 묶음과 goto 를 잘못 읽는다.
+* text=auto eol=lf
+*.cmd text eol=crlf

@@ -1,5 +1,5 @@
 // Claude Code 실행기 호출 공용 모듈 (구독 모드의 토대)
-// 브리지와 엔진이 함께 쓴다. 직접 실행하면 탐색 결과를 진단용으로 출력한다.
+// 실행기(launch.mjs)와 호출(call.mjs)이 함께 쓴다. 직접 실행하면 탐색 결과를 진단용으로 출력한다.
 //
 // 실측 근거(2026-07-25):
 //   · 데스크톱 앱은 Microsoft Store(MSIX) 패키지라 **폴더 가상화**가 걸린다.
@@ -99,7 +99,7 @@ export function resolveCli() {
 //
 // 상업 약관이 못박았다: 「The Claude Code binary must not be modified …
 // customers may not remove, disable, or restrict any authentication method built into it」.
-// 브리지를 상품으로 배포하는 순간 이 조항이 걸리므로, 인증에 쓰이는 변수는 통과시킨다.
+// 그래서 인증에 쓰이는 변수는 통과시킨다.
 // (전에는 CLAUDE_* 를 통째로 지워 CLAUDE_CODE_OAUTH_TOKEN 까지 함께 걷었다.)
 const KEEP_CLAUDE = new Set(['CLAUDE_CODE_OAUTH_TOKEN']);
 
@@ -143,6 +143,31 @@ export function runCli(cli, args, { input, timeoutMs = 600000, onStdout } = {}) 
 export async function authStatus(cli) {
   const r = await runCli(cli, ['auth', 'status', '--text'], { timeoutMs: 60000 });
   return { loggedIn: r.code === 0, detail: (r.out + r.err).trim() };
+}
+
+// Claude Code 가 없는 PC 에서 까는 길 — 받는 곳은 앤트로픽의 공식 자리 하나뿐이다.
+export const INSTALL_URL = process.platform === 'win32' ? 'https://claude.ai/install.cmd' : 'https://claude.ai/install.sh';
+
+// 설치 한 줄을 셸에 **손대지 않고** 넘긴다.
+// 전에는 spawn('cmd', ['/c', 한 줄]) 이었다 — 노드가 줄 전체를 따옴표로 싸면서 안쪽 따옴표를 \" 로 바꾸는데
+// cmd 는 \" 를 모른다. curl 이 **따옴표가 박힌 파일 이름**을 받아 쓰지 못했고(curl (23)),
+// 설치가 한 번도 되지 않은 채 「실행기를 찾지 못했습니다」로 끝났다. USB 로 옮겨 간 PC 의 첫날이 거기서 멎었다.
+// 노드가 shell:true 일 때 스스로 하는 꼴 그대로 — /d /s /c "…" 를 windowsVerbatimArguments 로.
+// url·env 를 받는 것은 시험이 망 없이 가짜 설치기로 이 줄을 **실제로 돌려** 보게 하려는 것이다.
+export function installClaudeCode({ url = INSTALL_URL, env = process.env, stdio = 'inherit' } = {}) {
+  return new Promise((resolve) => {
+    let p;
+    try {
+      if (process.platform === 'win32') {
+        const line = 'curl -fsSL "' + url + '" -o "%TEMP%\\cc-install.cmd" && "%TEMP%\\cc-install.cmd" && del "%TEMP%\\cc-install.cmd"';
+        p = spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', '"' + line + '"'], { stdio, env, windowsVerbatimArguments: true });
+      } else {
+        p = spawn('bash', ['-c', 'curl -fsSL "' + url + '" | bash'], { stdio, env });
+      }
+    } catch { return resolve(-1); }
+    p.on('error', () => resolve(-1));
+    p.on('close', (c) => resolve(c == null ? -1 : c));
+  });
 }
 
 // 직접 실행 시: 탐색 진단 출력 (ASCII만 — 콘솔 코드페이지 문제 회피, D-024)

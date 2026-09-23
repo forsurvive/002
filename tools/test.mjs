@@ -1,10 +1,13 @@
 // 시험 — SE2_MOCK=1 node tools/test.mjs
 // 순수 로직 + 실제 서버(같은 프로세스에서 띄운다) + 화면-서버 배선 맞춤.
 
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, dirname, basename } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { createServer, request as httpRequest } from 'node:http';
+import { connect } from 'node:net';
 
 process.env.SE2_MOCK = '1';
 const BOX = mkdtempSync(join(tmpdir(), 'se2-test-'));
@@ -12,6 +15,10 @@ process.env.SE2_DATA_DIR = BOX;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = dirname(HERE);
+
+// 소스를 읽어 무늬를 맞춰 볼 때는 줄 끝을 LF 로 편다.
+// 옮기다가(USB·다른 PC 의 git 설정) 줄 끝이 CRLF 로 바뀌어도 시험이 코드 대신 줄 끝을 재지 않게.
+const src = (file) => readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
 
 let pass = 0;
 const fails = [];
@@ -667,7 +674,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 
   // 남의 것이 딸려 오지 않게 — 실측으로 정한 깃발 둘(2026-09-22).
   // `--tools ''` 는 내장 도구만 끈다. 이것 없이는 MCP 커넥터의 도구 열아홉(Gmail·드라이브 포함)이 실렸다.
-  const callSrc = readFileSync(join(HERE, 'call.mjs'), 'utf8');
+  const callSrc = src(join(HERE, 'call.mjs'));
   ok('커넥터를 걷는 깃발이 선다', plain.includes('--strict-mcp-config'));
   ok('설정 자리를 걷는 깃발이 선다',
     plain.includes('--setting-sources') && plain[plain.indexOf('--setting-sources') + 1] === '');
@@ -856,30 +863,164 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 
 {
   // ⑧-2 **개인판은 상점에 묶이지 않는다** (사용자 지시, 2026-09-23)
-  // 「내가 이 pc에서 사용할 버전은 구독 사용량 소모 버전이어야 한다」 — 파는 쪽은 웹으로 옮겨 갔고
-  // 상점은 이 판의 열쇠를 더 내주지 않는다. 받아 둔 열쇠가 지나도 새 호출이 잠기면 안 된다.
-  const cloud = await import('./cloud.mjs');
-  cloud.disconnect();
-  ok('잇지 않았어도 부른다', cloud.mayCall().ok);
-  cloud.linkWrite({ site: 'https://가게', token: 'tok', license: '' });
-  ok('**이어 둔 채 열쇠가 없어도 부른다**', cloud.mayCall().ok);
-  cloud.linkWrite({ license: 'AAAA.BBBB' });
-  ok('**열쇠가 망가져도 부른다**', cloud.mayCall().ok);
-  cloud.disconnect();
-  const srv = readFileSync(join(HERE, 'server.mjs'), 'utf8');
-  ok('띄울 때 상점을 두드리지 않는다', !srv.includes('cloud.beat()'));
-  const app = readFileSync(join(ROOT, 'web', 'app.js'), 'utf8');
+  // 「내가 이 pc에서 사용할 버전은 구독 사용량 소모 버전이어야 한다」 — 상점·잇기·열쇠·설치기를 이 폴더에서 걷었다.
+  // 조각이 하나라도 남으면 그것이 언젠가 새 호출을 까닭 없이 잠그거나, 닿지 않는 곳을 두드린다.
+  ok('상점 모듈이 없다', !existsSync(join(HERE, 'cloud.mjs')));
+  ok('상점 설치기 모듈이 없다', !existsSync(join(HERE, 'first.mjs')));
+  const mods = [
+    ...readdirSync(HERE).filter((f) => f.endsWith('.mjs') && f !== 'test.mjs').map((f) => join(HERE, f)),
+    ...readdirSync(join(ROOT, 'web')).filter((f) => f.endsWith('.js')).map((f) => join(ROOT, 'web', f)),
+  ];
+  const stillCalls = mods.filter((f) => /\b(cloud|first)\.mjs\b/.test(src(f))).map((f) => basename(f));
+  ok('**어느 모듈도 상점 모듈을 부르지 않는다**', stillCalls.length === 0, stillCalls.join(' '));
+  const cloudOps = OP_NAMES.filter((n) => n.startsWith('cloud.'));
+  ok('서버에 상점 문이 없다', cloudOps.length === 0, cloudOps.join(' '));
+  const srv = src(join(HERE, 'server.mjs'));
+  ok('열쇠를 받던 길이 코드에 없다', !srv.includes("'/link'"));
+  eq('열쇠를 받던 길(/link)은 없는 문이다', (await fetch(base + '/link?token=x', { redirect: 'manual' })).status, 404);
+  const home = await (await fetch(base + '/api/state')).json();
+  ok('홈 상태에 상점 칸이 없다', home.ok && Array.isArray(home.projects) && !('cloud' in home));
+  const hp = await post('project.create', { name: '상점 없음', spec: { form: '소설' }, materials: [{ name: '자', text: '자료' }] });
+  await settle(hp.pid, 60000);
+  ok('작품 상태에도 상점 칸이 없다', !('cloud' in (await stateOf(hp.pid)).project));
+  await post('project.delete', { pid: hp.pid });
+
+  const app = src(join(ROOT, 'web', 'app.js'));
+  ok('화면이 상점 문을 부르지 않는다', !/api\('cloud\./.test(app) && !app.includes('S.cloud'));
   ok('홈에 구독하기·상점 단추가 없다', !app.includes('function shopButton') && !app.includes('shopButton()'));
   ok('상점에 이어졌다는 줄이 없다', !app.includes('function shopLine') && !app.includes('shopLine()'));
-  ok('띄울 때 상점을 부르지 않는다', !app.includes("api('cloud.check')"));
+  const screens = [app, src(join(ROOT, 'web', 'tour.js')), src(join(ROOT, 'web', 'tour.demo.js')),
+    src(join(ROOT, 'web', 'index.html')), src(join(ROOT, 'web', 'style.css'))].join('\n');
+  const leftover = (screens.match(/상점|구독하기|라이선스|브리지|text: '잇기'/g) || []);
+  ok('화면에 상점·잇기·라이선스·브리지가 남아 있지 않다', leftover.length === 0, leftover.join(' '));
+  // 한도에 닿았을 때의 [기다렸다 잇기] 는 상점과 무관하다 — 그대로 남는다.
+  ok('한도 물음의 «기다렸다 잇기»는 남는다', app.includes("text: '기다렸다 잇기'"));
+  const launchSrc = src(join(HERE, 'launch.mjs'));
+  ok('띄우는 창에 상점 줄이 없다', !/'\s*(Store|Account|Subscription)\s*:/.test(launchSrc) && !/licen[cs]e/i.test(launchSrc) && !launchSrc.includes('상점'));
+
+  // 관리자 페이지는 없다 — 개인판은 사장님 혼자 쓴다
+  ok('관리자 문이 없다', !OP_NAMES.some((n) => /^admin\b/.test(n)) && !/\/admin/.test(srv));
+  eq('/admin 은 없는 쪽이다', (await fetch(base + '/admin')).status, 404);
+  ok('관리자 화면 파일이 없다', !readdirSync(join(ROOT, 'web')).some((f) => /admin/i.test(f)));
+
+  // 일하는 법은 이 폴더의 한 파일에서만 온다 — 내려받아 두던 자리(data/brain.json)는 걷었다
+  const prSrc = src(join(HERE, 'prompts.mjs'));
+  ok('일하는 법을 내려받아 두는 자리가 없다', !prSrc.includes('brain.json') && !('saveBrain' in prompts) && !('BRAIN_FILE' in prompts));
+  eq('일하는 법은 이 폴더의 한 파일이다', prompts.SRC_FILE(), join(HERE, 'prompts.data.json'));
+  ok('prompts 는 data\\ 를 보지 않는다', !prSrc.includes('DATA_DIR'));
+
+  // 그 파일을 못 읽었으면 부르지 않는다 — 구독을 태우고 빈 자리의 글을 받느니 까닭을 이른다
+  const engM = await import('./engine.mjs');
+  const keepBuiltin = { ...prompts.BUILTIN };
+  for (const k of Object.keys(prompts.BUILTIN)) delete prompts.BUILTIN[k];
+  let calledWithout = 0;
+  globalThis.__SE2_MOCK_FN = (a) => { calledWithout += 1; return MOCK_FN(a); };
+  const without = await engM.callOnce({ pid: 'p_none', code: 'F-UPDATE', request: '써라' });
+  Object.assign(prompts.BUILTIN, keepBuiltin);
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  ok('**일하는 법이 없으면 부르지 않는다**', !without.ok && calledWithout === 0);
+  eq('그 갈래', without.reason, 'prompts');
+  ok('할 일을 사람 말로 이른다', String(without.error || '').includes('폴더를 통째로'));
+  ok('다시 채워 놓았다', prompts.haveBrain() && Object.keys(prompts.BUILTIN).length === 9);
+  ok('엔진은 상점 대신 일하는 법을 본다', /export function promptsMissing\(\) \{\s*if \(haveBrain\(\)\) return null;/.test(src(join(HERE, 'engine.mjs'))));
+
+  // 에이전트 준비도 같은 문을 본다 — 판정(F-KIND)·짓기(F-AGENT)는 callOnce 를 지나지 않고 곧장 부르기 때문이다.
+  // 전에는 이 길이 비어 있었다: 폴더를 반쯤 옮긴 PC 에서 새 작품을 만들 때마다 빈 자리 프롬프트로 구독이 나갔다.
+  for (const k of Object.keys(prompts.BUILTIN)) delete prompts.BUILTIN[k];
+  let prepCalls = 0;
+  globalThis.__SE2_MOCK_FN = (a) => { prepCalls += 1; return MOCK_FN(a); };
+  const keepKind = KIND;
+  KIND = '에세이';   // 비소설이면 판정 뒤에 일곱 자리를 더 짓는다 — 가장 많이 부르는 길로 잰다
+  const np = await post('project.create', { name: '일하는 법 없음', spec: { form: '에세이' }, materials: [{ name: '자', text: '자료' }] });
+  const npState = await settle(np.pid, 60000);
+  const direct = await agents.prepareAgents(np.pid, null);
+  const npAfter = (await stateOf(np.pid)).project;
+  Object.assign(prompts.BUILTIN, keepBuiltin);
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  KIND = keepKind;
+  const npJob = ((npState && npState.jobs) || []).find((j) => j.kind === 'agents');
+  eq('**일하는 법이 없으면 에이전트 준비도 부르지 않는다**', prepCalls, 0);
+  ok('준비 작업이 실패로 선다', !!npJob && npJob.status === 'failed', JSON.stringify(npJob && { status: npJob.status, error: npJob.error }));
+  ok('준비 작업도 할 일을 사람 말로 이른다', !!npJob && String(npJob.error || '').includes('폴더를 통째로'));
+  eq('곧장 불러도 같은 갈래', direct.reason, 'prompts');
+  eq('빈 판정을 작품에 남기지 않는다', npAfter.agentKind, '');
+  ok('빈 자리 프롬프트를 작품에 지어 넣지 않는다', npAfter.prompts.every((x) => !x.made));
+  ok('화면이 [에이전트 준비 다시] 를 세운다', npAfter.prepared === false);
+  ok('에이전트 준비도 같은 문을 본다', /const missing = promptsMissing\(\);\s*if \(missing\) return missing;/.test(src(join(HERE, 'agents.mjs'))));
+  await post('project.delete', { pid: np.pid });
+
   // 부르는 길은 그대로 구독(claude CLI)이다
-  const callSrc = readFileSync(join(HERE, 'call.mjs'), 'utf8');
+  const callSrc = src(join(HERE, 'call.mjs'));
   ok('**부르는 길은 클로드 실행기 그대로다**', callSrc.includes("spawn(CLI, buildCallArgs(spFile, model)"));
+  ok('처음 한 번 로그인과 설치는 그대로다', launchSrc.includes("'auth', 'login', '--claudeai'") && launchSrc.includes('await installClaudeCode()')
+    && src(join(HERE, 'claude-cli.mjs')).includes("'https://claude.ai/install.cmd'"));
   // 지어진 에이전트를 고칠 수 있다(사용자 지시, 2026-09-22)
   const lst = app.slice(app.indexOf('function agentList'), app.indexOf('async function openPrompt'));
   ok('지어진 자리가 있으면 펴 둔다', lst.includes("S.fold['prompts'] === undefined ? made"));
   ok('이 작품의 것이라고 이른다', lst.includes('이 작품의 에이전트'));
   ok('고칠 수 있다고 이른다', lst.includes('눌러서 고치십시오'));
+}
+
+{
+  // ⑧-3 **남의 페이지가 이 자리를 두드리지 못한다**
+  // 브라우저는 아무 페이지에서나 127.0.0.1:8801 로 요청을 쏠 수 있다. text/plain 본문은 사전 확인 없이 날아간다.
+  // 실측(2026-09-23): 남의 Origin 을 단 text/plain 한 방에 auth.json 이 남의 키로 바뀌었다.
+  // 폰 중계기의 꼴(Host 127.0.0.1 · application/json · Origin 없음)은 그대로 붙어야 한다.
+  const raw = (path, { method = 'GET', headers = {}, body = '' } = {}) => new Promise((resolve) => {
+    const rq = httpRequest({ host: '127.0.0.1', port: PORT, path, method, headers }, (res) => {
+      let s = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { s += c; });
+      res.on('end', () => resolve({ status: res.statusCode, text: s }));
+    });
+    rq.on('error', (e) => resolve({ status: -1, text: String(e.message || e) }));
+    rq.end(body);
+  });
+  const H = '127.0.0.1:' + PORT;
+  const attack = JSON.stringify({ op: 'auth.write', mode: 'api', apiKey: 'sk-ant-attacker' });
+  const authNow = async () => JSON.stringify((await post('auth.read')).auth);
+  const before = await authNow();
+
+  let r = await raw('/api', { method: 'POST', headers: { host: H, 'content-type': 'text/plain', origin: 'https://evil.example' }, body: attack });
+  eq('남의 Origin 은 받지 않는다', r.status, 403);
+  r = await raw('/api', { method: 'POST', headers: { host: H, 'content-type': 'text/plain;charset=UTF-8' }, body: attack });
+  eq('text/plain 본문은 받지 않는다', r.status, 415);
+  r = await raw('/api', { method: 'POST', headers: { host: H, 'content-type': 'application/json', origin: 'https://evil.example' }, body: attack });
+  eq('JSON 이어도 남의 Origin 이면 받지 않는다', r.status, 403);
+  r = await raw('/api', { method: 'POST', headers: { host: H, 'content-type': 'application/json', origin: 'null' }, body: attack });
+  eq('출처를 감춘 요청(Origin: null)도 받지 않는다', r.status, 403);
+  r = await raw('/api', { method: 'POST', headers: { host: H, 'content-type': 'application/json', origin: 'http://127.0.0.1:' + (PORT + 1) }, body: attack });
+  eq('같은 PC 의 다른 자리(포트)에서 온 것도 받지 않는다', r.status, 403);
+  r = await raw('/api', { method: 'POST', headers: { host: 'evil.example:' + PORT, 'content-type': 'application/json' }, body: attack });
+  eq('남의 Host 로 온 조작은 받지 않는다', r.status, 403);
+  eq('**그 어느 것도 돈 나가는 길을 바꾸지 못했다**', await authNow(), before);
+
+  r = await raw('/api/state', { headers: { host: 'evil.example:' + PORT } });
+  eq('남의 Host 로는 원고를 읽지 못한다(DNS 재바인딩)', r.status, 403);
+  ok('거절에 원고가 실려 나가지 않는다', !r.text.includes('projects'));
+  eq('남의 Host 로는 화면도 내주지 않는다', (await raw('/', { headers: { host: 'evil.example' } })).status, 403);
+  eq('남의 Host 로는 내려받기도 없다', (await raw('/api/download?pid=x&kind=doc&id=y', { headers: { host: 'evil.example:' + PORT } })).status, 403);
+  // Host 없이 온 요청(HTTP/1.0) — 노드 http 는 막지 않는다. 문지기가 막는다.
+  const noHost = await new Promise((resolve) => {
+    let s = '';
+    const sock = connect(PORT, '127.0.0.1', () => sock.write('GET /api/state HTTP/1.0\r\n\r\n'));
+    sock.setEncoding('utf8');
+    sock.on('data', (c) => { s += c; });
+    sock.on('end', () => resolve(s));
+    sock.on('error', () => resolve(s));
+  });
+  ok('Host 없는 요청도 받지 않는다', /^HTTP\/1\.\d 403/.test(noHost), noHost.split('\r\n')[0]);
+
+  // 받아야 할 것은 받는다
+  r = await raw('/api', { method: 'POST', headers: { host: H, 'content-type': 'application/json' }, body: JSON.stringify({ op: 'project.list' }) });
+  ok('**폰 중계기의 꼴은 그대로 붙는다**', r.status === 200 && JSON.parse(r.text).ok === true, r.status + ' ' + r.text.slice(0, 80));
+  r = await raw('/api', { method: 'POST', headers: { host: H, 'content-type': 'application/json; charset=utf-8', origin: 'http://' + H }, body: JSON.stringify({ op: 'project.list' }) });
+  ok('제 화면(같은 자리의 Origin)은 받는다', r.status === 200 && JSON.parse(r.text).ok === true, String(r.status));
+  r = await raw('/api', { method: 'POST', headers: { host: 'localhost:' + PORT, 'content-type': 'application/json', origin: 'http://localhost:' + PORT }, body: JSON.stringify({ op: 'project.list' }) });
+  ok('localhost 로 연 화면도 받는다', r.status === 200 && JSON.parse(r.text).ok === true, String(r.status));
+  eq('localhost 로 연 화면은 상태를 읽는다', (await raw('/api/state', { headers: { host: 'localhost:' + PORT } })).status, 200);
+  eq('제 화면 파일은 내준다', (await raw('/', { headers: { host: H } })).status, 200);
+  ok('화면은 JSON 으로 부른다', src(join(ROOT, 'web', 'app.js')).includes("method: 'POST', headers: { 'content-type': 'application/json' }"));
 }
 
 {
@@ -917,7 +1058,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('풀리는 시각이 온다', ja.ask.resetsAt, 1790058600);
   ok('물음에는 굳은 «API 가능» 칸을 두지 않는다', !('canApi' in ja.ask));
   ok('화면이 지금의 auth 를 보고 API 단추를 세운다',
-    readFileSync(join(ROOT, 'web', 'app.js'), 'utf8').includes('S.project.auth.hasKey'));
+    src(join(ROOT, 'web', 'app.js')).includes('S.project.auth.hasKey'));
   eq('그 자리까지 한 번만 불렀다', hits, 1);
 
   // 답한다 — 기다렸다가 이어 간다
@@ -955,7 +1096,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('키가 들었다고만 이른다', a.auth.hasKey, true);
   ok('키를 내려 주지 않는다', !JSON.stringify(a).includes('sk-ant-시험-키'));
   // 상태가 내려 주는 것도 view() 다 — read() 를 쓰면 키가 화면까지 간다
-  ok('상태는 view() 를 쓴다', readFileSync(join(HERE, 'server.mjs'), 'utf8').includes('auth: auth.view()'));
+  ok('상태는 view() 를 쓴다', src(join(HERE, 'server.mjs')).includes('auth: auth.view()'));
 
   // childEnv 가 고른 갈래를 따른다
   const withKey = cli.childEnv({ mode: 'api', apiKey: 'sk-ant-xyz' });
@@ -1269,7 +1410,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   }
   // 일시중지는 자동 집필과 함께 나갔다가 사용자 지시로 돌아왔다(2026-09-19) — 이번에는 모든 작업에.
   for (const back of ['job.pause', 'job.resume']) ok('서버에 «' + back + '» 문이 있다', OP_NAMES.includes(back));
-  const app = readFileSync(join(ROOT, 'web', 'app.js'), 'utf8');
+  const app = src(join(ROOT, 'web', 'app.js'));
   // 표식을 정확히 잡는다 — 'auto' 홑낱말은 이제 «무엇으로 도는가»의 갈래 이름이라 표식으로 쓸 수 없다(2026-09-22).
   ok('화면에 자동 집필이 없다', !app.includes('자동 집필') && !app.includes("'auto.") && !app.includes("kind: 'auto'"));
   ok('작업마다 일시중지가 붙는다', app.includes('일시중지') && app.includes('이어 하기') && app.includes("'job.pause'"));
@@ -1288,12 +1429,12 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('제어 자리는 짓지 않는다', prompts.CONTROL_CODES.every((c) => !prompts.AGENT_SLOTS.includes(c)));
   // 옛 스토리 작법 프롬프트는 흔적까지 걷었다(사용자 지시, 2026-09-20).
   // 작법서 — 글은 걷었고 그릇만 남겼다(사용자 지시, 2026-09-22).
-  // 남의 책 요약본을 파는 물건에 실으면 저작권 침해가 된다. 집필의 잣대는
+  // 남의 책 요약본을 프로그램에 실어 두지 않는다(저작권). 집필의 잣대는
   // 프로젝트를 만들 때 지어지는 에이전트 프롬프트가 든다.
   ok('기본 작법서를 두지 않는다', books.bookList().length === 0);
   ok('없는 이름에는 빈 글', books.bookText('없는 책') === '');
   ok('가리키는 이름이 아니라고 이른다', !books.isBook('없는 책'));
-  // 그릇은 살아 있다 — 나중에 파는 가이드를 이 자리에 얹는다.
+  // 그릇은 살아 있다 — tools/books/ 에 .txt 를 두면 그 자리에 선다.
   ok('가리키는 문서는 제 본문을 쓰지 않는다', model.bodyOf({ src: '없는 책', body: '베낀 글' }) === '');
   ok('가리키지 않는 문서는 제 본문을 쓴다', model.bodyOf({ body: '그냥 글' }) === '그냥 글');
   // 살아 있는 자리의 잣대가 작가 쪽으로 옮겨 갔는가
@@ -1382,7 +1523,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 // ---------------------------------------------------------------- 화면-서버 배선
 
 {
-  const app = readFileSync(join(ROOT, 'web', 'app.js'), 'utf8');
+  const app = src(join(ROOT, 'web', 'app.js'));
   const used = new Set();
   for (const m of app.matchAll(/api\(\s*'([^']+)'/g)) used.add(m[1]);
   ok('화면이 부르는 문이 하나라도 있다', used.size > 5, String(used.size));
@@ -1429,7 +1570,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('작업 순서 첫 걸음은 프로젝트다', app.includes('① 프로젝트를 만든다') && !app.includes('① 작품을 만든다'));
   // 「기본 에이전트」에서 「이 작품의 에이전트」로 바뀌었다 — 지어진 것임을 알려야 하기 때문이다(사용자 지시).
   ok('설정의 자리 목록은 «에이전트»다', app.includes("'이 작품의 에이전트'") && !app.includes("text: '작법 프롬프트'"));
-  ok('«+» 는 글자가 아니라 막대로 그린다', /\.plus \{[^}]*font-size: 0/.test(readFileSync(join(ROOT, 'web', 'style.css'), 'utf8')));
+  ok('«+» 는 글자가 아니라 막대로 그린다', /\.plus \{[^}]*font-size: 0/.test(src(join(ROOT, 'web', 'style.css'))));
   ok('문서에도 자리 사람이 칩으로 선다', app.includes('KIND_SEAT') && /seatNames\(d\.kind === 'review'/.test(app));
   ok('합평회에 둘이면 모으는 자리도 보인다', /KIND_SEAT = \{ doc: \['F-UPDATE'\], check: \['F-CONTRA'\], review: \['F-REVIEW', 'F-MERGE'\] \}/.test(app));
   ok('모델이 갈리면 묻는다', /function splitModels\(/.test(app) && /pickOneModel\(/.test(app));
@@ -1440,14 +1581,14 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('준비를 다시 걸 길이 있다', app.includes("'project.prepare'"));
   ok('다시 걸며 요청사항을 적는다', /function preparePanel\(/.test(app) && app.includes("area('pp-req'"));
   ok('설정 항목이 서로 떨어져 보인다',
-    app.includes("class: 'settings'") && /\.settings > \* \+ \*/.test(readFileSync(join(ROOT, 'web', 'style.css'), 'utf8')));
+    app.includes("class: 'settings'") && /\.settings > \* \+ \*/.test(src(join(ROOT, 'web', 'style.css'))));
   // 아무것도 치지 않았으면 만들지 않고 창만 닫힌다 (사용자 지시)
   ok('빈 채로 [생성]하면 무엇이 빠졌는지 짚어 준다(문서)', app.includes("'필수 항목 누락 — 이름'"));
   ok('빈 채로 [생성]하면 무엇이 빠졌는지 짚어 준다', /'필수 항목 누락 — ' \+ miss\.join\(' · '\)/.test(app) && app.includes('분량은 비워 두면'));
   ok('빈 채로 [만들기]하면 무엇이 빠졌는지 짚어 준다(에이전트)', /function makeAgent\([^)]*\)[\s\S]{0,400}필수 항목 누락 — 이름/.test(app));
   ok('시킬 것이 없으면 부르지 않는다', /function missingFor\(/.test(app) && app.includes("'필수 항목 누락 — ' + miss"));
   ok('보내기·문서로 정리도 짚어 준다', app.includes("'필수 항목 누락 — 할 말'") && app.includes("'필수 항목 누락 — 오간 말'"));
-  const sheetNow = readFileSync(join(ROOT, 'web', 'style.css'), 'utf8');
+  const sheetNow = src(join(ROOT, 'web', 'style.css'));
   // 열려 있던 창을 다시 그릴 때 열리는 시늉을 되풀이하지 않는다 — 번쩍임의 원인이었다(사용자 지시).
   ok('같은 창은 다시 열리는 시늉을 하지 않는다', app.includes("classList.add('still')") && /S\.mounted1/.test(app));
   ok('꾸밈도 그 결을 멈춘다', sheetNow.includes('.layer.still'));
@@ -1489,7 +1630,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   for (const op of used) ok('서버에 문이 있다: ' + op, OP_NAMES.includes(op));
   for (const m of app.matchAll(/\/api\/(state|download)/g)) ok('상태·내려받기 경로', !!m[1]);
   // 색은 :root 에 적힌 것만 쓴다 — 적·백·흑·파랑 네 갈래.
-  const css = readFileSync(join(ROOT, 'web', 'style.css'), 'utf8');
+  const css = src(join(ROOT, 'web', 'style.css'));
   const root = css.slice(css.indexOf(':root'), css.indexOf('}', css.indexOf(':root')));
   const rootHex = (root.match(/#[0-9a-f]{3,8}/gi) || []).map((x) => x.toLowerCase());
   // 애플 시스템 색으로 값만 맞췄다(2026-09-19) — 갈래는 여전히 적·백·흑·파랑 넷이다.
@@ -1497,8 +1638,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const strays = (css.replace(root, '').match(/#[0-9a-f]{3,8}/gi) || []).map((x) => x.toLowerCase()).filter((x) => !rootHex.includes(x));
   ok('팔레트 밖의 색을 쓰지 않는다', strays.length === 0, strays.join(' '));
   // 튜토리얼도 같은 그물 안에 둔다 — 화면 코드가 둘로 갈렸다고 규칙이 갈리지 않는다.
-  const tour = readFileSync(join(ROOT, 'web', 'tour.js'), 'utf8');
-  const tourDemo = readFileSync(join(ROOT, 'web', 'tour.demo.js'), 'utf8');
+  const tour = src(join(ROOT, 'web', 'tour.js'));
+  const tourDemo = src(join(ROOT, 'web', 'tour.demo.js'));
   const screens = app + '\n' + tour + '\n' + tourDemo;
   const strayApp = (screens.match(/#[0-9a-f]{3,8}/gi) || []);
   ok('화면 코드에 색을 박지 않는다', strayApp.length === 0, strayApp.join(' '));
@@ -1507,10 +1648,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   for (const m of screens.matchAll(/class: '([^']+)'/g)) for (const c of m[1].split(/\s+/)) if (c) usedClasses.add(c);
   const deadClasses = [...usedClasses].filter((c) => !css.includes('.' + c));
   ok('화면이 쓰는 반이 모두 style.css 에 있다', deadClasses.length === 0, deadClasses.join(' '));
-  // 튜토리얼 (사용자 지시, 2026-09-19) — 판매 상세 페이지에 실릴 소개 시퀀스
+  // 튜토리얼 (사용자 지시, 2026-09-19) — 가상 작품으로 기능을 차례로 보여 주는 소개 시퀀스
   ok('첫 화면에 튜토리얼 문이 있다', app.includes("text: '튜토리얼 보기', onclick: startTour"));
-  ok('세 번째 겹을 그린다', app.includes("$('layer3').replaceChildren") && /<div id="layer3">/.test(readFileSync(join(ROOT, 'web', 'index.html'), 'utf8')));
-  ok('튜토리얼 파일을 함께 부른다', /src="tour\.demo\.js"/.test(readFileSync(join(ROOT, 'web', 'index.html'), 'utf8')) && /src="tour\.js"/.test(readFileSync(join(ROOT, 'web', 'index.html'), 'utf8')));
+  ok('세 번째 겹을 그린다', app.includes("$('layer3').replaceChildren") && /<div id="layer3">/.test(src(join(ROOT, 'web', 'index.html'))));
+  ok('튜토리얼 파일을 함께 부른다', /src="tour\.demo\.js"/.test(src(join(ROOT, 'web', 'index.html'))) && /src="tour\.js"/.test(src(join(ROOT, 'web', 'index.html'))));
   // 서버로 나가는 길 셋이 모두 막혔는가 — 구독을 쓰지 않고 데이터에 쓰지 않는다는 약속의 전부다
   ok('튜토리얼은 서버를 부르지 않는다', /async function api\(op, body = \{\}\) \{[\s\S]{0,200}if \(S\.tour\) return S\.tour\.api/.test(app));
   ok('갱신도 멈춘다', /async function pull\(force\) \{\n  if \(S\.tour\) return;/.test(app));
@@ -1549,70 +1690,142 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   }
 }
 
-// ---------------------------------------------------------------- 첫 걸음
+// ---------------------------------------------------------------- 한 폴더가 전부다 — 옮겨도 돈다
 //
-// 설치기가 한 번 부르는 자리. 여기가 깨지면 **새로 산 사람이 못 들어온다** —
-// 시험이 가장 값진 곳 가운데 하나다.
+// 사용자 지시(2026-09-23): 「폴더를 usb 에 옮겨서 다른 컴퓨터에 다운로드해도 작동할 수 있어야 해」
+// 「모든 기능은 각 버전마다 독립적으로 작동할 수 있어야 해」.
+// 그래서 이 폴더는 제 밖을 보지 않는다 — 박힌 경로도, 옆 폴더 뒤지기도, 다른 판의 이름도 없다.
 
 {
-  const first = await import('./first.mjs');
-
-  // ── 깃발 읽기
-  eq('깃발을 읽는다', first.argOf(['node', 'x', '--site', 'https://a'], 'site'), 'https://a');
-  eq('값이 없으면 빈 값', first.argOf(['node', 'x', '--site', '--code', 'c'], 'site'), '');
-  eq('없는 깃발은 빈 값', first.argOf(['node', 'x'], 'code'), '');
-
-  // ── 바탕화면에 둘 한 장
-  //
-  // **여기가 급소다.** 사용자 이름이 한글이면 %LOCALAPPDATA% 를 펼친 경로에 한글이 들어가고,
-  // 배치 파일은 옛 코드페이지로 읽히므로 그 글자가 깨져 다음번에 아무것도 안 열린다.
-  const L = first.launcherText(true);
-  ok('바탕화면 파일이 ASCII 뿐이다', /^[\x00-\x7f]*$/.test(L));
-  ok('경로를 펼치지 않는다', L.includes('%LOCALAPPDATA%\\StoryEngine'));
-  ok('우리가 깐 노드를 쓴다', L.includes('"%NODEDIR%\\node.exe"'));
-  ok('프로그램을 띄운다', L.includes('tools\\launch.mjs'));
-  ok('창을 닫지 않게 이른다', L.includes('pause'));
-  ok('줄 끝이 CRLF 다', L.includes('\r\n') && !/[^\r]\n/.test(L));
-  ok('없어졌으면 그렇다고 이른다', L.includes(':gone'));
-  ok('PATH 의 노드면 그냥 node 라고 적는다', first.launcherText(false).includes('\nnode "%APP%'));
-
-  const SH = first.shLauncherText(true);
-  ok('맥 것도 ASCII 뿐이다', /^[\x00-\x7f]*$/.test(SH));
-  ok('맥 것도 없으면 이른다', SH.includes('not installed'));
-
-  // ── 표를 바꾸는 길
-  //
-  // 상점이 닿지 않아도 **죽지 않는다**. 사람에게 까닭을 이르고 물러난다.
-  const un = await first.redeem('http://127.0.0.1:1', 'x.y');
-  ok('닿지 않으면 그렇다고 이른다', !un.ok && un.unreachable);
-  eq('닿지 않을 때 1 로 물러난다', await first.main(['node', 'first.mjs', '--site', 'http://127.0.0.1:1', '--code', 'x.y']), 1);
-  eq('깃발이 모자라면 2 로 물러난다', await first.main(['node', 'first.mjs']), 2);
-
-  // 클로드가 있는지는 0/1 로만 답한다 — 이 PC 에 깔려 있으므로 0 이어야 한다
-  const found = await first.main(['node', 'first.mjs', '--have-claude']);
-  ok('클로드가 있는지 0/1 로 답한다', found === 0 || found === 1);
-
-  // 바탕화면에 못 두어도 설치가 엎어지지 않는다
-  const bad = first.putLauncher(join(BOX, '없는', '폴더'), 'node');
-  ok('못 두어도 던지지 않는다', bad && bad.ok === false);
-  const good = first.putLauncher(BOX, join('C:', 'x', 'StoryEngine', 'node', 'node.exe'));
-  ok('둘 수 있으면 둔다', good.ok, good.why);
-  ok('둔 파일이 ASCII 뿐이다',
-    /^[\x00-\x7f]*$/.test(readFileSync(join(BOX, 'Story Engine.cmd'), 'latin1')));
-
   // ── 더블클릭하는 파일 그 자체
   //
   // **cmd.exe 는 배치 파일을 UTF-8 이 아니라 옛 코드페이지로 읽는다.**
   // 두 번째 줄의 chcp 는 그 아래 줄들을 구해 주지 못한다.
-  // 상점 쪽에서 실측했다(2026-09-22): rem 줄에 쓴 한글이 **다음 줄의 앞부분을 먹어**
-  // «set SES_ADMIN_EMAIL=...» 이 «IL» 이 되었고 관리자 문이 조용히 닫혔다.
-  // 조용히 닫히는 것이 고약하다 — 아무도 못 들어오는데 아무 말도 없다.
-  const cmd = readFileSync(join(ROOT, '스토리 엔진.cmd'), 'latin1');
+  // 실측(2026-09-22): rem 줄에 쓴 한글이 **다음 줄의 앞부분을 먹어** 그 줄이 조용히 죽었다.
+  // 조용히 죽는 것이 고약하다 — 아무것도 안 되는데 아무 말도 없다.
+  const LAUNCHER = '스토리 엔진 개인판.cmd';
+  ok('더블클릭하는 파일이 있다', existsSync(join(ROOT, LAUNCHER)));
+  ok('옛 이름의 파일은 없다', !existsSync(join(ROOT, '스토리 엔진.cmd')));
+  const cmds = readdirSync(ROOT).filter((f) => f.toLowerCase().endsWith('.cmd'));
+  eq('더블클릭할 파일은 하나다', cmds.join(','), LAUNCHER);
+  const cmd = existsSync(join(ROOT, LAUNCHER)) ? readFileSync(join(ROOT, LAUNCHER), 'latin1') : '';
   ok('더블클릭하는 파일이 ASCII 뿐이다', /^[\x00-\x7f]*$/.test(cmd),
     (cmd.match(/[^\x00-\x7f]/g) || []).slice(0, 8).join(''));
   ok('바이트 표식(BOM)이 없다', cmd.charCodeAt(0) !== 0xef);
   // 여러 줄 괄호 묶음이 있는 파일이라 줄 끝이 더 중요하다
   ok('줄 끝이 CRLF 다', cmd.includes('\r\n') && !/[^\r]\n/.test(cmd));
+  ok('창 이름이 개인판이다', /\r\ntitle Story Engine - personal\r\n/.test(cmd));
+  // 전에는 노드를 못 찾으면 **옆 폴더들**을 뒤졌다. USB 로 옮겨 가면 옆에 무엇이 있을지 모른다 —
+  // 남의 판의 노드를 주워 돌면, 그 판을 지우는 날 이 판이 까닭 없이 멎는다.
+  ok('**옆 폴더를 뒤지지 않는다**', !cmd.includes('%~dp0..') && !/for \/d/i.test(cmd));
+  const iLocal = cmd.indexOf('if exist "%~dp0tools\\node\\node.exe"');
+  const iPath = cmd.indexOf('where node');
+  ok('동봉한 노드를 먼저 찾는다', iLocal > 0 && iPath > iLocal);
+  ok('없으면 PATH 의 node', cmd.includes('set "NODE_EXE=node"'));
+  ok('둘 다 없으면 그렇다고 이르고 선다', cmd.includes('[ERROR] node.exe not found') && cmd.includes('exit /b 1'));
+  ok('제 자리에서 실행기를 띄운다', cmd.includes('"%NODE_EXE%" "%~dp0tools\\launch.mjs"'));
+  ok('창을 닫지 않게 이른다', cmd.includes('pause'));
+  // 다른 PC 의 git 이 줄 끝을 바꿔 놓지 않게 — .cmd 는 CRLF 로 못박는다
+  const ga = existsSync(join(ROOT, '.gitattributes')) ? src(join(ROOT, '.gitattributes')) : '';
+  ok('.cmd 는 CRLF 로 못박혀 있다', /^\*\.cmd\s+text\s+eol=crlf\s*$/m.test(ga));
+
+  // ── 옮겨 간 PC 의 첫날 — Claude Code 가 없으면 여기서 깐다
+  //
+  // 전에는 설치 줄이 한 번도 돌지 않았다: spawn('cmd', ['/c', 한 줄]) 이 안쪽 따옴표를 \" 로 바꿔
+  // curl 이 따옴표 박힌 파일 이름을 받았다(curl (23)). 시험은 URL 이 적혀 있는지만 봤다 — 그래서 몰랐다.
+  // 이제는 **그 줄을 실제로 돌린다.** 망은 쓰지 않는다: 이 프로세스가 띄운 자리에서 가짜 설치기를 내려받는다.
+  // TEMP 에는 빈칸과 한글을 넣는다 — 사용자 이름이 한글인 PC 가 흔하다.
+  const cli = await import('./claude-cli.mjs');
+  const launchJs = src(join(HERE, 'launch.mjs'));
+  ok('실행기는 설치를 한 곳에 맡긴다', launchJs.includes('await installClaudeCode()') && !launchJs.includes("spawn('cmd', ['/c', 'curl"));
+  ok('설치 줄을 셸에 그대로 넘긴다', /\['\/d', '\/s', '\/c', '"' \+ line \+ '"'\], \{ stdio, env, windowsVerbatimArguments: true \}/.test(src(join(HERE, 'claude-cli.mjs'))));
+  if (process.platform === 'win32') {
+    const hasCurl = spawnSync('where', ['curl'], { windowsHide: true }).status === 0;
+    ok('curl 이 있다(윈도 10 1803 뒤로 기본으로 들어 있다)', hasCurl);
+    const ibox = mkdtempSync(join(tmpdir(), 'se2-install-'));
+    const itemp = join(ibox, '홍길동 임시');
+    mkdirSync(itemp);
+    const mark = join(ibox, 'installed.txt');
+    // 가짜 설치기도 .cmd 다 — ASCII · CRLF
+    const fake = ['@echo off', 'echo installed> "%SE2_FAKE_MARK%"', 'exit /b 0', ''].join('\r\n');
+    let served = 0;
+    const fakeSrv = createServer((req, res) => { served += 1; res.writeHead(200, { 'content-type': 'text/plain' }); res.end(fake); });
+    await new Promise((res) => fakeSrv.listen(0, '127.0.0.1', res));
+    const code = hasCurl ? await cli.installClaudeCode({
+      url: 'http://127.0.0.1:' + fakeSrv.address().port + '/install.cmd',
+      env: { ...process.env, TEMP: itemp, TMP: itemp, SE2_FAKE_MARK: mark, NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost' },
+      stdio: 'ignore',
+    }) : -1;
+    fakeSrv.close();
+    eq('**설치 줄이 끝까지 돈다**', code, 0);
+    eq('설치기를 내려받았다', served, 1);
+    ok('**내려받은 설치기가 실제로 돌았다**', existsSync(mark));
+    eq('다 쓴 설치기는 지운다', readdirSync(itemp).join(','), '');
+    rmSync(ibox, { recursive: true, force: true });
+  }
+
+  // ── 박힌 경로도, 다른 판·옛 폴더의 이름도 없다
+  const codeFiles = [
+    ...readdirSync(HERE).filter((f) => /\.(mjs|json)$/.test(f) && f !== 'test.mjs').map((f) => join(HERE, f)),
+    ...readdirSync(join(ROOT, 'web')).map((f) => join(ROOT, 'web', f)),
+    join(ROOT, '.claude', 'launch.json'), join(ROOT, '.gitignore'), join(ROOT, '.gitattributes'),
+  ].filter((f) => existsSync(f));
+  const texts = codeFiles.map((f) => ({ f: f.slice(ROOT.length + 1), t: src(f) }));
+  texts.push({ f: LAUNCHER, t: cmd });
+  const DRIVE = /(?<![A-Za-z])[A-Za-z]:[\\/]/;         // C:\ · D:/ 같은 박힌 자리
+  const HOME = /[\\/](Users|Documents and Settings)[\\/]/i;
+  const pinned = texts.filter(({ t }) => DRIVE.test(t) || HOME.test(t)).map(({ f, t }) => f + ' «' + (t.match(DRIVE) || t.match(HOME))[0] + '»');
+  ok('**코드에 박힌 경로가 없다**', pinned.length === 0, pinned.join(' · '));
+  const OTHERS = ['브랜드 뉴', '브랜드뉴', '스토리 엔진 상점', '스토리 엔진 강의', '스토리 엔진 모바일', '스토리 엔진 판매',
+    'story-engine-bn2', 'StoryEngine', '.storyengine'];
+  const named = [];
+  for (const { f, t } of texts) for (const n of OTHERS) if (t.includes(n)) named.push(f + ' «' + n + '»');
+  ok('**코드에 다른 판·옛 폴더의 이름이 없다**', named.length === 0, named.join(' · '));
+  const upward = texts.filter(({ t }) => /join\([^)]*'\.\.'/.test(t) || /resolve\([^)]*'\.\.'/.test(t)).map(({ f }) => f);
+  ok('제 폴더 위로 올라가 보지 않는다', upward.length === 0, upward.join(' '));
+  ok('모듈은 제 자리에서 길을 잡는다',
+    ['store.mjs', 'prompts.mjs', 'books.mjs', 'server.mjs', 'launch.mjs', 'claude-cli.mjs']
+      .every((f) => src(join(HERE, f)).includes('fileURLToPath(import.meta.url)')));
+
+  // ── 자료는 이 폴더의 data\ 에 산다 — 따로 정하지 않으면
+  const env = { ...process.env };
+  delete env.SE2_DATA_DIR;
+  const probe = spawnSync(process.execPath, [
+    '--input-type=module', '-e',
+    'const m = await import(process.argv[1]); process.stdout.write(m.DATA_DIR);',
+    pathToFileURL(join(HERE, 'store.mjs')).href,
+  ], { env, encoding: 'utf8', windowsHide: true });
+  eq('**자료의 기본 자리는 이 폴더의 data**', probe.stdout, join(ROOT, 'data'));
+  eq('시험은 임시 상자에 쓴다(진짜 원고에 손대지 않는다)', store.DATA_DIR, BOX);
+
+  // ── 폴더 밖에 쓰는 것은 호출 한 벌의 임시 파일뿐이고, 그것도 끝나면 지운다
+  const running = [
+    ...readdirSync(HERE).filter((f) => f.endsWith('.mjs') && f !== 'test.mjs').map((f) => join(HERE, f)),
+    ...readdirSync(join(ROOT, 'web')).filter((f) => f.endsWith('.js')).map((f) => join(ROOT, 'web', f)),
+  ];
+  const outside = running.filter((f) => /\b(tmpdir|homedir)\(\)/.test(src(f))).map((f) => basename(f));
+  eq('폴더 밖에 쓰는 자리는 하나다', outside.join(','), 'call.mjs');
+  ok('그 한 벌은 끝나면 지운다', /finally \{[\s\S]{0,400}rmSync\(dir, \{ recursive: true, force: true \}\)/.test(src(join(HERE, 'call.mjs'))));
+
+  // ── 다시 받을 수 있는 동봉물과 원고는 저장소에 싣지 않는다
+  const gi = src(join(ROOT, '.gitignore'));
+  ok('동봉 노드는 저장소 밖', /^tools\/node\/$/m.test(gi));
+  ok('동봉 클로드는 저장소 밖', /^tools\/claude\/$/m.test(gi));
+  ok('원고(data)도 저장소 밖', /^data\/$/m.test(gi));
+
+  // ── 포트는 8801 그대로 — 폰 동반 프로그램이 그 자리로 붙는다
+  ok('기본 포트는 8801', src(join(HERE, 'server.mjs')).includes('Number(process.env.SE2_PORT || 8801)')
+    && src(join(HERE, 'launch.mjs')).includes('Number(process.env.SE2_PORT || 8801)'));
+
+  // ── 문서도 이 판을 가리킨다
+  const readme = src(join(ROOT, 'README.md'));
+  ok('README 가 새 파일 이름을 가리킨다', readme.includes(LAUNCHER) && !readme.includes('`스토리 엔진.cmd`'));
+  ok('README 가 옮기는 법을 이른다', readme.includes('USB') && readme.includes('data'));
+  ok('README 에 상점 이야기가 없다', !/상점|구독하기|라이선스|브리지/.test(readme));
+  ok('웹판 옮기기 계획은 역사로 보냈다', !existsSync(join(ROOT, '웹 전환 계획.md')));
+  const design = src(join(ROOT, 'DESIGN.md'));
+  ok('DESIGN 이 새 파일 이름을 가리킨다', design.includes(LAUNCHER) && !design.includes('`스토리 엔진.cmd`'));
+  ok('DESIGN 에 상점 길이 남아 있지 않다', !design.includes('brain.json') && !design.includes('first.mjs') && !design.includes('cloud.'));
 }
 
 server.close();

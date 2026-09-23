@@ -40,8 +40,7 @@ const LIVE = new Set();
 export { MODELS } from './store.mjs';   // 고를 수 있는 모델 — 빈 값은 없다
 
 // 실패의 «갈래». 화면과 작업이 이것으로 갈라 움직인다.
-// **밖으로(내 서버로) 올려도 되는 것은 이 코드뿐이다** — error 문구에는 원고가 섞일 수 있으므로
-// 그 PC 안에서만 쓴다. 올리는 자리를 만들 때 이 선을 지켜라.
+// error 문구에는 원고가 섞일 수 있다 — 이 PC 밖으로 내보내지 않는다. 어디로 알릴 일이 생기면 이 코드만 보낸다.
 export const REASONS = [
   'quota-session',  // 다섯 시간 창을 다 썼다 — 곧 풀린다
   'quota-week',     // 주간 창을 다 썼다 — 오래 걸린다
@@ -227,6 +226,9 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
   let stderr = '';
   let onAbort = null;
   try {
+    // **이 프로그램이 폴더 밖에 쓰는 것은 이 한 벌뿐이다** — 호출 하나가 끝나면(finally) 지운다.
+    // 폴더 안(data\)에 두지 않는 까닭: cwd 가 이 폴더 아래면 클로드가 거슬러 올라가며
+    // 이 폴더의 .claude/ 와 깃 저장소를 주워 싣는다. 아무것도 없는 빈 자리여야 한다.
     dir = mkdtempSync(join(tmpdir(), 'se2-call-'));
     const spFile = join(dir, 'system-prompt.txt');
     writeFileSync(spFile, String(systemPrompt || ''), 'utf8');

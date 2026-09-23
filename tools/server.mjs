@@ -15,7 +15,6 @@ import * as engine from './engine.mjs';
 import { prepareAgents, agentsReady, runStudy, STUDY_TITLE } from './agents.mjs';
 import { killAllCalls, MODELS, lastLimit } from './call.mjs';
 import * as auth from './auth.mjs';
-import * as cloud from './cloud.mjs';
 import { bookList, BOOK_CATEGORY } from './books.mjs';
 import { EDITABLE_CODES, VIEW_CODES } from './prompts.mjs';
 
@@ -262,26 +261,6 @@ const OPS = {
   // 무엇으로 돈이 나가는가 — 사람이 고른다. 키는 내려 주지 않는다(들어 있는지만 이른다).
   'auth.read': () => ok({ auth: auth.view() }),
   'auth.write': (b) => ok({ auth: auth.write({ mode: b.mode, apiKey: b.apiKey }) }),
-
-  // 상점과 잇기 — 열쇠는 내려 주지 않는다(이었는지만 이른다).
-  'cloud.read': () => ok({ cloud: cloud.view() }),
-  // 상점을 여는 주소 — 화면이 이것을 새 창으로 연다.
-  // **가기 전에 상점이 서 있는지 물어본다.** 같은 창으로 옮겨 가므로,
-  // 닿지 않는 곳으로 보내면 작가의 화면이 죽은 쪽으로 덮인다.
-  'cloud.urls': async () => ok({
-    link: cloud.linkUrl(PORT),
-    shop: cloud.shopUrl(PORT),
-    up: await cloud.reachable(),
-  }),
-  'cloud.connect': async (b) => {
-    const r = await cloud.connect(b.site, b.token);
-    return r.ok ? ok({ cloud: r.view }) : bad(r.error);
-  },
-  'cloud.check': async () => {
-    const r = await cloud.check();
-    return r.ok ? ok({ cloud: r.view }) : bad(r.error);
-  },
-  'cloud.disconnect': () => ok({ cloud: cloud.disconnect() }),
 };
 
 export const OP_NAMES = Object.keys(OPS);
@@ -326,8 +305,6 @@ function stateOf(pid) {
     // 「구독으로 돕니다」라고 말하면서 물려받은 ANTHROPIC_API_KEY 때문에 말없이 종량 과금되면
     // 그것은 표시광고 문제다(실측으로 그럴 수 있음을 확인했다).
     auth: auth.view(),
-    // 상점에 이었는가 · 구독이 살아 있는가. 열쇠는 실리지 않는다.
-    cloud: cloud.view(),
     // 마지막으로 본 한도 — 닿기 전에 남은 양을 보여 줄 재료. 호출이 흐르는 동안만 갱신된다.
     // 문턱(0.75) 아래면 이벤트가 안 흐르므로 null 일 수 있다.
     limit: lastLimit(),
@@ -365,6 +342,34 @@ function send(res, code, body, type = 'application/json; charset=utf-8', extra =
   res.end(body);
 }
 
+// ---------------------------------------------------------------- 문지기
+//
+// 이 서버는 사장님 PC 안에서만 돈다 — 그런데 브라우저는 **아무 페이지에서나** 127.0.0.1 로 요청을 쏠 수 있다.
+// 막지 않으면 사장님이 열어 둔 남의 페이지 하나가 auth.write 로 돈 나가는 길을 남의 키로 바꾸고,
+// project.delete·trash.purge 로 원고를 지운다(실측: text/plain 한 방에 auth.json 이 바뀌었다).
+//  · Host 가 제 이름(127.0.0.1·localhost)이 아니면 받지 않는다 — 남의 도메인을 이 자리로 돌려 원고를 읽는 길(DNS 재바인딩)을 막는다.
+//  · POST /api 는 application/json 만 받는다 — text/plain 은 사전 확인(preflight) 없이 남의 페이지에서 날아온다.
+//  · Origin 이 붙어 왔으면 제 자리의 것이어야 한다. **폰 중계기는 Origin 을 싣지 않는다**(노드 fetch) — 그대로 붙는다.
+const LOCAL_NAMES = new Set(['127.0.0.1', 'localhost']);
+
+function hostOf(req) {
+  try {
+    const u = new URL('http://' + String(req.headers.host || ''));
+    return LOCAL_NAMES.has(u.hostname) ? u : null;
+  } catch { return null; }
+}
+
+function originOk(req, host) {
+  const o = req.headers.origin;
+  if (o == null) return true;
+  try {
+    const u = new URL(String(o));
+    return u.protocol === 'http:' && LOCAL_NAMES.has(u.hostname) && u.port === host.port;
+  } catch { return false; }
+}
+
+const isJson = (req) => String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase() === 'application/json';
+
 function readBody(req) {
   return new Promise((resolve) => {
     let s = '';
@@ -377,7 +382,11 @@ function readBody(req) {
 export const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://127.0.0.1');
+    const host = hostOf(req);
+    if (!host) return send(res, 403, JSON.stringify(bad('이 PC 안에서 연 화면만 받습니다')));
     if (req.method === 'POST' && url.pathname === '/api') {
+      if (!originOk(req, host)) return send(res, 403, JSON.stringify(bad('다른 곳에서 온 요청은 받지 않습니다')));
+      if (!isJson(req)) return send(res, 415, JSON.stringify(bad('JSON 요청만 받습니다')));
       const body = await readBody(req);
       if (!body || !body.op) return send(res, 400, JSON.stringify(bad('op 없음')));
       const fn = OPS[body.op];
@@ -388,19 +397,11 @@ export const server = createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/state') {
       const pid = url.searchParams.get('pid') || '';
-      // 상점 상태는 프로젝트의 것이 아니라 프로그램 전체의 것이다 — 홈에서도 온다.
-      if (!pid) return send(res, 200, JSON.stringify({ ok: true, projects: state.list(), cloud: cloud.view() }));
+      if (!pid) return send(res, 200, JSON.stringify({ ok: true, projects: state.list() }));
       const st = stateOf(pid);
       if (!st) return send(res, 200, JSON.stringify({ ok: false, error: '없음' }));
       return send(res, 200, JSON.stringify({ ok: true, project: st, projects: state.list() }));
     }
-    // 상점이 열쇠를 실어 돌려보내는 자리. 받아 두고 처음으로 보낸다.
-    if (req.method === 'GET' && url.pathname === '/link') {
-      const t = url.searchParams.get('token') || '';
-      if (t) await cloud.take(t);
-      return send(res, 303, '', 'text/plain; charset=utf-8', { location: '/' });
-    }
-
     if (req.method === 'GET' && url.pathname === '/api/download') {
       const d = downloadOf(url.searchParams.get('pid'), url.searchParams.get('kind'), url.searchParams.get('id'));
       if (!d) return send(res, 404, '없음', 'text/plain; charset=utf-8');
@@ -423,7 +424,6 @@ export const server = createServer(async (req, res) => {
 
 export function boot(port = PORT) {
   for (const p of state.list()) jobs.healStale(p.id);
-  // 상점을 두드리지 않는다 — 개인판은 상점에 묶이지 않는다(사용자 지시, 2026-09-23).
   return new Promise((resolve, reject) => {
     server.once('error', (e) => {
       if (e && e.code === 'EADDRINUSE') console.log('  [ERROR] port ' + port + ' is already in use. Close the other window first.');
