@@ -71,15 +71,7 @@ if (!before.loggedIn) {
   line();
 }
 
-// 어느 계정에 이어져 있는지 한 줄로 보여 준다 — 「내 것이 맞나」를 창을 열기 전에 알 수 있게.
-try {
-  const v = (await import('./cloud.mjs')).view();
-  if (v.linked) {
-    line('  Store       : ' + v.site);
-    line('  Account     : ' + (v.email || '-') + '  (' + (v.ok ? 'subscribed' : 'no subscription') + ')');
-    line();
-  }
-} catch { /* 못 읽어도 프로그램은 뜬다 */ }
+// (상점 계정 줄은 걷었다 — 개인판은 상점에 묶이지 않는다. 사용자 지시, 2026-09-23)
 
 if (process.env.SE2_LAUNCH_CHECK_ONLY) {
   line('  [CHECK ONLY] Login OK. Server start skipped.');

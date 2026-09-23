@@ -21,7 +21,6 @@ const S = {
   focusNext: '',   // 다시 그린 뒤 이 칸에 커서를 둔다
   redrawing: false,// 다시 그리는 중 — 그때 떨어지는 포커스는 저장이 아니다
   tour: null,
-  cloud: null,        // 상점에 이었는가 — 프로그램 전체의 일이라 홈에서도 본다      // 튜토리얼이 도는 중 — 걸음 목록을 도는 틀 하나(web/tour.js)
   srcText: null,   // 지금 펼쳐 둔 작법서의 글 { id, text } — 갱신마다 오지 않으므로 열 때 한 번 받는다
   last: '',
 };
@@ -120,52 +119,7 @@ function limitSay(L) {
 }
 
 // 작업 한 줄이 말하는 것 — 그리기와 초침이 같은 글을 쓰도록 한 자리에 둔다.
-// 상점 단추 — **프로그램 전체의 일**이므로 프로젝트 설정이 아니라 홈에 둔다(사용자 지시).
-//
-// **자리는 하나이고 이름만 바뀐다**(사용자 지시).
-//   구독 없음 → [구독하기]      구독 중 → [상점]
-// 둘이 함께 서지 않는다. 「구독자만 상점에 든다」는 뜻이라,
-// 아직 구독이 없는 사람에게 «상점»이라고 적으면 들어갔다가 살 것이 없다.
-//
-// **새 창으로 열지 않는다**(사용자 지시). 같은 창에서 다녀온다.
-// 새 창은 잇기까지 망가뜨린다 — 상점이 열쇠를 실어 «그 새 창»으로 되돌려 보내므로
-// 창이 둘이 되고, 처음 창은 제가 이어진 줄을 모른 채 남는다.
-// 같은 창이면 [구독하기] → 로그인 → [잇기] → 제자리로, 한 줄기로 돌아온다.
-function shopButton() {
-  const c = S.cloud;
-  const subscribed = !!(c && c.ok);
-  return h('button', {
-    class: subscribed ? 'btn-line' : 'btn',
-    text: subscribed ? '상점' : '구독하기',
-    onclick: async () => {
-      const r = await api('cloud.urls');
-      if (!r || !r.ok) return;
-      // **닿지 않으면 가지 않는다.** 같은 창으로 옮겨 가므로, 여기서 그냥 보내면
-      // 작가가 보던 화면이 죽은 쪽으로 덮인다. 한 번 물어보고 아니면 그 자리에 선다.
-      if (!r.up) {
-        S.confirm = {
-          text: '상점에 닿지 않습니다',
-          acts: [{ label: '알겠습니다', class: 'btn', run: () => { S.confirm = null; render(); } }],
-        };
-        return render();
-      }
-      // 아직 안 이었으면 «잇는 자리»로 — 로그인하고 [잇기] 한 번이면 열쇠가 실려 돌아온다.
-      location.href = (c && c.linked) ? r.shop : r.link;
-    },
-  });
-}
-
-// 이어져 있으면 한 줄로 이른다 — 누구의 계정이고 언제까지인지.
-function shopLine() {
-  const c = S.cloud;
-  if (!c || !c.linked) return null;
-  const left = c.ok ? Math.max(0, Math.ceil((c.until - Date.now()) / 86400000)) : 0;
-  return h('div', { class: 'line', style: 'padding:0 0 18px' },
-    h('span', { class: 'when', text: (c.email ? c.email + ' · ' : '') + (c.ok ? '구독 중 — ' + left + '일 남음' : (c.why || '구독이 없습니다')) }),
-    h('button', { class: 'btn-text', text: '다시 확인', onclick: () => api('cloud.check') }),
-    h('button', { class: 'btn-text red', text: '끊기', onclick: () => api('cloud.disconnect') }));
-}
-
+// (상점 단추는 걷었다 — 개인판은 상점에 묶이지 않는다. 사용자 지시, 2026-09-23)
 function jobLine(j) {
   // 한도에 닿아 물음이 매달린 자리 — 무엇이 닫혔고 언제 풀리는지 이른다.
   if (j.ask) {
@@ -211,11 +165,9 @@ async function pull(force) {
   let d;
   try { d = await (await fetch(url)).json(); } catch { return; }
   if (d.projects) S.projects = d.projects;
-  if (d.cloud) S.cloud = d.cloud;
-  else if (d.project && d.project.cloud) S.cloud = d.project.cloud;
   if (S.pid && d.ok === false) { S.pid = null; S.project = null; }
   else if (d.project) S.project = d.project;
-  const sig = JSON.stringify([S.pid, S.projects, S.project, S.cloud]);
+  const sig = JSON.stringify([S.pid, S.projects, S.project]);
   if (!force && sig === S.last) return;
   S.last = sig;
   render();
@@ -281,10 +233,8 @@ function projectList() {
         brandMark('margin-bottom:6px'),
         h('div', { class: 'top-name', style: 'font-size:30px', text: '스토리 엔진' })),
       h('div', { class: 'line', style: 'flex:none' },
-        shopButton(),
         h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: startTour }),
         h('button', { class: 'plus', text: '+', onclick: () => { S.draft = []; S.open = { type: 'newproject' }; render(); } }))),
-    shopLine(),
     h('div', { class: 'cards' }, S.projects.map((p) => h('div', {
       class: 'card', onclick: () => { S.pid = p.id; S.tab = '작업실'; S.project = null; pull(true); },
     },
@@ -1366,11 +1316,6 @@ document.addEventListener('keydown', (e) => {
   else if (S.open) closeLayer();
 });
 
-// 띄울 때 한 번 상점을 두드린다 — **값을 치르고 돌아온 자리가 여기이기 때문이다.**
-// 같은 창으로 다니므로 상점에서 돌아오면 이 쪽이 새로 뜬다. 그때 다시 묻지 않으면
-// 단추가 [구독하기] 로 남고 새 호출이 하루까지 잠긴 채다(하루 한 번 두드리는 것이 기본이므로).
-// 닿지 않아도 그냥 지나간다 — 이 한 번 때문에 프로그램이 안 뜨면 안 된다.
-pull(true).then(() => {
-  if (S.cloud && S.cloud.linked) api('cloud.check').then(() => pull(true)).catch(() => {});
-});
+// 띄운다 — 개인판은 상점을 두드리지 않는다.
+pull(true);
 setInterval(() => pull(false), 1500);

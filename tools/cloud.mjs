@@ -142,17 +142,13 @@ export function has(code, now = Date.now()) {
 
 // 새 호출을 걸어도 되는가.
 // 잇지 않았으면 «그렇다» — 상점을 붙이기 전의 프로그램이 멈추면 안 된다.
-export function mayCall(now = Date.now()) {
-  const l = link();
-  // **일할 줄을 모르면 부를 것이 없다.** 일꾼 아홉의 «일하는 법»은 열쇠와 함께 온다.
-  // 파는 판에는 그것이 들어 있지 않으므로, 베낀 폴더는 여기서 선다 —
-  // 빗장을 따로 걸지 않아도 이 한 줄이 곧 빗장이다(지운다고 열리지 않는다).
-  if (!prompts.haveBrain()) return { ok: false, why: '구독이 없습니다' };
-  if (!l.token) return { ok: true, why: '' };       // 아직 상점에 잇지 않았다
-  const lic = readLicense(l, now);
-  if (lic.ok && (lic.rights || []).includes('bridge')) return { ok: true, why: '' };
-  // 작가에게는 사람 말로 이른다 — 한 자리에서 옮긴다(whyHuman).
-  return { ok: false, why: whyHuman(l, lic, now) };
+// **개인판은 상점에 묶이지 않는다**(사용자 지시, 2026-09-23 —
+// 「내가 이 pc에서 사용할 버전은 구독 사용량 소모 버전이어야 한다」).
+// 파는 쪽은 웹으로 옮겨 가 상점이 이 판의 열쇠를 더 내주지 않는다. 열쇠를 계속 보면
+// 받아 둔 것이 지나는 날 사장님 PC 의 새 호출이 까닭 없이 잠긴다. 그래서 일할 줄을 아는가만 본다.
+export function mayCall() {
+  if (!prompts.haveBrain()) return { ok: false, why: '일하는 법(프롬프트)을 찾지 못했습니다' };
+  return { ok: true, why: '' };
 }
 
 // ── 상점 두드리기

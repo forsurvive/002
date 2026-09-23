@@ -855,142 +855,31 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
-  // ⑧-2 상점과 잇는 자리 — 열쇠를 **네트워크 없이** 혼자 검사한다 (2026-09-22)
+  // ⑧-2 **개인판은 상점에 묶이지 않는다** (사용자 지시, 2026-09-23)
+  // 「내가 이 pc에서 사용할 버전은 구독 사용량 소모 버전이어야 한다」 — 파는 쪽은 웹으로 옮겨 갔고
+  // 상점은 이 판의 열쇠를 더 내주지 않는다. 받아 둔 열쇠가 지나도 새 호출이 잠기면 안 된다.
   const cloud = await import('./cloud.mjs');
-  const { generateKeyPairSync, sign: edSign, createPublicKey } = await import('node:crypto');
-  const b64u = (b) => Buffer.from(b).toString('base64url');
-
-  const { privateKey } = generateKeyPairSync('ed25519');
-  const pub = b64u(createPublicKey(privateKey).export({ type: 'spki', format: 'der' }));
-  const mint = (body) => {
-    const raw = b64u(JSON.stringify(body));
-    return raw + '.' + b64u(edSign(null, Buffer.from(raw), privateKey));
-  };
-
-  // 잇지 않았으면 늘 통과한다 — 상점을 붙이기 전의 프로그램이 멈추면 안 된다
   cloud.disconnect();
-  ok('잇지 않았으면 부를 수 있다', cloud.mayCall().ok);
-  ok('잇지 않았다고 이른다', !cloud.view().linked);
-
-  // 이었는데 열쇠가 없으면 막힌다
-  cloud.linkWrite({ site: 'https://가게', token: 'tok', publicKey: pub, license: '' });
-  ok('열쇠가 없으면 못 부른다', !cloud.mayCall().ok);
-
-  // 제대로 된 열쇠면 통과한다
-  const far = Date.now() + 3 * 86400000;
-  cloud.linkWrite({ license: mint({ uid: 'u_1', rights: ['bridge', 'guide.무협'], exp: far }) });
-  ok('열쇠가 맞으면 부른다', cloud.mayCall().ok);
-  ok('가진 권리를 안다', cloud.has('bridge') && cloud.has('guide.무협'));
-  ok('없는 권리는 없다고 한다', !cloud.has('guide.로맨스판타지'));
-  eq('언제까지인지 안다', cloud.view().until, far);
-
-  // 손대면 듣지 않는다
-  const good = cloud.link().license;
-  cloud.linkWrite({ license: good.slice(0, -4) + 'AAAA' });
-  ok('손댄 열쇠는 듣지 않는다', !cloud.mayCall().ok);
-
-  // 남의 열쇠로도 안 된다
-  const other = generateKeyPairSync('ed25519').privateKey;
-  const raw = b64u(JSON.stringify({ uid: 'u_1', rights: ['bridge'], exp: far }));
-  cloud.linkWrite({ license: raw + '.' + b64u(edSign(null, Buffer.from(raw), other)) });
-  ok('남이 서명한 열쇠는 듣지 않는다', !cloud.mayCall().ok);
-
-  // 지난 열쇠도 안 된다 — 체험이 사흘인데 열쇠가 열나흘 가면 안 되는 그 자리
-  cloud.linkWrite({ license: mint({ uid: 'u_1', rights: ['bridge'], exp: Date.now() - 1000 }) });
-  ok('지난 열쇠는 듣지 않는다', !cloud.mayCall().ok);
-  ok('왜 막혔는지 이른다', cloud.view().why.includes('지났'));
-  // **작가의 말로 이른다** — «열쇠»·«공개키»·«서명»은 우리끼리 쓰는 말이다.
-  // 홈 화면에 그대로 찍히는 줄이라 여기서 막는다(브라우저에서 보고 고쳤다).
-  const JARGON = ['열쇠', '공개키', '서명', 'license', 'token'];
-  const says = [];
-  cloud.linkWrite({ license: '' });
-  says.push(cloud.view().why, cloud.mayCall().why);
-  cloud.linkWrite({ license: mint({ uid: 'u_1', rights: ['bridge'], exp: Date.now() - 1000 }) });
-  says.push(cloud.view().why, cloud.mayCall().why);
+  ok('잇지 않았어도 부른다', cloud.mayCall().ok);
+  cloud.linkWrite({ site: 'https://가게', token: 'tok', license: '' });
+  ok('**이어 둔 채 열쇠가 없어도 부른다**', cloud.mayCall().ok);
   cloud.linkWrite({ license: 'AAAA.BBBB' });
-  says.push(cloud.view().why, cloud.mayCall().why);
-  cloud.linkWrite({ license: mint({ uid: 'u_1', rights: ['guide.무협'], exp: far }) });
-  says.push(cloud.view().why, cloud.mayCall().why);
-  for (const s of says) ok('우리끼리 쓰는 말이 화면에 나가지 않는다 — «' + s + '»', !JARGON.some((j) => s.includes(j)));
-  ok('무엇을 해야 하는지 이른다', says.every((s) => s.includes('구독')));
-
-  // 권리가 있어도 bridge 가 없으면 못 부른다
-  cloud.linkWrite({ license: mint({ uid: 'u_1', rights: ['guide.무협'], exp: far }) });
-  ok('팩만 있으면 못 부른다', !cloud.mayCall().ok);
-
-  // 열쇠는 화면으로 나가지 않는다
-  cloud.linkWrite({ token: '비밀-열쇠-값', license: mint({ uid: 'u_1', rights: ['bridge'], exp: far }) });
-  ok('열쇠가 화면으로 나가지 않는다', !JSON.stringify(cloud.view()).includes('비밀-열쇠-값'));
-  ok('이었다고만 이른다', cloud.view().linked === true);
-
-  // 새 호출이 막히면 사유가 위로 이어진다
-  const eng2 = await import('./engine.mjs');
-  cloud.linkWrite({ license: '' });
-  const blocked = await eng2.callOnce({ pid: 'p_아무거나', code: 'F-UPDATE' });
-  ok('막히면 사유가 온다', !blocked.ok && blocked.reason === 'sub');
-  ok('구독 탓임을 이른다', String(blocked.error).includes('열쇠') || String(blocked.error).includes('구독'));
-
-  // **읽기와 내보내기는 이 문을 지나지 않는다** — 작가의 글을 인질로 잡지 않는다
-  const src = readFileSync(join(HERE, 'server.mjs'), 'utf8');
-  ok('내려받기는 문지기를 지나지 않는다', !/downloadOf[\s\S]{0,300}mayCall/.test(src));
-  ok('상태 읽기도 지나지 않는다', !/function stateOf[\s\S]{0,600}mayCall/.test(src));
-  ok('문지기는 부르는 자리에만 있다', readFileSync(join(HERE, 'engine.mjs'), 'utf8').split('cloud.mayCall').length === 2);
-
-  // ── 홈의 단추 하나 (사용자 지시, 2026-09-22)
-  //
-  // 「상점 버튼의 명칭을 '구독하기' 로 바꾸고, 만약 이미 구독 중이라면 그 버튼을 없애고
-  //   '상점' 버튼만 뜨게 해. 구독자만 상점에 접근할 수 있게 하는 거야.」
-  // 그리고 「상점을 별도 페이지로 열면 안돼」.
-  //
-  // 새 창은 잇기까지 망가뜨린다 — 상점이 열쇠를 실어 **그 새 창으로** 되돌려 보내므로
-  // 창이 둘이 되고 처음 창은 제가 이어진 줄을 모른 채 남는다.
+  ok('**열쇠가 망가져도 부른다**', cloud.mayCall().ok);
+  cloud.disconnect();
+  const srv = readFileSync(join(HERE, 'server.mjs'), 'utf8');
+  ok('띄울 때 상점을 두드리지 않는다', !srv.includes('cloud.beat()'));
   const app = readFileSync(join(ROOT, 'web', 'app.js'), 'utf8');
-  const btn = app.slice(app.indexOf('function shopButton'), app.indexOf('function shopLine'));
-  ok('단추 자리를 찾았다', btn.length > 80);
-  ok('**새 창으로 열지 않는다**', !btn.includes('window.open'));
-  ok('같은 창에서 다녀온다', btn.includes('location.href'));
-  ok('구독 중이면 상점이라 적는다', /subscribed\s*\?\s*'상점'\s*:\s*'구독하기'/.test(btn));
-  ok('둘이 함께 서지 않는다', btn.split('h(\'button\'').length === 2);
-  ok('구독 여부는 상점이 준 값으로 본다', /subscribed\s*=\s*!!\(c && c\.ok\)/.test(btn));
-  // 아직 안 이었으면 «잇는 자리»로 가야 한다 — 그냥 상점으로 보내면 열쇠가 돌아오지 않는다
-  ok('안 이었으면 잇는 자리로 간다', btn.includes('c.linked) ? r.shop : r.link'));
-
-  // ── 지어진 에이전트를 작가가 고칠 수 있는가 (사용자 지시, 2026-09-22)
-  //
-  // 고치는 길은 전부터 있었다. 문제는 **찾을 수가 없었다는 것**이다 —
-  // 이름이 「기본 에이전트」였고 접혀 있어서 이 작품에 맞춰 지어진 것임을 알 길이 없었다.
-  // 있는데 못 찾는 것은 없는 것과 같다.
+  ok('홈에 구독하기·상점 단추가 없다', !app.includes('function shopButton') && !app.includes('shopButton()'));
+  ok('상점에 이어졌다는 줄이 없다', !app.includes('function shopLine') && !app.includes('shopLine()'));
+  ok('띄울 때 상점을 부르지 않는다', !app.includes("api('cloud.check')"));
+  // 부르는 길은 그대로 구독(claude CLI)이다
+  const callSrc = readFileSync(join(HERE, 'call.mjs'), 'utf8');
+  ok('**부르는 길은 클로드 실행기 그대로다**', callSrc.includes("spawn(CLI, buildCallArgs(spFile, model)"));
+  // 지어진 에이전트를 고칠 수 있다(사용자 지시, 2026-09-22)
   const lst = app.slice(app.indexOf('function agentList'), app.indexOf('async function openPrompt'));
   ok('지어진 자리가 있으면 펴 둔다', lst.includes("S.fold['prompts'] === undefined ? made"));
   ok('이 작품의 것이라고 이른다', lst.includes('이 작품의 에이전트'));
   ok('고칠 수 있다고 이른다', lst.includes('눌러서 고치십시오'));
-  ok('무슨 갈래로 지었는지 보인다', lst.includes('p.agentKind'));
-  ok('지은 자리와 고친 자리를 표시한다', lst.includes("text: '지음'") && lst.includes("text: '고침'"));
-
-  // ── 같은 창이라 생기는 값 (검토가 찾아낸 것, 2026-09-22)
-  //
-  // 새 창이던 때는 프로그램이 뒤에 그대로 있었다. 같은 창이면 **작가의 화면이 덮인다.**
-  // 그래서 세 가지를 지켜야 한다: 닿지 않으면 가지 않는다 · 돌아올 길을 달고 간다 ·
-  // 돌아오면 다시 묻는다.
-  ok('**닿지 않으면 가지 않는다**', btn.includes('if (!r.up)'));
-  ok('닿지 않으면 사람에게 이른다', btn.includes('상점에 닿지 않습니다'));
-  ok('돌아오면 다시 묻는다', app.includes("api('cloud.check')") && /pull\(true\)\.then/.test(app));
-
-  // 돌아올 주소를 달고 간다 — loopback 이고, 포트가 없으면 달지 않는다
-  ok('상점 주소에 돌아올 자리를 단다', cloud.shopUrl(8801).includes('back=' + encodeURIComponent('http://127.0.0.1:8801/')));
-  ok('포트를 모르면 달지 않는다', !cloud.shopUrl().includes('back='));
-
-  // **끊어도 상점 주소는 남는다** — 주소까지 지우면 다음 [구독하기] 가 집 안으로 떨어진다
-  cloud.linkWrite({ site: 'https://가게.example.com', token: 'tok', license: '' });
-  cloud.disconnect();
-  eq('끊어도 상점 주소는 남는다', cloud.link().site, 'https://가게.example.com');
-  eq('끊으면 열쇠는 사라진다', cloud.link().token, '');
-  ok('끊긴 뒤에도 갈 곳이 있다', cloud.shopUrl().startsWith('https://가게'));
-
-  // 닿는지 물어보는 자리 — 없는 곳은 «아니오»로 답하고 던지지 않는다
-  eq('없는 곳은 아니라고 답한다', await cloud.reachable('http://127.0.0.1:1', 800), false);
-
-  cloud.disconnect();
 }
 
 {

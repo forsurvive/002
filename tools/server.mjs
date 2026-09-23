@@ -423,7 +423,7 @@ export const server = createServer(async (req, res) => {
 
 export function boot(port = PORT) {
   for (const p of state.list()) jobs.healStale(p.id);
-  cloud.beat();   // 상점에 이었으면 띄울 때 한 번, 그 뒤로 하루마다 두드린다
+  // 상점을 두드리지 않는다 — 개인판은 상점에 묶이지 않는다(사용자 지시, 2026-09-23).
   return new Promise((resolve, reject) => {
     server.once('error', (e) => {
       if (e && e.code === 'EADDRINUSE') console.log('  [ERROR] port ' + port + ' is already in use. Close the other window first.');
