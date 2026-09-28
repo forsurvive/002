@@ -25,11 +25,18 @@ export function promptFor(project, code) {
   return { code, name: pick('name'), role: pick('role'), task: pick('task'), craft: pick('craft') };
 }
 
+// 그 자리에 정해 둔 모델 — 없으면 빈 값(작품의 모델을 따른다). 프롬프트 고치기와는 따로 둔다:
+// 모델만 바꾼 자리가 «고침»으로 보이거나, [되돌리기] 가 모델까지 걷어 가지 않게.
+export function slotModel(project, code) {
+  return String((project && project.slotModels && project.slotModels[code]) || '');
+}
+
 // 화면이 보여 줄 한 자리의 지금 값과, 작가가 고친 자리인지 여부
 export function promptView(project, code) {
   return {
     code,
     ...promptFor(project, code),
+    model: slotModel(project, code),                                    // 비었으면 작품의 모델
     edited: !!(project && project.prompts && project.prompts[code]),   // 작가가 고쳤다
     made: !!(project && project.agents && project.agents[code]),       // 프로젝트를 만들 때 지어졌다
   };
@@ -130,9 +137,9 @@ export async function callOnce({
   const picked = model.agentsByIds(project, agentIds);
   const crew = keepSeat ? [{ id: '', name: pr.name, role: pr.role, craft: '', model: '' }, ...picked] : picked;
   // 쓸 모델 — 부르는 쪽이 못 박았으면 그것이 먼저다(작가가 «어느 모델로 모을지»를 고른 때).
-  // 아니면 «제 모델을 정해 둔 첫 사람», 그도 없으면 프로젝트의 것.
+  // 아니면 «제 모델을 정해 둔 첫 사람», 그다음 그 자리(지어진 에이전트)에 정해 둔 것, 그도 없으면 프로젝트의 것.
   const bringsModel = picked.find((c) => String(c.model || '').trim());
-  const useModel = String(modelPick || '').trim() || (bringsModel ? bringsModel.model : project.model);
+  const useModel = String(modelPick || '').trim() || (bringsModel ? bringsModel.model : '') || slotModel(project, code) || project.model;
   // 부르는 쪽이 따로 정하지 않았으면 작품에 걸어 둔 토글을 따른다.
   const nc = noCount == null ? project.noCount !== false : !!noCount;
   const systemPrompt = buildSystem({ prompt: pr, prev, next, crew, withFinalRule: finals.length > 0, withNoCount: nc });

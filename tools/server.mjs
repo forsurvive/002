@@ -104,6 +104,16 @@ const OPS = {
   'prompt.reset': (b) => (VIEW_CODES.includes(b.code)
     ? state.update(b.pid, (p) => { if (p.prompts) delete p.prompts[b.code]; })
     : bad('없는 자리입니다')),
+  // 그 자리(지어진 에이전트)가 쓸 모델. 빈 값이면 정해 둔 것을 걷어 작품의 모델을 따르게 한다.
+  'prompt.model': (b) => {
+    if (!VIEW_CODES.includes(b.code)) return bad('없는 자리입니다');
+    const m = String(b.model == null ? '' : b.model);
+    if (m && !MODELS.includes(m)) return bad('그 모델을 쓸 수 없습니다');
+    return state.update(b.pid, (p) => {
+      p.slotModels = p.slotModels || {};
+      if (m) p.slotModels[b.code] = m; else delete p.slotModels[b.code];
+    });
+  },
 
   // 판정이 어긋났거나 중지·재시작으로 준비가 끊긴 프로젝트를 구한다.
   // 자동 집필을 빼기 전에는 «자동 집필 시작»이 같은 문을 한 번 더 지났다 — 그 되돌리기를 여기로 옮겼다.
@@ -298,6 +308,7 @@ function stateOf(pid) {
       name: engine.promptFor(p, code).name,
       edited: !!(p.prompts && p.prompts[code]),
       made: !!(p.agents && p.agents[code]),
+      model: engine.slotModel(p, code),
       control: !EDITABLE_CODES.includes(code),
     })),
     agentKind: (p.agents && p.agents.__kind) || '',

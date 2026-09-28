@@ -75,6 +75,7 @@ export function blankProject(id, name) {
     model: 'opus',    // 쓸 클로드 모델 — 늘 하나로 정해져 있다(사람이 따로 정하지 않은 자리가 이것을 쓴다)
     noCount: true,    // 계량어 금지를 매 호출에 싣는가(작가가 끌 수 있다)
     prompts: {},      // 작가가 고친 작법 프롬프트 (코드 → {name, role, task, craft})
+    slotModels: {},   // 자리(지어진 에이전트)마다 쓸 모델 (코드 → 모델). 적히지 않은 자리는 작품의 모델을 따른다
     crew: [],         // 작가가 지은 에이전트 — 문서에 걸면 그 사람이 쓴다
     agents: null,
     createdAt: at,
@@ -95,6 +96,13 @@ export function listProjects() {
   return out;
 }
 
+// 자리마다 정해 둔 모델 — 아는 이름만 남긴다(옛 파일에는 이 칸이 없다).
+export function slotModelsOf(v) {
+  const out = {};
+  if (v && typeof v === 'object') for (const [code, m] of Object.entries(v)) if (MODELS.includes(m)) out[code] = m;
+  return out;
+}
+
 export function loadProject(id) {
   ensureDirs();
   const p = readJson(projPath(id));
@@ -106,6 +114,7 @@ export function loadProject(id) {
     spec: { ...base.spec, ...(p.spec || {}) },
     materials: p.materials || [],
     prompts: p.prompts || {},
+    slotModels: slotModelsOf(p.slotModels),
     crew: p.crew || [],
     docs: p.docs || [],
     categories: p.categories || [],

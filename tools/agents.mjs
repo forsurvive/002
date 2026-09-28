@@ -6,7 +6,7 @@
 import { BUILTIN, AGENT_SLOTS, SLOT_DUTY } from './prompts.mjs';
 import { buildSystem, buildUser, cleanResponse } from './assemble.mjs';
 import { runClaudeCall } from './call.mjs';
-import { promptFor, callWithRetry, callAsking, promptsMissing } from './engine.mjs';
+import { promptFor, callWithRetry, callAsking, promptsMissing, slotModel } from './engine.mjs';
 import * as state from './state.mjs';
 import * as model from './model.mjs';
 
@@ -106,7 +106,7 @@ async function prepareAgentsInner(pid, ctx, project, request = '') {
     let info = null;
     for (let attempt = 0; attempt < 2 && !info; attempt++) {
       const c = ctl('F-KIND', attempt ? '첫 줄은 반드시 «분류: » 로 시작해야 한다.' : '', project, { request });
-      const r = await runClaudeCall({ ...c, mockKey: 'F-KIND', signal: ctx && ctx.signal, model: project.model });
+      const r = await runClaudeCall({ ...c, mockKey: 'F-KIND', signal: ctx && ctx.signal, model: slotModel(project, 'F-KIND') || project.model });
       if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
       if (!r.ok) { if (attempt) return { ok: false, error: r.error }; continue; }
       const got = readKind(r.text);
@@ -140,7 +140,8 @@ async function prepareAgentsInner(pid, ctx, project, request = '') {
     let made = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       const c = ctl('F-AGENT', extra + (attempt ? '\n앞서 받은 작법이 ' + CRAFT_MIN + '자에 못 미쳤다. 훨씬 더 길고 촘촘하게 다시 써라.' : ''), state.get(pid), { request });
-      const r = await runClaudeCall({ ...c, mockKey: 'F-AGENT', signal: ctx && ctx.signal, model: state.get(pid).model });
+      const now = state.get(pid);
+      const r = await runClaudeCall({ ...c, mockKey: 'F-AGENT', signal: ctx && ctx.signal, model: slotModel(now, 'F-AGENT') || now.model });
       if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
       if (!r.ok) { if (attempt) return { ok: false, error: r.error }; continue; }
       made = readAgent(r.text, code);

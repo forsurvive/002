@@ -476,11 +476,12 @@ function settings() {
     field('set-request', '요청사항', p.request, true),
     h('div', null,
       h('div', { class: 'lab', text: '자료' }),
-      p.materials.map((m) => h('div', { class: 'mat' },
+      p.materials.map((m) => h('div', { class: 'mat', style: 'cursor:pointer', onclick: () => openMaterial(m.id) },
         h('div', { class: 'name', text: m.name }),
         h('div', { class: 'when', text: String(m.chars) }),
-        h('button', { class: 'btn-text red', text: '삭제', onclick: () => api('material.delete', { ids: [m.id] }) })))),
-    // 자료를 들이는 자리는 작업실 [+] 에 있다 — 여기에는 목록과 삭제만 둔다(사용자 지시).
+        h('button', { class: 'btn-text', text: '보기', onclick: (e) => { stop(e); openMaterial(m.id); } }),
+        h('button', { class: 'btn-text red', text: '삭제', onclick: (e) => { stop(e); api('material.delete', { ids: [m.id] }); } })))),
+    // 자료를 들이는 자리는 작업실 [+] 에 있다 — 여기에는 목록 · 보기 · 삭제만 둔다(사용자 지시).
     h('div', null,
       h('div', { class: 'lab', text: '에이전트' }),
       (p.crew || []).map((a) => h('div', { class: 'mat' },
@@ -558,13 +559,15 @@ function authRow(a) {
   h('span', { text: AUTH_SAY[m] || m }))));
 }
 
-function modelRow(list, cur, pick) {
-  return h('div', { class: 'line' }, (list || []).map((m) => h('div', {
+// follow 를 주면 맨 앞에 «따르기» 칸(빈 값)이 선다 — 지어진 에이전트가 작품의 모델을 따르는 자리.
+function modelRow(list, cur, pick, follow) {
+  const opts = (follow ? [''] : []).concat(list || []);
+  return h('div', { class: 'line' }, opts.map((m) => h('div', {
     class: 'line', style: 'gap:6px;cursor:pointer',
     onmousedown: () => pick(m),
   },
   h('button', { class: 'ck' + (cur === m ? ' on' : '') }),
-  h('span', { text: m }))));
+  h('span', { text: m || follow }))));
 }
 
 // 작가가 짓는 에이전트 — 이름·역할·프롬프트 셋. 새로 지을 때만 단추가 있고, 고칠 때는 치는 대로 들어간다.
@@ -641,6 +644,7 @@ function agentList(p) {
     },
     h('span', { class: 'mark', text: pr.code }),
     h('div', { class: 'name', text: pr.name }),
+    pr.model ? h('span', { class: 'mark', text: pr.model }) : null,
     pr.made ? h('span', { class: 'when', text: '지음' }) : null,
     pr.edited ? h('span', { class: 'when', style: 'color:var(--red)', text: '고침' }) : null)));
 }
@@ -679,8 +683,40 @@ function promptPanel(close) {
     h('div', { class: 'panel-body' },
       h('div', null, h('div', { class: 'lab', text: '이름' }), textbox('pr-name', '이름', one.name, { onblur: save })),
       h('div', null, h('div', { class: 'lab', text: '역할' }), textbox('pr-role', '역할', one.role, { onblur: save })),
+      h('div', null,
+        h('div', { class: 'lab', text: '모델' }),
+        // 정하지 않으면 작품의 모델을 따른다 — 작품의 모델을 바꾸면 이 자리도 따라 바뀐다.
+        // [되돌리기] 는 글만 걷는다. 모델은 여기서 «작품 모델 따름» 을 눌러 걷는다.
+        modelRow(S.project && S.project.models, one.model || '', (m) => {
+          S.open.one = { ...one, model: m };
+          render();
+          api('prompt.model', { code: one.code, model: m });
+        }, '작품 모델 따름 (' + ((S.project && S.project.model) || '') + ')')),
       h('div', null, h('div', { class: 'lab', text: '이번에 할 일' }), area('pr-task', '이번에 할 일', one.task, { onblur: save })),
       h('div', null, h('div', { class: 'lab', text: '프롬프트' }), area('pr-craft', '프롬프트', one.craft, { class: 'body-edit', onblur: save }))));
+}
+
+// 넣어 둔 자료를 읽는다 — 프로젝트를 만들 때 넣은 것도, 작업실 [+] 로 들인 것도.
+// 읽기만 한다: 자료는 넣은 그대로 에이전트에게 간다. 본문은 열 때 한 번 받아 온다(목록에는 길이만 온다).
+async function openMaterial(id) {
+  S.open = { type: 'material', id, one: null };
+  render();
+  const r = await api('peek', { id });
+  if (!S.open || S.open.type !== 'material' || S.open.id !== id) return;
+  S.open.one = r.ok ? r.one : { id, name: '없습니다', text: '' };
+  render();
+}
+
+function materialPanel(close) {
+  const one = S.open.one;
+  return h('div', { class: 'panel' },
+    h('div', { class: 'panel-head' },
+      h('span', { class: 'mark', text: '자료' }),
+      h('div', { class: 'name', text: one ? one.name : '…' }),
+      h('button', { class: 'x', text: '×', onclick: close })),
+    h('div', { class: 'panel-body' },
+      one ? h('div', { class: 'when', text: String(one.text || '').length.toLocaleString() + '자' }) : null,
+      h('div', { class: 'mat-read', text: one ? (one.text || '(비어 있음)') : '…' })));
 }
 
 function fileButton(onRead) {
@@ -771,7 +807,8 @@ function layerOne() {
         : t === 'newdoc' ? newDocPanel(close)
             : t === 'prompt' ? promptPanel(close)
               : t === 'prepare' ? preparePanel(close)
-                : agentPanel(close);
+                : t === 'material' ? materialPanel(close)
+                  : agentPanel(close);
   return h('div', { class: 'layer', onclick: (e) => { if (e.target.classList.contains('layer')) close(); } }, panel);
 }
 

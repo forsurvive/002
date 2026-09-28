@@ -1520,6 +1520,74 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   st3.remove('p_pz');
 }
 
+// ---------------------------------------------------------------- 지어진 에이전트(자리)의 모델 · 넣어 둔 자료 보기
+
+{
+  const r = await post('project.create', {
+    name: '자리 모델', spec: { form: '소설' },
+    materials: [{ name: '처음 넣은 자료', text: '첫 줄\n둘째 줄' }],
+  });
+  const pid = r.pid;
+  await settle(pid);
+  let st = await stateOf(pid);
+  const row = (code) => st.project.prompts.find((x) => x.code === code) || {};
+  eq('정하지 않은 자리는 빈 값(작품의 모델을 따른다)', row('F-UPDATE').model, '');
+
+  let used = '';
+  globalThis.__SE2_MOCK_FN = (args) => { if (args.mockKey === 'F-UPDATE') used = args.model; return MOCK_FN(args); };
+  const d = await post('doc.create', { pid, title: '자리 모델 문서' });
+  const update = async () => { used = ''; await post('doc.update', { pid, id: d.id }); await settle(pid); return used; };
+  eq('정하지 않으면 작품의 모델로 부른다', await update(), 'opus');
+
+  ok('자리에 모델을 정한다', (await post('prompt.model', { pid, code: 'F-UPDATE', model: 'sonnet' })).ok);
+  st = await stateOf(pid);
+  eq('목록에 그 자리의 모델이 선다', row('F-UPDATE').model, 'sonnet');
+  eq('다른 자리는 그대로', row('F-TALK').model, '');
+  eq('모델만 바꾼 자리는 «고침»으로 보이지 않는다', row('F-UPDATE').edited, false);
+  eq('열어 보면 모델이 있다', (await post('prompt.read', { pid, code: 'F-UPDATE' })).one.model, 'sonnet');
+  eq('**그 자리는 정해 둔 모델로 부른다**', await update(), 'sonnet');
+  await post('project.spec', { pid, model: 'fable' });
+  eq('작품의 모델을 바꿔도 정해 둔 자리는 그대로', await update(), 'sonnet');
+
+  const a = await post('agent.create', { pid, name: '갑', role: 'ㄱ', craft: 'ㄱ', model: 'opus' });
+  await post('doc.write', { pid, id: d.id, agentIds: [a.id] });
+  eq('걸린 사람의 모델이 자리의 모델보다 먼저', await update(), 'opus');
+  await post('doc.write', { pid, id: d.id, agentIds: [] });
+
+  await post('prompt.write', { pid, code: 'F-UPDATE', name: '고친 이름' });
+  await post('prompt.reset', { pid, code: 'F-UPDATE' });
+  eq('[되돌리기] 는 글만 걷고 모델은 남긴다', (await post('prompt.read', { pid, code: 'F-UPDATE' })).one.model, 'sonnet');
+
+  await post('prompt.model', { pid, code: 'F-UPDATE', model: '' });
+  eq('빈 값이면 작품의 모델을 따르는 자리로 돌아간다', (await post('prompt.read', { pid, code: 'F-UPDATE' })).one.model, '');
+  eq('걷으면 다시 작품의 모델로 부른다', await update(), 'fable');
+  eq('모르는 모델은 받지 않는다', (await post('prompt.model', { pid, code: 'F-UPDATE', model: '없는모델' })).ok, false);
+  eq('없는 자리는 받지 않는다', (await post('prompt.model', { pid, code: 'X-NONE', model: 'opus' })).ok, false);
+  ok('제어 자리(종류 판정 · 에이전트 짓기)에도 정할 수 있다', (await post('prompt.model', { pid, code: 'F-KIND', model: 'sonnet' })).ok);
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  const agentsSrc = src(join(HERE, 'agents.mjs'));
+  ok('에이전트를 지을 때도 그 자리의 모델을 쓴다', agentsSrc.includes("slotModel(project, 'F-KIND') || project.model") && agentsSrc.includes("slotModel(now, 'F-AGENT') || now.model"));
+
+  const storeMod = await import('./store.mjs');
+  eq('옛 파일의 모르는 이름은 걷는다', JSON.stringify(storeMod.slotModelsOf({ 'F-UPDATE': 'sonnet', 'F-TALK': '없는모델', S02: '' })), '{"F-UPDATE":"sonnet"}');
+  eq('칸이 없는 옛 파일은 빈 표', JSON.stringify(storeMod.slotModelsOf(undefined)), '{}');
+
+  // 자료 — 목록에는 길이만, 열면 본문 그대로
+  st = await stateOf(pid);
+  const m = st.project.materials[0] || {};
+  ok('목록에는 본문이 실리지 않는다', m.id && !('text' in m) && m.chars === '첫 줄\n둘째 줄'.length);
+  const pk = await post('peek', { pid, id: m.id });
+  eq('**만들 때 넣은 자료를 펼쳐 본다**', pk.one && pk.one.text, '첫 줄\n둘째 줄');
+  eq('자료 이름이 함께 온다', pk.one && pk.one.name, '처음 넣은 자료');
+
+  const app = src(join(ROOT, 'web', 'app.js'));
+  ok('설정의 자료 줄을 누르면 연다', app.includes('onclick: () => openMaterial(m.id)') && app.includes("text: '보기'"));
+  ok('자료 창은 본문을 받아 와 보여 준다', /async function openMaterial\(/.test(app) && app.includes("t === 'material' ? materialPanel(close)"));
+  ok('삭제 단추를 눌러도 자료 창이 열리지 않는다', app.includes("onclick: (e) => { stop(e); api('material.delete'"));
+  ok('지어진 에이전트 창에 모델 칸이 있다', app.includes("api('prompt.model'") && app.includes("'작품 모델 따름 ('"));
+  ok('목록에 자리의 모델이 보인다', app.includes("pr.model ? h('span', { class: 'mark', text: pr.model })"));
+}
+
 // ---------------------------------------------------------------- 화면-서버 배선
 
 {
