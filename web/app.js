@@ -35,9 +35,9 @@ const brandMark = (style) => h('div', { class: 'brand', style, text: STUDIO });
 
 // 처음 쓰는 사람을 위한 작업 순서 — 설정 탭에 접어 둔다.
 const GUIDE = [
-  ['① 프로젝트를 만든다', '첫 화면 오른쪽 위 [+]. 이름·형식과 자료만 있으면 됩니다(개요와 분량은 비워 두어도 됩니다). 만들고 나면 왼쪽 «에이전트 준비»가 돌며 자료를 한 번 읽어 «자료 분석»을 남깁니다.'],
+  ['① 프로젝트를 만든다', '첫 화면 오른쪽 위 [+]. 이름·형식과 자료만 있으면 됩니다(개요와 분량은 비워 두어도 됩니다). 만들고 나면 왼쪽 «에이전트 준비»가 돌며 자료를 한 번 읽어 «자료 분석»을 남깁니다. 넣은 자료는 작업실 «자료» 카테고리에 문서로 들어갑니다.'],
   ['② 문서를 짓는다', '작업실 [+] → 문서. 이름만 짓고 [생성]을 누르면 요청사항과 참조를 보고 씁니다. 본문을 직접 치셔도 됩니다. 한 호출이 십 분을 넘기기도 하니 작업 줄의 지난 시간을 보고 기다리십시오.'],
-  ['③ 참조를 건다', '문서 창의 «참조»에 자료와 다른 문서를 겁니다. 확정본(빨간 토글)을 켜 두면 그 문서가 «최우선 사실»로 실려 다른 글을 다스립니다.'],
+  ['③ 참조를 건다', '문서 창의 «참조»에 다른 문서를 겁니다(«자료» 카테고리의 자료도 문서라 똑같이 걸립니다). 확정본(빨간 토글)을 켜 두면 그 문서가 «최우선 사실»로 실려 다른 글을 다스립니다.'],
   ['④ 에이전트를 건다', '설정에서 이름·역할·프롬프트·쓸 모델로 사람을 짓고, 문서 창의 «에이전트»에 걸어 둡니다. 그 문서를 짓고 고칠 때 그 사람이 씁니다.'],
   ['⑤ 고쳐 간다', '본문이나 요청사항을 고치고 [갱신]. 옛 판은 «이력»에 남아 언제든 되돌립니다.'],
   ['⑥ 검사하고 듣는다', '[+] → 모순 검사로 앞뒤를 맞추고, 합평회로 평을 듣습니다. 둘 다 «대상»에 볼 문서를 겁니다. 모순 검사는 맞댈 것이 둘은 있어야 합니다(대상 둘, 또는 대상 하나에 참조 하나).'],
@@ -474,14 +474,10 @@ function settings() {
     h('div', { class: 'grid2' }, field('set-length', '분량', p.spec.length), h('div')),
     field('set-standard', '집필 기준', p.standard, true),
     field('set-request', '요청사항', p.request, true),
+    // 자료는 작업실 «자료» 카테고리의 보통 문서다(사용자 지시, 2026-09-28) — 여기에는 어디 있는지만 이른다.
     h('div', null,
       h('div', { class: 'lab', text: '자료' }),
-      p.materials.map((m) => h('div', { class: 'mat', style: 'cursor:pointer', onclick: () => openMaterial(m.id) },
-        h('div', { class: 'name', text: m.name }),
-        h('div', { class: 'when', text: String(m.chars) }),
-        h('button', { class: 'btn-text', text: '보기', onclick: (e) => { stop(e); openMaterial(m.id); } }),
-        h('button', { class: 'btn-text red', text: '삭제', onclick: (e) => { stop(e); api('material.delete', { ids: [m.id] }); } })))),
-    // 자료를 들이는 자리는 작업실 [+] 에 있다 — 여기에는 목록 · 보기 · 삭제만 둔다(사용자 지시).
+      h('div', { class: 'when', text: '작업실의 «자료» 카테고리에 문서로 있습니다 — 열어 읽고 고치며, 참조로 걸고, 확정본으로 켤 수 있습니다.' })),
     h('div', null,
       h('div', { class: 'lab', text: '에이전트' }),
       (p.crew || []).map((a) => h('div', { class: 'mat' },
@@ -696,29 +692,6 @@ function promptPanel(close) {
       h('div', null, h('div', { class: 'lab', text: '프롬프트' }), area('pr-craft', '프롬프트', one.craft, { class: 'body-edit', onblur: save }))));
 }
 
-// 넣어 둔 자료를 읽는다 — 프로젝트를 만들 때 넣은 것도, 작업실 [+] 로 들인 것도.
-// 읽기만 한다: 자료는 넣은 그대로 에이전트에게 간다. 본문은 열 때 한 번 받아 온다(목록에는 길이만 온다).
-async function openMaterial(id) {
-  S.open = { type: 'material', id, one: null };
-  render();
-  const r = await api('peek', { id });
-  if (!S.open || S.open.type !== 'material' || S.open.id !== id) return;
-  S.open.one = r.ok ? r.one : { id, name: '없습니다', text: '' };
-  render();
-}
-
-function materialPanel(close) {
-  const one = S.open.one;
-  return h('div', { class: 'panel' },
-    h('div', { class: 'panel-head' },
-      h('span', { class: 'mark', text: '자료' }),
-      h('div', { class: 'name', text: one ? one.name : '…' }),
-      h('button', { class: 'x', text: '×', onclick: close })),
-    h('div', { class: 'panel-body' },
-      one ? h('div', { class: 'when', text: String(one.text || '').length.toLocaleString() + '자' }) : null,
-      h('div', { class: 'mat-read', text: one ? (one.text || '(비어 있음)') : '…' })));
-}
-
 function fileButton(onRead) {
   const input = h('input', {
     type: 'file', style: 'display:none', multiple: true,
@@ -807,16 +780,14 @@ function layerOne() {
         : t === 'newdoc' ? newDocPanel(close)
             : t === 'prompt' ? promptPanel(close)
               : t === 'prepare' ? preparePanel(close)
-                : t === 'material' ? materialPanel(close)
-                  : agentPanel(close);
+                : agentPanel(close);
   return h('div', { class: 'layer', onclick: (e) => { if (e.target.classList.contains('layer')) close(); } }, panel);
 }
 
-// 참조 칩이 가리킬 수 있는 것 — 문서와 자료
+// 참조 칩이 가리킬 수 있는 것 — 문서(자료도 «자료» 카테고리의 문서다)
 function refIndex() {
   const m = new Map();
   for (const d of S.project.docs || []) m.set(d.id, { title: d.title, isFinal: d.isFinal, kind: d.kind });
-  for (const x of S.project.materials || []) m.set(x.id, { title: x.name, mat: true });
   return m;
 }
 
@@ -1004,7 +975,6 @@ function refLine(label, ids, byId, save, selfId, pool, fixed) {
       (ids || []).map((id) => {
         const t = byId.get(id);
         return h('span', { class: 'chip' + (t && t.isFinal ? ' final' : '') },
-          t && t.mat ? h('span', { class: 'mark', text: '자료' }) : null,
           h('span', { text: t ? t.title : '없음' }),
           h('button', { text: '×', onclick: () => save((ids || []).filter((x) => x !== id)) }));
       }),
@@ -1284,24 +1254,7 @@ function pickLayer() {
     h('div', { class: 'panel' },
       h('div', { class: 'panel-head' }, h('div', { class: 'name', text: S.pick.label || '참조' }), h('button', { class: 'x', text: '×', onclick: close })),
       h('div', { class: 'panel-body' },
-        (p.materials || []).length ? h('div', { class: 'sec' },
-          h('div', { class: 'sec-head' },
-            h('button', {
-              class: 'ck' + ((p.materials || []).every((m) => chosen.has(m.id)) ? ' on' : ''),
-              onclick: () => {
-                const allOn = (p.materials || []).every((m) => chosen.has(m.id));
-                (p.materials || []).forEach((m) => (allOn ? chosen.delete(m.id) : chosen.add(m.id)));
-                S.pick.ids = [...chosen]; S.pick.save(S.pick.ids); render();
-              },
-            }),
-            h('div', { class: 'name', text: '자료' })),
-          (p.materials || []).map((m) => [
-            h('div', { class: 'row', onclick: () => peekOne(m.id) },
-              h('button', { class: 'ck' + (chosen.has(m.id) ? ' on' : ''), onclick: (e) => { stop(e); flip(m.id); } }),
-              h('div', { class: 'name', text: m.name }),
-              h('div', { class: 'when', text: String(m.chars) })),
-            peekBox(m.id),
-          ])) : null,
+        // 자료는 «자료» 카테고리의 문서라 아래 카테고리들 사이에 함께 선다.
         p.categories.map((c) => {
         const ids = c.docIds.filter((id) => id !== S.pick.selfId);
         if (!ids.length) return null;

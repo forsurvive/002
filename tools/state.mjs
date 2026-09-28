@@ -2,6 +2,7 @@
 // 모든 고침은 update() 하나를 지난다 — 한 프로세스 안에서 차례로 돌므로 서로를 덮어쓰지 않는다.
 
 import { loadProject, saveProject, listProjects, createProject, deleteProject } from './store.mjs';
+import { materialsToDocs } from './model.mjs';
 
 const cache = new Map();
 
@@ -9,6 +10,8 @@ export function get(pid) {
   if (cache.has(pid)) return cache.get(pid);
   const p = loadProject(pid);
   if (!p) return null;
+  // 옛 판의 자료(p.materials)는 처음 읽을 때 한 번 작업실 «자료» 카테고리의 문서로 옮기고 바로 적는다.
+  if (materialsToDocs(p)) saveProject(p);
   cache.set(pid, p);
   return p;
 }
@@ -25,6 +28,8 @@ export function update(pid, fn) {
 
 export function create(fields) {
   const p = createProject(fields);
+  // 만들며 넣은 자료도 곧바로 «자료» 카테고리의 문서가 된다.
+  if (materialsToDocs(p)) saveProject(p);
   cache.set(p.id, p);
   return p;
 }

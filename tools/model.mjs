@@ -45,6 +45,7 @@ export function docCreate(p, fields = {}) {
     targetIds: Array.isArray(fields.targetIds) ? fields.targetIds.slice() : [],
     agentIds: Array.isArray(fields.agentIds) ? fields.agentIds.slice() : [],
     versions: [],
+    ...(fields.material ? { material: true } : {}),
     createdAt: now(),
     updatedAt: now(),
   };
@@ -303,18 +304,48 @@ export function firstLineName(text) {
   return first.slice(0, 24) || '붙여 넣은 글';
 }
 
+// 자료는 작업실 «자료» 카테고리의 보통 문서다(사용자 지시, 2026-09-28) — 참조로 걸고, 확정본으로 켜고, 고치고, 지운다.
+// 문서에 남는 표(material)는 하나만 가린다: 에이전트 준비(종류 판정 · 짓기 · «자료 분석»)가 «만들 때 넣은 자료»로 읽는 것.
+export const MATERIAL_CATEGORY = '자료';
+
+export const materialDocs = (p) => (p.docs || []).filter((d) => d.material);
+
+// 그 카테고리 — 없으면 맨 앞에 짓는다. 같은 이름의 카테고리가 이미 있으면 그것을 쓴다.
+export function materialCategory(p) {
+  let c = p.categories.find((x) => x.name === MATERIAL_CATEGORY);
+  if (!c) { c = { id: newId('c'), name: MATERIAL_CATEGORY, createdAt: now() }; p.categories.unshift(c); }
+  return c;
+}
+
+// 옛 판의 자료(p.materials)를 그 카테고리의 문서로 옮긴다 — 이미 만든 프로젝트에도, 새로 만드는 프로젝트에도.
+// id 는 그대로 둔다: 문서 · 논의 스레드에 걸어 둔 참조가 그대로 그 글을 가리키게. 옮겼으면 true.
+export function materialsToDocs(p) {
+  if (!Array.isArray(p.materials) || !p.materials.length) return false;
+  const list = p.materials.filter((m) => m && str(m.text).trim());
+  const c = list.length ? materialCategory(p) : null;
+  for (const m of list) {
+    const at = Number(m.addedAt) || now();
+    p.docs.push({
+      id: p.docs.some((d) => d.id === m.id) ? newId('d') : str(m.id) || newId('d'),
+      src: '', kind: 'doc', title: str(m.name).trim() || '자료', body: str(m.text),
+      isFinal: false, categoryId: c.id, request: '', refIds: [], targetIds: [], agentIds: [], versions: [],
+      material: true, createdAt: at, updatedAt: at,
+    });
+  }
+  p.materials = [];
+  return true;
+}
+
 export function materialAdd(p, name, text) {
   const t = str(text);
   if (!t.trim()) return null;
-  const m = { id: newId('m'), name: str(name).trim() || '자료', text: t, addedAt: now() };
-  p.materials.push(m);
-  return m;
+  return docCreate(p, { title: str(name).trim() || '자료', body: t, categoryId: materialCategory(p).id, material: true });
 }
 
+// 자료도 문서라 지우면 휴지통으로 간다(되살릴 수 있다).
 export function materialDelete(p, id) {
-  const i = p.materials.findIndex((m) => m.id === id);
-  if (i < 0) return null;
-  return p.materials.splice(i, 1)[0];
+  const d = findDoc(p, id);
+  return d && d.material ? docDelete(p, id) : null;
 }
 
 // ---------------------------------------------------------------- 에이전트 (작가가 짓는다)

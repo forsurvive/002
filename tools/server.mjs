@@ -30,7 +30,7 @@ const pickModel = (v, fallback) => (MODELS.includes(String(v || '')) ? String(v 
 
 // 준비가 온전히 끝났는가 — 프롬프트가 다 서 있고, 자료가 있다면 «자료 분석»까지 남았는가.
 // 둘 중 하나라도 비면 화면이 [에이전트 준비 다시] 를 세운다.
-const prepared = (p) => agentsReady(p) && (!(p.materials || []).length || p.docs.some((d) => d.title === STUDY_TITLE));
+const prepared = (p) => agentsReady(p) && (!model.materialDocs(p).length || p.docs.some((d) => d.title === STUDY_TITLE));
 
 // 프로젝트를 만든 직후 그 프로젝트 전용 에이전트를 짓는다(소설이면 판정만 남기고 끝난다).
 function startAgentPrep(pid, request = '') {
@@ -127,14 +127,12 @@ const OPS = {
   },
 
   // 고르기 창에서 «이게 무슨 글이더라»를 그 자리에서 펼쳐 보는 문.
-  // 문서·자료·에이전트 어느 것이든 id 하나로 본문을 내어 준다(폰도 이 문 하나로 족하다).
+  // 문서(자료도 문서다)·에이전트 어느 것이든 id 하나로 본문을 내어 준다(폰도 이 문 하나로 족하다).
   'peek': (b) => {
     const p = state.get(b.pid);
     if (!p) return bad('프로젝트를 찾을 수 없습니다');
     const d = model.findDoc(p, b.id);
     if (d) return ok({ one: { id: d.id, name: d.title, text: model.bodyOf(d) } });
-    const m = (p.materials || []).find((x) => x.id === b.id);
-    if (m) return ok({ one: { id: m.id, name: m.name, text: m.text } });
     const a = model.findAgent(p, b.id);
     if (a) return ok({ one: { id: a.id, name: a.name, text: [a.role, a.craft].filter((x) => String(x || '').trim()).join('\n\n') } });
     return bad('없습니다');
@@ -145,7 +143,7 @@ const OPS = {
     return state.remove(b.pid) ? ok() : bad('프로젝트를 찾을 수 없습니다');
   },
 
-  // ---------------- 자료
+  // ---------------- 자료 — 작업실 «자료» 카테고리의 문서로 들고 난다(지우면 휴지통)
   'material.add': (b) => state.update(b.pid, (p) => { model.materialAdd(p, b.name || model.firstLineName(b.text), b.text); }),
   'material.delete': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.materialDelete(p, id); }),
 
@@ -282,7 +280,6 @@ function stateOf(pid) {
   if (!p) return null;
   return {
     id: p.id, name: p.name, spec: p.spec, standard: p.standard, request: p.request,
-    materials: (p.materials || []).map((m) => ({ id: m.id, name: m.name, chars: String(m.text || '').length })),
     categories: model.categoriesView(p),
     crew: (p.crew || []).map((a) => ({ id: a.id, name: a.name, role: a.role, craft: a.craft, model: a.model || '' })),
     docs: p.docs.map((d) => ({

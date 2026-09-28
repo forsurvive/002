@@ -411,7 +411,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const t2 = await post('thread.create', { pid, title: '논의' });
   await post('thread.title', { pid, id: t2.id, title: '이름 지은 논의' });
   const t3 = await post('thread.create', { pid, title: '논의' });
-  await post('thread.refs', { pid, id: t3.id, refIds: [(await stateOf(pid)).project.materials[0].id] });
+  await post('thread.refs', { pid, id: t3.id, refIds: [(await stateOf(pid)).project.categories.find((c) => c.name === '자료').docIds[0]] });
   const t4 = await post('thread.create', { pid, title: '논의' });
   const who = await post('agent.create', { pid, name: '갑', role: 'ㄱ', craft: 'ㄱ' });
   await post('thread.agents', { pid, id: t4.id, agentIds: [who.id] });
@@ -637,9 +637,11 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('스레드 이름을 고친다', (await stateOf(pid)).project.threads[0].title, '주인공 고르기');
 
   await post('material.add', { pid, text: '새 자료 첫 줄\n둘째 줄' });
-  const mats = (await stateOf(pid)).project.materials;
-  eq('붙여 넣은 자료의 이름', mats[mats.length - 1].name, '새 자료 첫 줄');
-  ok('글자 수가 함께 온다', mats[mats.length - 1].chars > 0);
+  const stM = (await stateOf(pid)).project;
+  const matCat = stM.categories.find((c) => c.name === '자료');
+  const added = stM.docs.find((d) => d.id === matCat.docIds[matCat.docIds.length - 1]) || {};
+  eq('붙여 넣은 자료의 이름', added.title, '새 자료 첫 줄');
+  eq('붙여 넣은 자료도 «자료» 카테고리의 문서다', added.body, '새 자료 첫 줄\n둘째 줄');
   await post('project.delete', { pid });
 }
 
@@ -1134,28 +1136,72 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
-  // ③ 자료를 참조로 고르면 «■ 자료» 구획에 실린다 (참조 문서 자리가 아니다)
+  // ③ 자료는 작업실 «자료» 카테고리의 보통 문서다(사용자 지시, 2026-09-28) —
+  //    참조로 고르면 «■ 참조 문서», 확정본으로 켜면 «■ 확정본» 에 실린다. «■ 자료» 는 에이전트 준비만 쓴다.
   const st2 = await import('./state.mjs');
   const eng = await import('./engine.mjs');
   const pj = st2.create({
     name: '자료 참조', spec: { form: '소설' },
     materials: [{ name: '등대 자료', text: '난파선 목재' }, { name: '안 고른 자료', text: '쓰이지 않는다' }],
   });
+  const p0 = st2.get(pj.id);
+  eq('만들며 넣은 자료는 옛 칸에 남지 않는다', p0.materials.length, 0);
+  const cat = p0.categories.find((c) => c.name === '자료');
+  ok('«자료» 카테고리가 맨 앞에 선다', !!cat && p0.categories[0] === cat);
+  const mdocs = p0.docs.filter((d) => cat && d.categoryId === cat.id);
+  eq('자료마다 문서 하나', mdocs.map((d) => d.title).join('|'), '등대 자료|안 고른 자료');
+  ok('자료 문서의 본문은 넣은 글 그대로', mdocs[0].body === '난파선 목재' && mdocs[0].kind === 'doc' && !mdocs[0].isFinal);
   let docId;
   st2.update(pj.id, (p) => { docId = model.docCreate(p, { title: '메모', body: '메모 본문' }).id; });
-  const matId = st2.get(pj.id).materials[0].id;
-  ok('자료 id 는 m_ 로 시작한다', eng.isMaterialId(matId));
-  ok('문서 id 는 자료가 아니다', !eng.isMaterialId(docId));
+  const matId = mdocs[0].id;
 
   let seen = '';
   globalThis.__SE2_MOCK_FN = ({ prompt }) => { seen = prompt; return '모의'; };
   await eng.callOnce({ pid: pj.id, code: 'F-UPDATE', refIds: [matId, docId] });
-  globalThis.__SE2_MOCK_FN = MOCK_FN;
-  ok('고른 자료가 자료 구획에 실린다', seen.includes('■ 자료') && seen.includes('난파선 목재'));
+  ok('**고른 자료는 참조 문서 구획에 실린다**', seen.includes('■ 참조 문서') && seen.indexOf('난파선 목재') > seen.indexOf('■ 참조 문서'));
   ok('안 고른 자료는 실리지 않는다', !seen.includes('쓰이지 않는다'));
-  ok('문서는 참조 문서 구획에', seen.includes('■ 참조 문서') && seen.includes('메모 본문'));
-  ok('자료가 참조 문서 자리로 새지 않는다', seen.indexOf('난파선 목재') < seen.indexOf('■ 참조 문서'));
+  ok('손으로 여는 자리에는 «■ 자료» 구획이 없다', !seen.includes('■ 자료'));
+  ok('문서도 참조 문서 구획에', seen.includes('메모 본문'));
+  st2.update(pj.id, (p) => { model.docSetFinal(p, matId, true); });
+  await eng.callOnce({ pid: pj.id, code: 'F-UPDATE', refIds: [matId, docId] });
+  ok('**확정본으로 켠 자료는 확정본 구획에 실린다**', seen.includes('■ 확정본') && seen.indexOf('난파선 목재') > seen.indexOf('■ 확정본'));
+  eq('확정본인 자료는 참조 구획에 겹쳐 싣지 않는다', seen.split('난파선 목재').length - 1, 1);
+  // 에이전트 준비(«자료 분석»)는 만들며 넣은 자료를 통째로 «■ 자료» 에 싣는다 — 확정본이어도 한 번만
+  await eng.callOnce({ pid: pj.id, code: 'S02', materials: true, allFinals: true });
+  ok('자료 분석은 자료를 모두 «■ 자료» 에 싣는다', seen.includes('■ 자료') && seen.includes('쓰이지 않는다') && seen.includes('난파선 목재'));
+  eq('자료 분석에서도 확정본인 자료가 한 번만 실린다', seen.split('난파선 목재').length - 1, 1);
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
   st2.remove(pj.id);
+}
+
+{
+  // ③-2 이미 만든 프로젝트 — 옛 판의 자료(p.materials)를 처음 읽을 때 «자료» 카테고리의 문서로 옮기고 파일에 적는다
+  const storeMod = await import('./store.mjs');
+  const st2 = await import('./state.mjs');
+  const eng = await import('./engine.mjs');
+  const old = storeMod.blankProject('p_oldmat', '옛 작품');
+  old.materials = [{ id: 'm_old1', name: '옛 자료', text: '옛 본문', addedAt: 1000 }, { id: 'm_blank', name: '빈 것', text: '  ' }];
+  old.categories.push({ id: 'c_keep', name: '설정', createdAt: 1 });
+  old.docs.push({ id: 'd_use', kind: 'doc', title: '쓰는 글', body: '', isFinal: false, categoryId: 'c_keep', request: '', refIds: ['m_old1'], targetIds: [], agentIds: [], versions: [] });
+  old.threads.push({ id: 'h_use', title: '논의', refIds: ['m_old1'], agentIds: [], messages: [], headId: null });
+  storeMod.saveProject(old);
+  st2.forget('p_oldmat');
+  const got = st2.get('p_oldmat');
+  eq('옛 자료 칸이 비워진다', got.materials.length, 0);
+  const d = got.docs.find((x) => x.id === 'm_old1');
+  ok('**옛 자료가 같은 id 의 문서가 된다**', !!d && d.title === '옛 자료' && d.body === '옛 본문' && d.kind === 'doc' && d.material === true && !d.isFinal);
+  ok('«자료» 카테고리에 들고, 그 카테고리가 맨 앞에 선다', !!d && got.categories[0].id === d.categoryId && got.categories[0].name === '자료');
+  ok('있던 카테고리는 그대로', got.categories.some((c) => c.id === 'c_keep'));
+  ok('빈 자료는 문서로 만들지 않는다', !got.docs.some((x) => x.title === '빈 것'));
+  eq('걸어 둔 참조가 그대로 그 글을 가리킨다', (eng.docsByIds(got, got.docs.find((x) => x.id === 'd_use').refIds)[0] || {}).text, '옛 본문');
+  const disk = storeMod.loadProject('p_oldmat');
+  ok('**옮긴 것이 곧바로 파일에 적혔다**', disk.materials.length === 0 && disk.docs.some((x) => x.id === 'm_old1'));
+  st2.forget('p_oldmat');
+  const again = st2.get('p_oldmat');
+  eq('다시 읽어도 한 벌', again.docs.filter((x) => x.id === 'm_old1').length, 1);
+  eq('카테고리도 한 벌', again.categories.filter((c) => c.name === '자료').length, 1);
+  eq('자료가 없는 옛 파일은 건드리지 않는다', model.materialsToDocs(storeMod.blankProject('p_none', '없음')), false);
+  st2.remove('p_oldmat');
 }
 
 {
@@ -1459,14 +1505,17 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   });
   const p = await settle(r.pid, 60000);
   eq('준비 작업은 완료', p.jobs.find((j) => j.kind === 'agents').status, 'done');
-  const made = p.docs.filter((d) => !d.src);
+  // 넣은 자료는 «자료» 카테고리의 문서로 서 있다 — 지은 문서에는 세지 않는다.
+  const matCatId = (p.categories.find((c) => c.name === '자료') || {}).id;
+  ok('넣은 자료가 «자료» 카테고리의 문서로 선다', p.docs.some((d) => d.categoryId === matCatId && d.body === '자료 본문'));
+  const made = p.docs.filter((d) => !d.src && d.categoryId !== matCatId);
   eq('지은 문서는 자료 분석 하나', made.length, 1);
   eq('그 이름', made[0].title, agents.STUDY_TITLE);
   ok('작업이 그 문서를 제 것으로 적는다', p.jobs[0].docIds.includes(made[0].id));
   // 작법서를 걷었으므로 가리키는 문서도 그 구획도 서지 않는다(사용자 지시, 2026-09-22).
   ok('가리키는 문서가 서지 않는다', p.docs.every((d) => !d.src));
   ok('작법서 구획이 서지 않는다', !(p.categories || []).some((c) => c.name === books.BOOK_CATEGORY));
-  ok('그래도 프로젝트는 선다', p.prepared && p.docs.length === 1);
+  ok('그래도 프로젝트는 선다', p.prepared && p.docs.length === 2);   // 자료 하나 + 자료 분석
   // 갱신 한 번이 나르는 짐이 가벼운가
   ok('갱신이 가볍다', JSON.stringify(await stateOf(r.pid)).length < 60000);
   ok('준비가 끝났다고 알린다', p.prepared);
@@ -1484,7 +1533,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const pid = r.pid;
   let p = await settle(pid, 60000);
   eq('준비가 실패한다', p.jobs.find((j) => j.kind === 'agents').status, 'failed');
-  eq('그때는 지은 문서가 없다', p.docs.filter((d) => !d.src).length, 0);
+  const matCat2 = (p.categories.find((c) => c.name === '자료') || {}).id;
+  eq('그때는 지은 문서가 없다(자료 문서만 있다)', p.docs.filter((d) => !d.src && d.categoryId !== matCat2).length, 0);
   ok('준비가 안 되었다고 알린다', !p.prepared);
 
   // 다시 걸면서 적은 요청사항이 그 호출에 실린다(저장하지는 않는다)
@@ -1572,18 +1622,28 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('옛 파일의 모르는 이름은 걷는다', JSON.stringify(storeMod.slotModelsOf({ 'F-UPDATE': 'sonnet', 'F-TALK': '없는모델', S02: '' })), '{"F-UPDATE":"sonnet"}');
   eq('칸이 없는 옛 파일은 빈 표', JSON.stringify(storeMod.slotModelsOf(undefined)), '{}');
 
-  // 자료 — 목록에는 길이만, 열면 본문 그대로
+  // 만들 때 넣은 자료 — 작업실 «자료» 카테고리의 문서다: 펼쳐 보고 · 확정본으로 켜고 · 지우면 휴지통
   st = await stateOf(pid);
-  const m = st.project.materials[0] || {};
-  ok('목록에는 본문이 실리지 않는다', m.id && !('text' in m) && m.chars === '첫 줄\n둘째 줄'.length);
-  const pk = await post('peek', { pid, id: m.id });
-  eq('**만들 때 넣은 자료를 펼쳐 본다**', pk.one && pk.one.text, '첫 줄\n둘째 줄');
-  eq('자료 이름이 함께 온다', pk.one && pk.one.name, '처음 넣은 자료');
+  ok('상태에 옛 자료 칸이 없다', !('materials' in st.project));
+  const matCat = st.project.categories.find((c) => c.name === '자료') || { docIds: [] };
+  const mdoc = st.project.docs.find((x) => x.id === matCat.docIds[0]) || {};
+  eq('**만들 때 넣은 자료가 작업실 문서로 선다**', mdoc.body, '첫 줄\n둘째 줄');
+  eq('자료 이름이 문서 이름', mdoc.title, '처음 넣은 자료');
+  const pk = await post('peek', { pid, id: mdoc.id });
+  eq('고르기 창에서도 펼쳐 본다', pk.one && pk.one.text, '첫 줄\n둘째 줄');
+  await post('doc.final', { pid, ids: [mdoc.id], on: true });
+  ok('**자료를 확정본으로 켠다**', (await stateOf(pid)).project.docs.find((x) => x.id === mdoc.id).isFinal === true);
+  await post('doc.write', { pid, id: mdoc.id, body: '고친 자료' });
+  eq('자료를 고친다', (await stateOf(pid)).project.docs.find((x) => x.id === mdoc.id).body, '고친 자료');
+  await post('doc.delete', { pid, ids: [mdoc.id] });
+  st = await stateOf(pid);
+  ok('자료를 지우면 휴지통으로 간다', !st.project.docs.some((x) => x.id === mdoc.id) && st.project.trash.some((e) => e.title === '처음 넣은 자료'));
+  ok('자료를 다 지우면 «자료 분석»을 다시 요구하지 않는다', st.project.prepared === true);
 
   const app = src(join(ROOT, 'web', 'app.js'));
-  ok('설정의 자료 줄을 누르면 연다', app.includes('onclick: () => openMaterial(m.id)') && app.includes("text: '보기'"));
-  ok('자료 창은 본문을 받아 와 보여 준다', /async function openMaterial\(/.test(app) && app.includes("t === 'material' ? materialPanel(close)"));
-  ok('삭제 단추를 눌러도 자료 창이 열리지 않는다', app.includes("onclick: (e) => { stop(e); api('material.delete'"));
+  ok('설정의 자료 칸은 작업실을 가리킨다', app.includes('작업실의 «자료» 카테고리에 문서로 있습니다') && !app.includes("api('material.delete'"));
+  ok('자료만 따로 여는 창은 없다(문서 창으로 연다)', !/function openMaterial\(/.test(app) && !app.includes("'material'"));
+  ok('고르기 창에 따로 선 «자료» 칸이 없다(카테고리로 선다)', !app.includes('p.materials'));
   ok('지어진 에이전트 창에 모델 칸이 있다', app.includes("api('prompt.model'") && app.includes("'작품 모델 따름 ('"));
   ok('목록에 자리의 모델이 보인다', app.includes("pr.model ? h('span', { class: 'mark', text: pr.model })"));
 }
@@ -1630,7 +1690,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('지어진 자리에 표가 선다', app.includes("pr.made ? h('span', { class: 'when', text: '지음' })"));
   ok('설정에 자료 치는 칸이 없다', !app.includes("area('set-mat'"));
   ok('차림표에도 자료가 없다', !app.includes("type: 'newmat'") && !/function makeMat\(/.test(app));
-  ok('설정에는 목록과 삭제가 남는다', app.includes("api('material.delete'"));
+  ok('설정에는 자료가 어디 있는지만 남는다', app.includes('작업실의 «자료» 카테고리에'));
   ok('한 줄만 골라도 손질거리가 선다', /picked\.length \? h\('div', \{ class: 'bulk' \}/.test(app));
   ok('머리줄 네모는 고른 것으로 셈한다', /const allPicked = /.test(app) && !app.includes('S.all'));
   // 자루에 남은 옛 id 때문에 «켜진 네모가 없는데 손질거리가 서 있는» 일이 있었다(사용자가 본 버그).

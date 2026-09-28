@@ -183,7 +183,7 @@ function startTour() {
     api(op, body) {
       if (op !== 'peek') return { ok: true };
       const id = body && body.id;
-      const one = (t.d.docs.find((x) => x.id === id) || t.d.materials.find((x) => x.id === id) || t.d.crew.find((x) => x.id === id));
+      const one = (t.d.docs.find((x) => x.id === id) || t.d.crew.find((x) => x.id === id));
       if (!one) return { ok: false, error: '없습니다' };
       return { ok: true, one: { id, name: one.title || one.name, text: one.body || one.text || one.craft || '' } };
     },

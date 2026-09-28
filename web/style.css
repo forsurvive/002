@@ -341,8 +341,6 @@ details summary:hover { opacity: .7; }
   border-bottom: 1px solid var(--line-soft); font-size: 15px;
 }
 .mat .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 자료 읽기 — 넣은 그대로(줄바꿈을 살려) 보여 준다 */
-.mat-read { white-space: pre-wrap; word-break: break-word; font-size: 15.5px; line-height: 1.75; color: var(--ink); }
 .grid2 { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
 
 /* 설정 탭 — 항목끼리 눈에 띄게 떨어져 보이도록 (사용자 지시) */

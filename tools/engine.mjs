@@ -60,20 +60,10 @@ export function finalDocs(project, { onlyIds = null } = {}) {
     .map(asItem);
 }
 
+// 만들 때 넣은 자료 — 이제는 작업실 «자료» 카테고리의 문서다(지금 본문으로 읽는다).
+// 에이전트 준비(종류 판정 · 짓기 · «자료 분석»)만 이것을 통째로 «■ 자료» 구획에 싣는다.
 export function materialItems(project) {
-  return (project.materials || []).map((m) => ({ id: m.id, name: m.name, text: m.text }));
-}
-
-// 참조 목록에는 문서 id 와 자료 id 가 섞여 들어올 수 있다. 자료는 «■ 자료» 구획으로 간다.
-export const isMaterialId = (id) => String(id || '').startsWith('m_');
-
-export function materialsByIds(project, ids = []) {
-  const out = [];
-  for (const id of ids) {
-    const m = (project.materials || []).find((x) => x.id === id);
-    if (m) out.push({ id: m.id, name: m.name, text: m.text });
-  }
-  return out;
+  return model.materialDocs(project).map(asItem);
 }
 
 // 일하는 법(tools/prompts.data.json)을 읽지 못했으면 부르지 않는다.
@@ -103,15 +93,17 @@ export async function callOnce({
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
   const pr = promptFor(project, code);
 
-  // 참조에 섞여 온 자료를 갈라낸다 — 자료는 문서 자리가 아니라 «■ 자료» 구획에 선다.
-  const pickedMats = materialsByIds(project, refIds.filter(isMaterialId));
-  const docRefIds = refIds.filter((id) => !isMaterialId(id));
+  // 자료도 보통 문서다 — 참조로 걸면 참조로, 확정본이면 확정본으로 실린다.
+  // 다만 에이전트 준비(materials)가 자료를 통째로 «■ 자료» 구획에 실을 때는 그 문서들을 다른 구획에 겹쳐 싣지 않는다.
+  const mats = materials ? materialItems(project) : [];
+  const matIds = new Set(mats.map((m) => m.id));
 
   // 한 문서는 한 구획에만 실린다.
   //  · 보통은 대상 > 확정본 > 참조 순서(합평할 원고가 확정본이어도 대상 자리에 남는다).
   //  · 모순 검사만 확정본 > 대상 > 참조 — 고른 문서 가운데 확정본이 있으면 그것이 기준이 되어야 한다.
-  const finalsAll = allFinals ? finalDocs(project) : finalDocs(project, { onlyIds: [...docRefIds, ...targetIds] });
-  const taken = new Set();
+  const finalsAll = (allFinals ? finalDocs(project) : finalDocs(project, { onlyIds: [...refIds, ...targetIds] }))
+    .filter((d) => !matIds.has(d.id));
+  const taken = new Set(matIds);
   let finals; let targets;
   // 고른 대상이 모두 확정본이면 기준으로 뺄 것이 없다 — 그때는 대상 자리에 그대로 둔다(구획이 사라지면 지시가 가리킬 곳이 없다).
   const allTargetsFinal = targetIds.length > 0 && targetIds.every((id) => finalsAll.some((d) => d.id === id));
@@ -126,7 +118,7 @@ export async function callOnce({
     finals = finalsAll.filter((d) => !taken.has(d.id));
     finals.forEach((d) => taken.add(d.id));
   }
-  const refs = docsByIds(project, docRefIds).filter((d) => !taken.has(d.id));
+  const refs = docsByIds(project, refIds).filter((d) => !taken.has(d.id));
   // 문서가 아닌 것도 «대상» 자리에 설 수 있다(합평 모으기가 받는 여러 합평 같은 것).
   if (extraTargets.length) targets = [...targets, ...extraTargets];
 
@@ -145,8 +137,8 @@ export async function callOnce({
   const systemPrompt = buildSystem({ prompt: pr, prev, next, crew, withFinalRule: finals.length > 0, withNoCount: nc });
   const prompt = buildUser({
     project,
-    // 자동 집필의 자료 단계는 자료를 통째로, 손으로 여는 자리는 «고른 자료»만 싣는다.
-    materials: materials ? materialItems(project) : pickedMats,
+    // 에이전트 준비만 자료를 통째로 싣는다. 손으로 여는 자리에서 고른 자료는 참조 · 확정본 구획으로 간다.
+    materials: mats,
     refs, finals, targets, talk, request, task, noCount: nc,
   });
 

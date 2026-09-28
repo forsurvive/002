@@ -162,6 +162,8 @@ function tourProject(now) {
   }, extra || {});
 
   const docs = [
+    // 만들 때 넣은 자료 — 작업실 «자료» 카테고리의 문서다
+    doc('m_1', '취재 메모 — 상조 도우미 인터뷰', TOUR_MATERIAL, { categoryId: 'c_mat' }),
     doc('d_study', '자료 분석', TOUR_STUDY, { categoryId: 'c_set' }),
     doc('d_rule', '대역이 지키는 말', TOUR_RULE, { categoryId: 'c_set' }),
     doc('d_char', '인물 — 노해진', TOUR_CHAR, { categoryId: 'c_set' }),
@@ -184,8 +186,8 @@ function tourProject(now) {
     },
     standard: '감정을 이름으로 부르지 않는다. 회차는 장면으로 열고 판이 바뀐 자리에서 끊는다. 세계의 규칙은 설명하지 않고 어기는 자리에서만 드러낸다.',
     request: '',
-    materials: [{ id: 'm_1', name: '취재 메모 — 상조 도우미 인터뷰', chars: TOUR_MATERIAL.length, text: TOUR_MATERIAL }],
     categories: [
+      { id: 'c_mat', name: '자료', virtual: false, docIds: ['m_1'] },
       { id: 'c_set', name: '설정', virtual: false, docIds: ['d_study', 'd_rule', 'd_char', 'd_treat'] },
       { id: 'c_ep', name: '회차', virtual: false, docIds: ['d_ep1'] },
     ],

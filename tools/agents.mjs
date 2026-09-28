@@ -6,7 +6,7 @@
 import { BUILTIN, AGENT_SLOTS, SLOT_DUTY } from './prompts.mjs';
 import { buildSystem, buildUser, cleanResponse } from './assemble.mjs';
 import { runClaudeCall } from './call.mjs';
-import { promptFor, callWithRetry, callAsking, promptsMissing, slotModel } from './engine.mjs';
+import { promptFor, callWithRetry, callAsking, promptsMissing, slotModel, materialItems } from './engine.mjs';
 import * as state from './state.mjs';
 import * as model from './model.mjs';
 
@@ -23,7 +23,7 @@ function ctl(code, extraTask, project, { materials = true, refs = [], request = 
     systemPrompt: buildSystem({ prompt: pr, withFinalRule: false, withNoCount: project.noCount !== false }),
     prompt: buildUser({
       project,
-      materials: materials ? (project.materials || []).map((m) => ({ id: m.id, name: m.name, text: m.text })) : [],
+      materials: materials ? materialItems(project) : [],
       refs,
       request,
       task: [pr.task, extraTask].filter(Boolean).join('\n'),
@@ -165,7 +165,7 @@ export const STUDY_TITLE = '자료 분석';
 export async function runStudy(pid, ctx, request = '') {
   const project = state.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
-  if (!(project.materials || []).length) return { ok: true, skipped: true };
+  if (!materialItems(project).length) return { ok: true, skipped: true };
   if (ctx && ctx.gate) await ctx.gate();
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   if (ctx) ctx.step(STUDY_TITLE);
