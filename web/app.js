@@ -398,16 +398,8 @@ function catSection(c, byId) {
       h('button', { class: 'ck' + (allPicked(sel, c.docIds) ? ' on' : ''), onclick: () => toggleAll(key, c.docIds, !allPicked(sel, c.docIds)) }),
       h('div', { class: 'name', text: c.name, onclick: () => { S.fold[key] = !folded; render(); } }),
       c.virtual ? null : h('button', { class: 'btn-text red', text: '삭제', onclick: () => api('cat.delete', { ids: [c.id] }) })),
+    // 고르면 다운로드 · 삭제만 선다 — 확정본은 줄마다 있는 토글로 켜고 끈다(사용자 지시, 2026-09-29).
     picked.length ? h('div', { class: 'bulk' },
-      // 지정과 해제를 한 단추로 — 고른 것이 모두 확정본이면 내리고, 아니면 올린다.
-      (() => {
-        const ids = picked;
-        const allFinal = ids.length > 0 && ids.every((id) => { const x = byId.get(id); return x && x.isFinal; });
-        return h('button', {
-          class: 'btn-line', text: allFinal ? '확정본 해제' : '확정본 지정',
-          onclick: () => api('doc.final', { ids, on: !allFinal }),
-        });
-      })(),
       h('button', {
         class: 'btn-line', text: '다운로드',
         onclick: () => {

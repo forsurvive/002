@@ -1667,7 +1667,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('h() 가 깊이를 가리지 않고 편다', /kids\.flat\(Infinity\)/.test(app));
   ok('고르는 것은 동그라미가 한다', /onclick: \(e\) => \{ stop\(e\); flip\(/.test(app));
   ok('에이전트가 없으면 그 자리에서 짓는다', app.includes('에이전트 만들기'));
-  ok('확정본은 한 단추다', app.includes("allFinal ? '확정본 해제' : '확정본 지정'"));
+  // 확정본은 줄마다 있는 토글로만 켠다 — 고른 것에 거는 [확정본 지정] 단추는 걷었다(사용자 지시, 2026-09-29).
+  ok('고른 줄의 손질거리에 확정본 단추가 없다', !app.includes("'확정본 지정'") && !app.includes("'확정본 해제'") && !app.includes('allFinal'));
+  ok('확정본은 줄의 토글로 켠다', app.includes("h('button', { class: 'tg' + (d.isFinal ? ' on' : ''), onclick: (e) => { stop(e); api('doc.final', { ids: [d.id], on: !d.isFinal }); } })"));
   // 한 줄만 골라도 머리줄에 손질거리가 선다(사용자 지시) — 전에는 «전체 선택»을 켠 때만 섰다.
   // 자료를 들이는 자리는 설정이 아니라 작업실 [+] 다(사용자 지시)
   // 모순 검사는 견주는 자리다 — 치는 칸이 없고, 맞댈 것이 둘은 있어야 한다(사용자 지시)
