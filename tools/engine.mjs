@@ -1,7 +1,7 @@
 // 호출 하나를 만드는 자리 — 프롬프트를 고르고, 구획을 채우고, 클로드를 부르고, 결과를 문서에 넣는다.
 // 자동 집필과 손 작업이 모두 이 문을 지난다.
 
-import { BUILTIN, haveBrain } from './prompts.mjs';
+import { haveBrain } from './prompts.mjs';
 import { cleanResponse } from './assemble.mjs';
 import { planCall } from '../core/reference/plan.mjs';
 import * as gen from '../core/generation/run.mjs';
@@ -10,39 +10,9 @@ import { isProvider } from '../ai/provider.mjs';
 import * as auth from './auth.mjs';
 import * as state from './state.mjs';
 
-// 그 자리의 프롬프트를 찾는 순서는 셋이다 —
-//   ① 작가가 설정에서 고친 것  ② 비소설이라 즉석으로 지은 것  ③ 내장
-// 칸 하나하나마다 이 순서로 고른다(이름만 고치고 작법은 그대로 두는 일이 되도록).
-export function promptFor(project, code) {
-  const mine = (project && project.prompts && project.prompts[code]) || null;
-  const made = (project && project.agents && project.agents[code]) || null;
-  const base = BUILTIN[code] || { code, name: '집필자', role: '글을 쓴다', task: '', craft: '' };
-  const pick = (k) => {
-    const a = mine && String(mine[k] || '').trim();
-    if (a) return mine[k];
-    const b = made && String(made[k] || '').trim();
-    if (b) return made[k];
-    return base[k] || '';
-  };
-  return { code, name: pick('name'), role: pick('role'), task: pick('task'), craft: pick('craft') };
-}
-
-// 그 자리에 정해 둔 모델 — 없으면 빈 값(작품의 모델을 따른다). 프롬프트 고치기와는 따로 둔다:
-// 모델만 바꾼 자리가 «고침»으로 보이거나, [되돌리기] 가 모델까지 걷어 가지 않게.
-export function slotModel(project, code) {
-  return String((project && project.slotModels && project.slotModels[code]) || '');
-}
-
-// 화면이 보여 줄 한 자리의 지금 값과, 작가가 고친 자리인지 여부
-export function promptView(project, code) {
-  return {
-    code,
-    ...promptFor(project, code),
-    model: slotModel(project, code),                                    // 비었으면 작품의 모델
-    edited: !!(project && project.prompts && project.prompts[code]),   // 작가가 고쳤다
-    made: !!(project && project.agents && project.agents[code]),       // 프로젝트를 만들 때 지어졌다
-  };
-}
+// 자리마다 프롬프트 · 모델을 고르는 셈은 tools/prompt-pick.mjs 로 옮겼다(온라인 서버가 CLI 없이 쓴다) — 이름은 그대로 내보낸다.
+export { promptFor, slotModel, promptView } from './prompt-pick.mjs';
+import { promptFor, slotModel } from './prompt-pick.mjs';
 
 // 참조 조립(무엇을 어느 구획에 싣나)은 core/reference/plan.mjs 로 옮겼다 — 지금까지의 이름도 그대로 내보낸다.
 export { docsByIds, finalDocs, materialItems } from '../core/reference/plan.mjs';
