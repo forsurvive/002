@@ -1619,7 +1619,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('없는 자리는 받지 않는다', (await post('prompt.model', { pid, code: 'X-NONE', model: 'opus' })).ok, false);
   ok('제어 자리(종류 판정 · 에이전트 짓기)에도 정할 수 있다', (await post('prompt.model', { pid, code: 'F-KIND', model: 'sonnet' })).ok);
   globalThis.__SE2_MOCK_FN = MOCK_FN;
-  const agentsSrc = src(join(HERE, 'agents.mjs'));
+  // 본체는 core/generation/agents.mjs 로 옮겼다 — 같은 규칙을 새 자리에서 본다
+  const agentsSrc = src(join(HERE, 'agents.mjs')) + src(join(ROOT, 'core', 'generation', 'agents.mjs'));
   ok('에이전트를 지을 때도 그 자리의 모델을 쓴다', agentsSrc.includes("slotModel(project, 'F-KIND') || project.model") && agentsSrc.includes("slotModel(now, 'F-AGENT') || now.model"));
 
   const storeMod = await import('./store.mjs');
