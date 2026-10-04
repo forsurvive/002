@@ -97,7 +97,7 @@
 
 | 묶음 | op | 누가 | 메모 |
 |---|---|---|---|
-| 인증 | `auth.signup` `auth.login` `auth.logout` `auth.me` `auth.password` | 누구나/본인 | 개인 가입은 정책 결정 후(초대제로 시작 가능). 로그인 실패는 같은 문구, 속도 제한 |
+| 인증 | `auth.signup` `auth.login` `auth.logout` `auth.me` `auth.password` | 누구나/본인 | `auth.signup` 은 **닫혀 있다**(결정: 지금은 운영자 발급, 자유 가입은 BYOK + 월 이용료 — 결제 결정 후, SECURITY §7-0). 로그인 실패는 같은 문구, 속도 제한 |
 | 초대 | `invite.create` `invite.accept` | 기관 관리자·강사 / 학생 | 코드 원문은 만들 때 한 번만 보여 준다 |
 | 기관 | `org.create` `org.update` `org.list` `org.members` `org.member.add/remove/role` | 플랫폼 관리자 / 기관 관리자 | 감사 로그 |
 | 라이선스 | `license.issue` `license.update` `license.revoke` `license.read` | 플랫폼 관리자 / 기관 관리자(읽기) | 감사 로그 |

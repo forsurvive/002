@@ -48,6 +48,10 @@ export async function run({ pool, ok, eq }) {
       await new Promise((r) => dev.close(r));
     }
 
+    // 가입 문은 없다(결정: 운영자 발급 · 자유 가입은 결제가 정해질 때까지 닫힘 — docs/SECURITY.md §7-0)
+    eq('**가입 문이 없다**', (await req('/api/auth/signup', { method: 'POST', body: { loginId: 'stranger', password: 'long-enough-x' } })).status, 401);
+    ok('가입 시도로 계정이 생기지 않는다', (await pool.query("SELECT 1 FROM users WHERE login_id = 'stranger'")).rowCount === 0);
+
     // ---------------- 로그인
     const wrong = await req('/api/auth/login', { method: 'POST', body: { loginId: 'web-a', password: 'nope-nope-nope' } });
     ok('틀리면 401 · 쿠키 없음', wrong.status === 401 && !wrong.headers.get('set-cookie'));
@@ -115,6 +119,8 @@ export async function run({ pool, ok, eq }) {
     eq('이상한 pid 도 같은 404', (await op('a', 'doc.write', { pid: "x' OR 1=1 --", id: dc.id })).status, 404);
     eq('pid 없이 고치는 문도 404', (await op('a', 'doc.write', { id: dc.id })).status, 404);
     eq('모르는 문은 404', (await op('a', 'admin.everything', {})).status, 404);
+    eq('로그인해도 가입 길은 없다(404)', (await req('/api/auth/signup', { who: 'a', method: 'POST', body: { loginId: 'stranger2', password: 'long-enough-x' } })).status, 404);
+    eq('가입 op 도 없다', (await op('a', 'auth.signup', { loginId: 'stranger3', password: 'long-enough-x' })).status, 404);
 
     // ---------------- 키는 화면으로 받지 않는다
     const kw = await op('a', 'auth.write', { mode: 'api', apiKey: 'sk-fake-test-value' });
