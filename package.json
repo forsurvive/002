@@ -1,0 +1,16 @@
+{
+  "name": "story-engine",
+  "private": true,
+  "description": "개인판(tools/ · web/)은 의존성 없이 돈다. 이 파일의 의존성은 온라인판(online/)만 쓴다.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node tools/test.mjs",
+    "test:online": "node online/test.mjs",
+    "migrate": "node online/migrate.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
+  }
+}

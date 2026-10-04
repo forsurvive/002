@@ -1,5 +1,6 @@
-# 기존 시험(개인판 기준선 + 새로 더한 것)을 push · PR 마다 돌린다.
-# 시험은 스스로 모의 호출(SE2_MOCK=1)과 임시 자료 상자를 쓴다 — 망·구독·비밀값이 필요 없다.
+# push · PR 마다 시험을 돌린다.
+#  · personal: 개인판 시험(tools/test.mjs) — 모의 호출 · 임시 자료 상자, 의존성 · 망 · 비밀값이 필요 없다.
+#  · online:   온라인판 시험(online/test.mjs) — 실제 PostgreSQL(서비스 컨테이너)로. 시험용 DB 이름은 _test 로 끝나야 한다.
 name: test
 
 on:
@@ -10,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  personal:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -19,3 +20,28 @@ jobs:
         with:
           node-version: 22
       - run: node tools/test.mjs
+
+  online:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: se
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: se_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U se -d se_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL_TEST: postgres://se:ci-only-password@127.0.0.1:5432/se_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - run: node online/test.mjs

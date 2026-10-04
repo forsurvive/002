@@ -11,6 +11,8 @@ node tools/test.mjs          # 스스로 SE2_MOCK=1 · 임시 SE2_DATA_DIR · �
 - 시험은 호스팅 설정(`SE2_HOST`·`SE2_ACCESS_KEY`·`PORT` …)을 시작할 때 지운다 — 늘 로컬 개인판 꼴로 돈다.
 - 윈도에서만 도는 칸(설치 줄을 실제로 돌리기)은 다른 OS 에서 건너뛴다.
 - GitHub Actions(`.github/workflows/test.yml`)가 push·PR 마다 같은 명령을 돌린다.
+- 온라인판: `npm ci` 후 `DATABASE_URL_TEST=postgres://…/<이름>_test node online/test.mjs` — 실제 PostgreSQL 로 돈다.
+  이름이 `_test` 로 끝나는 DB 에만 붙는다(스키마를 지우고 다시 짓기 때문). CI 는 PostgreSQL 16 서비스 컨테이너로 돌린다.
 
 ## 2. 규칙
 

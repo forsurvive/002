@@ -11,3 +11,6 @@ tools/claude/
 *.dump
 *.sql.gz
 backups/
+
+# 온라인판 의존성(npm ci 로 다시 받는다)
+node_modules/
