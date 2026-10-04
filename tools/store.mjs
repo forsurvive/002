@@ -73,6 +73,8 @@ export function blankProject(id, name) {
     slotModels: {},   // 자리(지어진 에이전트)마다 쓸 모델 (코드 → 모델). 적히지 않은 자리는 작품의 모델을 따른다
     crew: [],         // 작가가 지은 에이전트 — 문서에 걸면 그 사람이 쓴다
     agents: null,
+    stages: {},       // 단계형 작업 흐름의 단계 상태(core/workflow/stages.mjs) — 비어 있으면 단계를 쓰지 않은 것
+    workflow: {},     // 단계 흐름 설정 — { body: false } 면 본문 단계를 끈다 · { cards: true } 면 작업 중 강의 카드
     createdAt: at,
     updatedAt: at,
   };
@@ -120,6 +122,8 @@ export function normalizeProject(p) {
     trash: p.trash || [],
     jobs: p.jobs || [],
     agents: p.agents && typeof p.agents === 'object' ? p.agents : null,
+    stages: p.stages && typeof p.stages === 'object' ? p.stages : {},
+    workflow: p.workflow && typeof p.workflow === 'object' ? p.workflow : {},
   };
   // 옛 파일에는 «기본값»이라는 빈 칸이 있었다 — 정해진 모델로 내려 읽는다.
   if (!MODELS.includes(out.model)) out.model = 'opus';

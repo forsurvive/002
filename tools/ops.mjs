@@ -7,6 +7,7 @@ import * as model from './model.mjs';
 import { MODELS } from '../core/ids.mjs';
 import { bookList, BOOK_CATEGORY } from './books.mjs';
 import { EDITABLE_CODES, VIEW_CODES } from './prompts.mjs';
+import * as wf from '../core/workflow/stages.mjs';
 
 const ok = (extra = {}) => ({ ok: true, ...extra });
 const bad = (error) => ({ ok: false, error: String(error) });
@@ -22,9 +23,13 @@ const pickModel = (v, fallback) => (MODELS.includes(String(v || '')) ? String(v 
  *   auth   : view · write — 무엇으로 돈이 나가는가(키는 내려 주지 않는다)
  *   limit  : () => 마지막으로 본 한도
  *   prepared(p) · startAgentPrep(pid, request)
+ *   workflow(pid) : 그 프로젝트에 쓸 단계 템플릿(개인판은 설정 파일, 온라인은 고쳐 쓴 것까지) — 없으면 단계 기능이 서지 않는다
+ *   cardsOn(p)    : 작업 중 강의 카드를 보이는가(개인판 기본 꺼짐 · 기관 프로젝트는 기관 설정)
  */
 export function createOps(d) {
   const { state, jobs, engine, auth, limit, prepared, startAgentPrep } = d;
+  const workflow = d.workflow || (async () => null);
+  const cardsOn = d.cardsOn || ((p) => !!(p.workflow && p.workflow.cards));
 
   const OPS = {
     // ---------------- 프로젝트
@@ -60,7 +65,50 @@ export function createOps(d) {
       if (b.request != null) p.request = String(b.request);
       if (b.model != null) p.model = MODELS.includes(String(b.model)) ? String(b.model) : p.model;
       if (b.noCount != null) p.noCount = !!b.noCount;
+      // 단계 흐름 설정 — 본문 단계 켜고 끄기 · 작업 중 강의 카드
+      if (b.bodyStage != null) p.workflow = { ...(p.workflow || {}), body: !!b.bodyStage };
+      if (b.stageCards != null) p.workflow = { ...(p.workflow || {}), cards: !!b.stageCards };
     }),
+
+    // ---------------- 단계형 작업 흐름(docs/WORKFLOW.md) — 자유 문서 작업 위에 얹는다
+    // 시작 = 결과 문서를 마련하고 고른 참조를 건 뒤, 지금의 갱신과 같은 작업으로 돌린다. 이번 요청사항은 작업에만 실린다(문서에 저장하지 않는다).
+    'stage.start': async (b) => {
+      const t = await workflow(b.pid);
+      if (!t) return bad('단계 흐름을 쓸 수 없습니다');
+      const s = wf.stageOf(t, b.key);
+      if (!s) return bad('없는 단계입니다');
+      const ep = s.output === 'perEpisode' ? Number(b.episode) || 0 : 0;
+      const cur = await state.get(b.pid);
+      const had = cur && wf.docOf(cur, t, b.key, ep);
+      if (had && await jobs.isTargetRunning(b.pid, had.id)) return bad('이미 도는 중입니다');
+      let made = null;
+      const r = await state.update(b.pid, (p) => { made = wf.startStage(p, t, b.key, { episode: ep, refIds: Array.isArray(b.refIds) ? b.refIds : null }); });
+      if (r && r.ok === false) return r;
+      if (!made || !made.ok) return bad((made && made.error) || '시작하지 못했습니다');
+      const p2 = await state.get(b.pid);
+      const d = model.findDoc(p2, made.docId);
+      return jobs.start(b.pid, { kind: 'stage', title: d ? d.title : s.title, targetId: made.docId,
+        params: { stageKey: s.key, episode: ep, requestOnce: String(b.requestOnce || ''), modelPick: pickModel(b.model, '') } });
+    },
+    'stage.approve': async (b) => {
+      const t = await workflow(b.pid);
+      if (!t) return bad('단계 흐름을 쓸 수 없습니다');
+      let r = null;
+      await state.update(b.pid, (p) => { r = wf.approveStage(p, t, b.key, { episode: Number(b.episode) || 0, final: !!b.final }); });
+      return r && r.ok ? ok() : bad((r && r.error) || '승인하지 못했습니다');
+    },
+    'stage.reopen': async (b) => {
+      const t = await workflow(b.pid);
+      let r = null;
+      if (t) await state.update(b.pid, (p) => { r = wf.reopenStage(p, t, b.key, { episode: Number(b.episode) || 0 }); });
+      return r && r.ok ? ok() : bad((r && r.error) || '없는 단계입니다');
+    },
+    'stage.skip': async (b) => {
+      const t = await workflow(b.pid);
+      let r = null;
+      if (t) await state.update(b.pid, (p) => { r = wf.skipStage(p, t, b.key, { on: b.on !== false }); });
+      return r && r.ok ? ok() : bad((r && r.error) || '건너뛸 수 없습니다');
+    },
 
     // ---------------- 작법 프롬프트 고치기
     'prompt.read': async (b) => {
@@ -294,6 +342,21 @@ export function createOps(d) {
       limit: limit(),
       // 준비가 끝났는가 — 끝나지 않았으면 화면이 «다시» 단추를 세운다.
       prepared: prepared(p),
+      // 단계 흐름 — 단계 목록과 상태 · 추천 참조 · (켜져 있으면) 강의 카드. 강사 메모는 싣지 않는다(강사 화면이 따로 받는다).
+      workflow: await (async () => {
+        const t = await workflow(pid);
+        if (!t) return null;
+        const bodyOn = !(p.workflow && p.workflow.body === false);
+        const cards = !!(await cardsOn(p));
+        const defs = new Map(t.stages.map((s) => [s.key, s]));
+        return {
+          title: t.title, bodyOn, cards,
+          stages: wf.view(p, t, { bodyOn }).map((v) => {
+            const s = defs.get(v.key);
+            return { ...v, task: wf.stageTask(s, 0), ...(cards && s.card ? { card: s.card } : {}) };
+          }),
+        };
+      })(),
     };
   }
 

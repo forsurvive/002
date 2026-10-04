@@ -11,6 +11,7 @@ import { runKind } from '../core/generation/kinds.mjs';
 import { prepareThenStudy } from '../core/generation/agents.mjs';
 import { BUILTIN, AGENT_SLOTS, SLOT_DUTY } from '../tools/prompts.mjs';
 import { promptFor, slotModel } from '../tools/prompt-pick.mjs';
+import { baseTemplate } from '../tools/workflow.mjs';
 import { retryPlan, LEASE_MS } from './jobs.mjs';
 import { SAY as TENANCY_SAY } from './tenancy.mjs';
 
@@ -27,7 +28,7 @@ const SAY = {
  * deps = { queue, store, call, prepare? }  — store 는 createProjectStore, call 은 createOnlineCall 의 결과
  * opts = { concurrency, heartbeatMs, idleMs, leaseMs, log }
  */
-export function createWorker({ queue, store, call, prepare = null, allowed = null }, {
+export function createWorker({ queue, store, call, prepare = null, allowed = null, workflow = null }, {
   concurrency = Number(process.env.WORKER_CONCURRENCY) || 4, heartbeatMs = 15000, idleMs = 10 * 60 * 1000, leaseMs = LEASE_MS, log = () => {},
 } = {}) {
   const id = 'w-' + process.pid + '-' + randomBytes(3).toString('hex');
@@ -59,6 +60,8 @@ export function createWorker({ queue, store, call, prepare = null, allowed = nul
       call: (args, ctx) => call(args, ctx),
       // 에이전트 준비 · 자료 분석 — Core 의 본체에 온라인 저장 · 부르기(call.raw 는 판정 · 짓기용)를 넣는다
       prepare: prepare || ((pid, c, request) => prepareThenStudy({ store: jobStore, call, raw: call.raw, prompts: PROMPTS }, pid, c, request)),
+      // 단계 생성 — 그 프로젝트에 쓸 템플릿(운영자 · 기관이 고쳐 쓴 것까지)
+      workflow: workflow || (async () => baseTemplate()),
     };
     const ctx = {
       pid: row.project_id, jobId: row.id, userId, threadId: params.threadId || '', signal: controller.signal,

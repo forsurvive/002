@@ -58,6 +58,8 @@ export async function loadAggregate(db, pid, { lock = false } = {}) {
   p.materials = Array.isArray(pr.materials_legacy) ? pr.materials_legacy : [];
   p.model = MODELS.includes((pr.model_policy || {}).alias) ? pr.model_policy.alias : 'opus';
   p.noCount = pr.no_count;
+  p.stages = pr.stages && typeof pr.stages === 'object' ? pr.stages : {};
+  p.workflow = pr.workflow && typeof pr.workflow === 'object' ? pr.workflow : {};
   p.createdAt = ms(pr.created_at); p.updatedAt = ms(pr.updated_at);
 
   p.categories = cats.filter((c) => !c.deleted_at).map((c) => ({ id: c.legacy_id, name: c.name, createdAt: ms(c.created_at) }));
@@ -147,6 +149,11 @@ async function saveAggregate(db, pid, before, after, maps, { userId = null } = {
       `UPDATE projects SET name=$2, spec=$3, standard=$4, request=$5, model_policy = model_policy || jsonb_build_object('alias', $6::text),
               no_count=$7, materials_legacy=$8, agent_kind=$9, updated_at=now(), row_version = row_version + 1 WHERE id=$1`,
       [pid, after.name, after.spec, after.standard, after.request, after.model, after.noCount !== false, JSON.stringify(after.materials || []), (after.agents && after.agents.__kind) || '']);
+  }
+
+  // 단계 상태 · 흐름 설정 — 덩어리 칸 그대로(jsonb)
+  if (!same([before.stages || {}, before.workflow || {}], [after.stages || {}, after.workflow || {}])) {
+    await db.query('UPDATE projects SET stages = $2, workflow = $3, updated_at = now() WHERE id = $1', [pid, JSON.stringify(after.stages || {}), JSON.stringify(after.workflow || {})]);
   }
 
   // 카테고리 — 새로 · 이름/차례 · 빠짐(휴지통으로 갔으면 deleted_at)

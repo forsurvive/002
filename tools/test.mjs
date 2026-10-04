@@ -2146,6 +2146,35 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('작업 레코드에 종류와 매개변수가 남는다', rec.kind === 'update' && rec.params && rec.params.docId === dj, JSON.stringify(rec).slice(0, 200));
   eq('그 작업은 끝까지 돈다', rec.status, 'done');
   ok('준비 작업도 데이터로 남는다', (after.jobs || []).some((j) => j.kind === 'agents' && j.params && j.params.request === ''));
+
+  // 단계형 작업 흐름 — 실제 서버로(모의 응답). 시작 → 작업 → 초안 → 승인(≠ 확정본) → 수정 단계는 같은 문서의 새 판
+  {
+    const sw = (await stateOf(pj)).project.workflow;
+    ok('상태에 단계 흐름이 실린다(16단계 · 카드는 개인판 기본 꺼짐)', sw && sw.stages.length === 16 && sw.cards === false && !sw.stages.some((x) => x.card) && !JSON.stringify(sw).includes('teachingNote'));
+    const r1 = await post('stage.start', { pid: pj, key: 'plan', requestOnce: '이번만 쓰는 요청' });
+    ok('단계를 시작하면 작업이 선다', r1.ok && r1.jobId);
+    const s1 = await settle(pj);
+    const pv = s1.workflow.stages.find((x) => x.key === 'plan');
+    const pd = s1.docs.find((x) => x.id === pv.docId);
+    ok('**생성이 끝나면 초안 · 결과는 «기획서» 문서**', pv.status === 'draft' && pd && pd.title === '기획서' && pd.body.length > 0);
+    ok('**이번 요청사항은 문서에 저장되지 않는다**', pd.request === '' && !JSON.stringify(s1.docs).includes('이번만 쓰는 요청'));
+    const job = s1.jobs.find((j) => j.id === r1.jobId);
+    ok('작업 레코드에 단계 · 이번 요청사항이 남는다', job && job.kind === 'stage' && job.params.stageKey === 'plan' && job.params.requestOnce === '이번만 쓰는 요청');
+    eq('같은 문서가 도는 중이면 다시 시작하지 못한다(끝난 뒤에는 된다)', (await post('stage.approve', { pid: pj, key: 'plan' })).ok, true);
+    const s2 = (await stateOf(pj)).project;
+    ok('**승인 ≠ 확정본**', s2.workflow.stages.find((x) => x.key === 'plan').status === 'approved' && !s2.docs.find((x) => x.id === pd.id).isFinal);
+    await post('stage.start', { pid: pj, key: 'plan_rev' });
+    const s3 = await settle(pj);
+    const pd3 = s3.docs.find((x) => x.id === pd.id);
+    ok('**수정 단계는 같은 문서에 새 판을 쌓는다**', s3.docs.filter((x) => x.title === '기획서').length === 1 && pd3.versions.length >= 1);
+    await post('stage.approve', { pid: pj, key: 'plan_rev', final: true });
+    ok('고르면 승인하며 확정본도 켠다', (await stateOf(pj)).project.docs.find((x) => x.id === pd.id).isFinal === true);
+    eq('없는 단계는 거절', (await post('stage.start', { pid: pj, key: 'nope' })).ok, false);
+    eq('회차 단계는 회차를 골라야', (await post('stage.start', { pid: pj, key: 'scenes' })).ok, false);
+    await post('project.spec', { pid: pj, bodyStage: false, stageCards: true });
+    const s4 = (await stateOf(pj)).project.workflow;
+    ok('본문 단계 끄기 · 강의 카드 켜기', s4.bodyOn === false && s4.stages.find((x) => x.key === 'body').off === true && s4.cards === true && s4.stages.find((x) => x.key === 'world').card.ask);
+  }
   eq('돌릴 길이 없는 작업은 받지 않는다', (await import('./jobs.mjs')).start(pj, { kind: 'update' }).ok, false);
 
   // AI Provider 계약 — 모든 호출이 한 자리(engine.callModel → Provider)를 지난다. 개인판은 CLI 어댑터.

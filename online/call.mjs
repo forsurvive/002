@@ -26,16 +26,16 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
     : null);
 
   // 공통 — 기록을 남기고 · 라우터로 부르고 · 결과를 적는다
-  async function send(pid, project, { systemPrompt, userPrompt, alias, modelSource = '', code, inputs = [], request = '', target = '', signal = null }, ctx) {
+  async function send(pid, project, { systemPrompt, userPrompt, alias, modelSource = '', code, inputs = [], request = '', requestOnce = '', stageKey = '', target = '', signal = null }, ctx) {
     const row = (await pool.query('SELECT owner_user_id, organization_id FROM projects WHERE id = $1', [pid])).rows[0];
     const tdoc = await ids(pid, 'documents', target);
     const thread = ctx.threadId ? await ids(pid, 'threads', ctx.threadId) : null;
     const run = (await pool.query(
-      `INSERT INTO generation_runs (job_id, project_id, organization_id, requested_by, purpose, prompt_key, prompt_layer, target_document_id, thread_id, request_text, model_source)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+      `INSERT INTO generation_runs (job_id, project_id, organization_id, requested_by, purpose, prompt_key, prompt_layer, target_document_id, thread_id, request_text, model_source, request_once_text, workflow_stage)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
       [ctx.jobId || null, pid, row.organization_id, ctx.userId || null, String(code || ''), String(code || ''),
         project.prompts && project.prompts[code] ? 'override' : project.agents && project.agents[code] ? 'generated' : 'builtin',
-        tdoc ? tdoc.id : null, thread ? thread.id : null, String(request || ''), String(modelSource || '')])).rows[0].id;
+        tdoc ? tdoc.id : null, thread ? thread.id : null, String(request || ''), String(modelSource || ''), String(requestOnce || ''), String(stageKey || '')])).rows[0].id;
     for (const [i, x] of inputs.entries()) {
       const d = x.id ? await ids(pid, 'documents', x.id) : null;
       await pool.query(
@@ -81,7 +81,7 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
     const plan = planCall(project, args, { pr: promptFor(project, code), slotModel: slotModel(project, code) });
     return send(pid, project, {
       systemPrompt: plan.systemPrompt, userPrompt: plan.userPrompt, alias: plan.model, modelSource: plan.modelSource, code,
-      inputs: plan.inputs, request: args.request, target: (args.targetIds || [])[0] || '', signal: args.signal,
+      inputs: plan.inputs, request: args.request, requestOnce: args.requestOnce, stageKey: args.stageKey, target: (args.targetIds || [])[0] || '', signal: args.signal,
     }, ctx);
   }
 

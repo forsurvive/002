@@ -5,6 +5,7 @@
 // store 는 동기(개인판 메모리)여도 비동기(온라인 DB)여도 된다 — 늘 await 로 받는다.
 
 import * as model from '../domain/model.mjs';
+import * as wf from '../workflow/stages.mjs';
 
 const KIND_CODE = { doc: 'F-UPDATE', check: 'F-CONTRA', review: 'F-REVIEW' };
 
@@ -152,4 +153,37 @@ export async function runThreadDoc({ store, call }, pid, threadId, request, ctx,
   });
   if (ctx) ctx.addDoc(docId);
   return { ok: true, docId };
+}
+
+// 단계 생성 — 단계의 결과 문서(단계를 시작할 때 이미 마련됐다)를 «이번 단계에 할 일»과 함께 갱신한다.
+// 지금의 갱신과 같은 길(같은 자리 · 같은 참조 · 같은 확정본 규칙)이고, 단계는 할 일 한 문단과 이번 요청사항만 얹는다.
+// deps.workflow(pid) 는 그 프로젝트에 쓸 템플릿(고쳐 쓴 것 포함)을 돌려준다.
+// requestOnce 는 이번 한 번만 — 문서에 저장하지 않는다(생성 기록에만 남는다).
+export async function runStage({ store, call, workflow }, pid, { stageKey, episode = 0, requestOnce = '', modelPick = '' } = {}, ctx) {
+  const t = await workflow(pid);
+  const s = t && wf.stageOf(t, stageKey);
+  if (!s) return { ok: false, error: '없는 단계입니다' };
+  const ep = s.output === 'perEpisode' ? Number(episode) || 0 : 0;
+  const project = await store.get(pid);
+  const d = project && wf.docOf(project, t, stageKey, ep);
+  if (!d) return { ok: false, error: '단계의 문서를 찾을 수 없습니다' };
+  if (ctx) ctx.step(d.title);
+  if (ctx && ctx.gate) await ctx.gate();
+  if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
+  const request = [d.request, requestOnce].filter((x) => String(x || '').trim()).join('\n\n');
+  const r = await call({
+    pid, code: s.code || 'F-UPDATE',
+    refIds: (d.refIds || []).filter((id) => id !== d.id), targetIds: String(d.body || '').trim() ? [d.id] : [],
+    agentIds: (d.agentIds || []).slice(), request, requestOnce, taskExtra: wf.stageTask(s, ep),
+    materials: !!s.materials, allFinals: !!s.materials, keepSeat: true, modelPick, stageKey,
+    signal: ctx && ctx.signal,
+  }, ctx);
+  if (!r.ok) return r;
+  if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
+  await store.update(pid, (p) => {
+    model.docWrite(p, d.id, { body: r.text });
+    wf.markGenerated(p, wf.slotKey(stageKey, ep));
+  });
+  if (ctx) ctx.addDoc(d.id);
+  return { ok: true, docId: d.id };
 }

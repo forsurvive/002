@@ -28,6 +28,7 @@ import { AGENT_SLOTS } from '../tools/prompts.mjs';
 import { createJobQueue } from './jobs.mjs';
 import { createTenancy, SAY } from './tenancy.mjs';
 import { createEdu } from './edu.mjs';
+import { createWorkflowSource } from './workflow.mjs';
 import { createWorker } from './worker.mjs';
 import { createOnlineCall } from './call.mjs';
 import { buildAi } from './ai.mjs';
@@ -59,7 +60,7 @@ export function onlinePlan(env = process.env) {
 }
 
 // 온라인판에서 문 표에 넣는 것 — 저장은 PostgreSQL, 작업은 영속 큐(online/jobs.mjs), 과금 갈래는 화면에 없다.
-function depsFor(store, queue, worker, user, { tenancy = null, place = null } = {}) {
+function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs = null, pool = null } = {}) {
   const by = { userId: user.id };
   const state = {
     // 작업 줄은 jobs 표가 맡는다 — 덩어리에 싣지 않고 읽을 때 붙인다(화면은 개인판과 같은 p.jobs 를 본다)
@@ -117,6 +118,12 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null } = 
   const view = () => ({ mode: 'online', modes: [], hasKey: false });
   return {
     state, jobs, engine: pick, auth: { view, write: view }, limit: () => null,
+    // 단계 흐름 — 템플릿은 운영자 · 기관이 고쳐 쓴 것까지. 강의 카드는 기관 프로젝트면 기관 설정(기본 켬), 개인 프로젝트면 그 사람의 설정(기본 끔).
+    workflow: (pid) => (wfs ? wfs.templateFor(pid) : null),
+    cardsOn: async (p) => {
+      const org = pool ? (await pool.query('SELECT o.settings FROM projects p JOIN organizations o ON o.id = p.organization_id WHERE p.id = $1', [p.id])).rows[0] : null;
+      return org ? (org.settings || {}).student_cards !== false : !!(p.workflow && p.workflow.cards);
+    },
     // 준비가 온전히 끝났는가 — 개인판 서버와 같은 셈(프롬프트가 다 서 있고, 자료가 있다면 «자료 분석»까지)
     prepared: (p) => agentsReady(p, AGENT_SLOTS) && (!materialDocs(p).length || p.docs.some((d) => d.title === STUDY_TITLE)),
     // 프로젝트를 만든 직후 그 프로젝트 전용 에이전트를 짓는다(소설이면 판정만 남기고 끝난다)
@@ -134,7 +141,8 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null } = 
 export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null } = {}) {
   const store = createProjectStore(pool);
   const tenancy = createTenancy(pool);
-  const edu = createEdu({ pool, credentials });
+  const wfs = createWorkflowSource(pool);
+  const edu = createEdu({ pool, credentials, wfs });
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
 
   // 화면은 제 자리의 파일만 부른다 — 스크립트는 외부 파일만, 꾸밈은 style 속성을 쓰므로 인라인 꾸밈만 허락
@@ -305,7 +313,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
           place = await tenancy.canCreateInClass(user, body.classId);
           if (!place.ok) return json(res, place.reason === 'missing' ? 404 : 403, bad(SAY[place.reason] || NOT_FOUND, place.reason));
         }
-        const { OPS } = createOps(depsFor(store, queue, worker, user, { tenancy, place }));
+        const { OPS } = createOps(depsFor(store, queue, worker, user, { tenancy, place, wfs, pool }));
         const fn = OPS[op];
         if (!fn) return json(res, 404, bad('그런 문이 없습니다: ' + op));
         if (!NO_PID.has(op)) {
@@ -328,7 +336,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const etag = await fingerprint(user, pid);
         const cache = { etag, 'cache-control': 'private, no-cache' };
         if (etag && req.headers['if-none-match'] === etag) return send(res, 304, '', 'application/json; charset=utf-8', cache);
-        const { stateOf } = createOps(depsFor(store, queue, worker, user, { tenancy }));
+        const { stateOf } = createOps(depsFor(store, queue, worker, user, { tenancy, wfs, pool }));
         const projects = await store.listFor(user.id);
         if (!pid) return json(res, 200, { ok: true, projects, me: await withRoles() }, cache);
         const acc = await tenancy.access(user, pid);
@@ -340,7 +348,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
 
       if (req.method === 'GET' && url.pathname === '/api/download') {
         const pid = url.searchParams.get('pid');
-        const { downloadOf } = createOps(depsFor(store, queue, worker, user, { tenancy }));
+        const { downloadOf } = createOps(depsFor(store, queue, worker, user, { tenancy, wfs, pool }));
         const d = (await canRead(user, pid)) ? await downloadOf(pid, url.searchParams.get('kind'), url.searchParams.get('id')) : null;
         if (!d) return send(res, 404, '없음', 'text/plain; charset=utf-8');
         return send(res, 200, d.text, 'text/markdown; charset=utf-8', {
@@ -384,7 +392,8 @@ export async function main(env = process.env) {
   const call = createOnlineCall({ pool, store, generator: ai.generator, ...(ai.aliasTiers ? { aliasTiers: ai.aliasTiers } : {}) });
   // 같은 프로세스에서 worker 를 함께 돌린다(파일럿 — VM 하나). SE_WORKER=0 이면 웹만(worker 를 따로 띄울 때)
   const tenancyW = createTenancy(pool);
-  const worker = env.SE_WORKER === '0' ? null : createWorker({ queue, store, call, allowed: (row) => tenancyW.aiAllowed(row.project_id) }, { log: (m) => console.log('  [worker] ' + m) });
+  const wfsW = createWorkflowSource(pool);
+  const worker = env.SE_WORKER === '0' ? null : createWorker({ queue, store, call, allowed: (row) => tenancyW.aiAllowed(row.project_id), workflow: (pid) => wfsW.templateFor(pid) }, { log: (m) => console.log('  [worker] ' + m) });
   if (worker) await worker.start();
   const srv = createOnlineServer({ pool, plan, queue, worker, credentials: ai.credentials, trustProxy: env.SE_TRUST_PROXY === '1', denyFrames: env.NODE_ENV === 'production' });
   await new Promise((resolve) => srv.listen(plan.port, plan.host, resolve));

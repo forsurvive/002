@@ -16,6 +16,7 @@ import { prepareAgents, agentsReady, runStudy, STUDY_TITLE } from './agents.mjs'
 import { killAllCalls, lastLimit } from './call.mjs';
 import * as auth from './auth.mjs';
 import { createOps } from './ops.mjs';
+import { baseTemplate } from './workflow.mjs';
 import { runKind } from '../core/generation/kinds.mjs';
 import { resolveHosting, hostOf, originOk, gateOk, isNavigation, GATE_REALM } from './hosting.mjs';
 
@@ -42,7 +43,7 @@ async function prepareThenStudy(pid, ctx, request = '') {
   }
   return runStudy(pid, ctx, request);   // 이어서 자료를 한 번 읽는다
 }
-const LOCAL_DEPS = { ...engine.LOCAL, prepare: prepareThenStudy };
+const LOCAL_DEPS = { ...engine.LOCAL, prepare: prepareThenStudy, workflow: async () => baseTemplate() };
 jobs.useRunner((kind, params, ctx) => runKind(LOCAL_DEPS, kind, params, ctx));
 
 // 프로젝트를 만든 직후 그 프로젝트 전용 에이전트를 짓는다(소설이면 판정만 남기고 끝난다).
@@ -52,7 +53,7 @@ function startAgentPrep(pid, request = '') {
   jobs.start(pid, { kind: 'agents', title: '에이전트 준비', params: { request } });
 }
 
-const { OPS, stateOf, downloadOf } = createOps({ state, jobs, engine, auth, limit: lastLimit, prepared, startAgentPrep });
+const { OPS, stateOf, downloadOf } = createOps({ state, jobs, engine, auth, limit: lastLimit, prepared, startAgentPrep, workflow: async () => baseTemplate() });
 
 export const OP_NAMES = Object.keys(OPS);
 

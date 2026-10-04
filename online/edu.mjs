@@ -35,7 +35,7 @@ const tries = new Map();
 const TRY_LIMIT = 10; const TRY_WINDOW = 15 * 60 * 1000;
 export function resetInviteThrottle() { tries.clear(); }
 
-export function createEdu({ pool, credentials = null }) {
+export function createEdu({ pool, credentials = null, wfs = null }) {
   const one = async (sql, args) => (await pool.query(sql, args)).rows[0] || null;
   const rolesIn = async (userId, orgId) => new Set((await pool.query(
     `SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2 AND status = 'active'`, [orgId, userId])).rows.map((r) => r.role));
@@ -86,6 +86,8 @@ export function createEdu({ pool, credentials = null }) {
       // 고칠 수 있는 칸만(기관 관리자의 작품 열람 — 기본 꺼짐)
       const patch = {};
       if (typeof b.adminCanReadProjects === 'boolean') patch.admin_can_read_projects = b.adminCanReadProjects;
+      // 학생에게 작업 중 강의 카드를 보이는가(기본 켬)
+      if (typeof b.studentCards === 'boolean') patch.student_cards = b.studentCards;
       const o = await one('UPDATE organizations SET settings = settings || $2::jsonb, updated_at = now() WHERE id = $1 RETURNING settings', [b.orgId, JSON.stringify(patch)]);
       await log(user, b.orgId, 'org.settings', 'organization', b.orgId, patch, ip);
       return ok({ settings: o.settings });
@@ -146,15 +148,28 @@ export function createEdu({ pool, credentials = null }) {
       const c = isUuid(b.classId) ? await one('SELECT id, organization_id, name FROM classes WHERE id = $1', [b.classId]) : null;
       if (!c || !((await teaches(user.id, c.id)) || (await isAdmin(user, c.organization_id)))) return NOT_FOUND;
       const rows = (await pool.query(
-        `SELECT u.id AS user_id, u.display_name, u.login_id, p.id AS project_id, p.name AS project_name, p.updated_at,
+        `SELECT u.id AS user_id, u.display_name, u.login_id, p.id AS project_id, p.name AS project_name, p.updated_at, p.stages,
                 (SELECT j.status FROM jobs j WHERE j.project_id = p.id ORDER BY j.created_at DESC LIMIT 1) AS last_job,
                 (SELECT count(*)::int FROM documents d WHERE d.project_id = p.id AND d.deleted_at IS NULL) AS docs
            FROM class_members m JOIN users u ON u.id = m.user_id
            LEFT JOIN projects p ON p.class_id = m.class_id AND p.owner_user_id = u.id AND p.deleted_at IS NULL
           WHERE m.class_id = $1 AND m.role = 'student' ORDER BY u.display_name, p.updated_at DESC`, [c.id])).rows;
+      // 학생마다 «지금 단계» — 손댄 단계 가운데 가장 뒤의 것 · 그 상태 · 그 단계의 강사 메모(강사 화면의 «지금 강의 포인트»)
+      const t = wfs ? await wfs.templateForOrg(c.organization_id) : null;
+      const nowStage = (stages) => {
+        if (!t || !stages) return null;
+        let best = null;
+        for (const [slot, st] of Object.entries(stages)) {
+          const s = t.stages.find((x) => x.key === slot.split('#')[0]);
+          if (!s || !st || !st.status) continue;
+          if (!best || s.n > best.s.n || (s.n === best.s.n && slot > best.slot)) best = { s, slot, st };
+        }
+        return best ? { key: best.slot, title: best.s.title + (best.slot.includes('#') ? ' (' + best.slot.split('#')[1] + '화)' : ''), status: best.st.status, teachingNote: best.s.teachingNote || '' } : null;
+      };
       return ok({ class: { id: c.id, name: c.name }, students: rows.map((r) => ({
         userId: r.user_id, name: r.display_name || r.login_id, projectId: r.project_id, projectName: r.project_name,
         updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0, docs: r.docs || 0, lastJob: r.last_job || '',
+        stage: nowStage(r.stages),
       })) });
     },
 
@@ -250,6 +265,23 @@ export function createEdu({ pool, credentials = null }) {
       await pool.query('DELETE FROM class_members WHERE organization_id = $1 AND user_id = $2', [b.orgId, b.userId]);
       await log(user, b.orgId, 'member.remove', 'user', b.userId, { roles: [...roles] }, ip);
       return ok();
+    },
+
+    // ---------------- 단계 고쳐 쓰기(관리 화면) — 운영자는 전체 기본, 기관 관리자는 제 기관. 원문(설정 파일)은 남는다.
+    async 'workflow.view'(user, b) {
+      if (!wfs) return no(503, '단계 흐름을 쓸 수 없습니다', 'unavailable');
+      if (b.orgId) { if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND; }
+      else if (!user.isPlatformAdmin) return FORBIDDEN;
+      return ok({ workflow: await wfs.editorView(b.orgId || null) });
+    },
+    async 'workflow.save'(user, b, ip) {
+      if (!wfs) return no(503, '단계 흐름을 쓸 수 없습니다', 'unavailable');
+      if (b.orgId) { if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND; }
+      else if (!user.isPlatformAdmin) return FORBIDDEN;
+      const r = await wfs.save({ scope: b.orgId ? 'organization' : 'platform', orgId: b.orgId || null, stageKey: String(b.stageKey || ''), data: b.data || {}, userId: user.id });
+      if (!r.ok) return no(404, r.error);
+      await log(user, b.orgId || null, b.orgId ? 'workflow.save_org' : 'workflow.save_platform', 'workflow_stage', String(b.stageKey), { fields: Object.keys(r.saved) }, ip);
+      return ok({ saved: r.saved });
     },
 
     // ---------------- 기관 키(기관 관리자 — 쓰기 전용)

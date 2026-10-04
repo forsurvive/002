@@ -7,7 +7,7 @@
 //   prepare : 에이전트 준비(종류 판정 · 자리 짓기 · 자료 분석) — 아직 개인판 agents.mjs 가 맡는다(Provider 단계에서 옮긴다)
 // ctx = 작업 맥락(pid · step · gate · askLimit · addDoc · signal) — jobs.mjs 가 만든다.
 
-import { runUpdate, runTalk, runThreadDoc } from './run.mjs';
+import { runUpdate, runTalk, runThreadDoc, runStage } from './run.mjs';
 
 const pick = (v) => String(v || '');
 
@@ -18,6 +18,8 @@ export const JOB_KINDS = {
   // askedId 가 있으면 이미 저장된 그 말에 답한다(온라인판)
   talk: (deps, ctx, p) => runTalk(deps, ctx.pid, p.threadId, p.text == null ? null : String(p.text), ctx, { modelPick: pick(p.modelPick), askedId: pick(p.askedId) }),
   threaddoc: (deps, ctx, p) => runThreadDoc(deps, ctx.pid, p.threadId, pick(p.request), ctx, { modelPick: pick(p.modelPick) }),
+  // 단계형 작업 흐름의 한 단계(docs/WORKFLOW.md) — deps.workflow 가 템플릿을 준다
+  stage: (deps, ctx, p) => runStage(deps, ctx.pid, { stageKey: pick(p.stageKey), episode: Number(p.episode) || 0, requestOnce: pick(p.requestOnce), modelPick: pick(p.modelPick) }, ctx),
 };
 
 export const KIND_NAMES = Object.keys(JOB_KINDS);
