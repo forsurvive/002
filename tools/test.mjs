@@ -12,6 +12,8 @@ import { connect } from 'node:net';
 process.env.SE2_MOCK = '1';
 const BOX = mkdtempSync(join(tmpdir(), 'se2-test-'));
 process.env.SE2_DATA_DIR = BOX;
+// 호스팅 실행 설정이 시험에 새어 들지 않게 — 시험은 늘 로컬 개인판 꼴(127.0.0.1 · 열쇠 없음)로 돈다.
+for (const k of ['SE2_HOST', 'SE2_ACCESS_KEY', 'SE2_ALLOWED_HOSTS', 'SE2_ALLOW_OPEN', 'SE2_PORT', 'PORT', 'REPLIT_DOMAINS', 'REPLIT_DEV_DOMAIN']) delete process.env[k];
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = dirname(HERE);
@@ -35,6 +37,7 @@ const asm = await import('./assemble.mjs');
 const agents = await import('./agents.mjs');
 const prompts = await import('./prompts.mjs');
 const books = await import('./books.mjs');
+const hosting = await import('./hosting.mjs');
 
 // ---------------------------------------------------------------- 순수 로직
 
@@ -1944,8 +1947,13 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('원고(data)도 저장소 밖', /^data\/$/m.test(gi));
 
   // ── 포트는 8801 그대로 — 폰 동반 프로그램이 그 자리로 붙는다
-  ok('기본 포트는 8801', src(join(HERE, 'server.mjs')).includes('Number(process.env.SE2_PORT || 8801)')
-    && src(join(HERE, 'launch.mjs')).includes('Number(process.env.SE2_PORT || 8801)'));
+  // 호스팅 실행(PORT·SE2_HOST)을 위해 서버의 포트 해석이 tools/hosting.mjs 로 옮겨 갔다 — 글자 무늬 대신 동작을 본다.
+  // 실행기는 여전히 SE2_PORT 를 못박아 서버를 띄우고, 그 값은 플랫폼의 PORT 보다 먼저다.
+  ok('기본 포트는 8801', hosting.resolveHosting({}).port === 8801
+    && src(join(HERE, 'launch.mjs')).includes('Number(process.env.SE2_PORT || 8801)')
+    && src(join(HERE, 'launch.mjs')).includes("SE2_PORT: String(PORT)"));
+  eq('실행기가 못박은 SE2_PORT 는 PORT 보다 먼저다', hosting.resolveHosting({ SE2_PORT: '8801', PORT: '3000' }).port, 8801);
+  ok('서버는 그 해석을 따른다', src(join(HERE, 'server.mjs')).includes('resolveHosting(process.env)'));
 
   // ── 문서도 이 판을 가리킨다
   const readme = src(join(ROOT, 'README.md'));
@@ -1956,6 +1964,135 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const design = src(join(ROOT, 'DESIGN.md'));
   ok('DESIGN 이 새 파일 이름을 가리킨다', design.includes(LAUNCHER) && !design.includes('`스토리 엔진.cmd`'));
   ok('DESIGN 에 상점 길이 남아 있지 않다', !design.includes('brain.json') && !design.includes('first.mjs') && !design.includes('cloud.'));
+}
+
+// ---------------------------------------------------------------- 호스팅 실행 — 포트 · 주소 · 허용 호스트 · 출입 열쇠
+//
+// 온라인화 1차 구현(2026-10-04): 지금 개인판을 기능 그대로 호스팅 플랫폼(Replit 등)에 띄울 수 있게 한다.
+// 로컬 기본값은 한 글자도 바뀌지 않아야 하고(127.0.0.1:8801 · 열쇠 없음), 바깥에 열 때는 열쇠 없이 서지 않아야 한다.
+
+{
+  const R = hosting.resolveHosting;
+  const KEY = 'k'.repeat(8) + '-시험용-열쇠-' + 'z'.repeat(8);
+
+  // ── 로컬 기본값은 그대로
+  const local = R({});
+  eq('로컬: 포트 8801', local.port, 8801);
+  eq('로컬: 127.0.0.1 에 붙는다', local.host, '127.0.0.1');
+  ok('로컬: 바깥에 열리지 않는다', local.exposed === false);
+  ok('로컬: 열쇠가 없다', local.gate === null);
+  eq('로컬: 막을 까닭이 없다', local.problems.length, 0);
+  eq('로컬: 받아 주는 이름은 제 이름 둘', local.allowedHosts.slice().sort().join(','), '127.0.0.1,localhost');
+
+  // ── 포트 — SE2_PORT > PORT > 8801
+  eq('플랫폼의 PORT 를 따른다', R({ PORT: '3000' }).port, 3000);
+  ok('PORT 만으로는 바깥에 열리지 않는다', R({ PORT: '3000' }).exposed === false && R({ PORT: '3000' }).host === '127.0.0.1');
+  eq('SE2_PORT 가 먼저다', R({ SE2_PORT: '8811', PORT: '3000' }).port, 8811);
+  ok('틀린 포트는 막을 까닭이 된다', R({ SE2_PORT: 'abc' }).problems.length === 1 && R({ PORT: '70000' }).problems.length === 1);
+
+  // ── 붙을 주소 — 루프백이 아니면 «바깥에 연다»
+  ok('루프백은 바깥이 아니다', ['127.0.0.1', 'localhost', '::1', '[::1]', '127.1.2.3'].every((h) => hosting.isLoopback(h)));
+  ok('0.0.0.0 · :: · 사설 주소는 바깥이다', ['0.0.0.0', '::', '192.168.0.10'].every((h) => !hosting.isLoopback(h)));
+  const bare = R({ SE2_HOST: '0.0.0.0' });
+  ok('**바깥에 열면서 열쇠가 없으면 서지 않는다**', bare.exposed && bare.problems.some((p) => p.includes('SE2_ACCESS_KEY')));
+  ok('짧은 열쇠는 받지 않는다', R({ SE2_HOST: '0.0.0.0', SE2_ACCESS_KEY: 'short' }).problems.some((p) => p.includes('too short')));
+  const keyed = R({ SE2_HOST: '0.0.0.0', SE2_ACCESS_KEY: KEY });
+  ok('열쇠가 있으면 선다', keyed.problems.length === 0 && keyed.gate && keyed.gate.key === KEY);
+  const open = R({ SE2_HOST: '0.0.0.0', SE2_ALLOW_OPEN: '1' });
+  ok('열쇠 없이 열려면 그렇다고 적어야 한다', open.problems.length === 0 && open.gate === null && open.notes.some((n) => n.includes('WITHOUT')));
+  ok('바깥에 열면 파일 저장이 오래가지 않음을 알린다', keyed.notes.some((n) => n.includes('staging data only')));
+
+  // ── 받아 줄 호스트 이름
+  const named = R({
+    SE2_HOST: '0.0.0.0', SE2_ACCESS_KEY: KEY,
+    SE2_ALLOWED_HOSTS: 'Story.Example.org, https://b.example.com:443/x',
+    REPLIT_DOMAINS: 'app.replit.app,custom.example.net', REPLIT_DEV_DOMAIN: 'abc.replit.dev',
+  });
+  ok('적은 이름 · 플랫폼이 알려 준 이름을 받는다',
+    ['story.example.org', 'b.example.com', 'app.replit.app', 'custom.example.net', 'abc.replit.dev', '127.0.0.1', 'localhost']
+      .every((h) => named.allowedHosts.includes(h)), named.allowedHosts.join(','));
+  ok('허락한 이름이 없으면 알린다', bare.notes.some((n) => n.includes('SE2_ALLOWED_HOSTS')) && !named.notes.some((n) => n.includes('SE2_ALLOWED_HOSTS')));
+  eq('호스트 이름만 뽑는다', [hosting.hostName('A.B:8080'), hosting.hostName('https://x.y/z'), hosting.hostName('')].join('|'), 'a.b|x.y|');
+
+  // ── 열쇠 맞추기(HTTP Basic — 사용자 이름은 보지 않는다)
+  const basic = (s) => ({ headers: { authorization: 'Basic ' + Buffer.from(s, 'utf8').toString('base64') } });
+  const gate = { key: KEY };
+  ok('열쇠가 맞으면 들어온다', hosting.gateOk(basic('누구든:' + KEY), gate) && hosting.gateOk(basic(':' + KEY), gate));
+  ok('열쇠가 틀리면 못 들어온다', !hosting.gateOk(basic('x:' + KEY + '!'), gate) && !hosting.gateOk(basic(KEY), gate)
+    && !hosting.gateOk({ headers: {} }, gate) && !hosting.gateOk({ headers: { authorization: 'Bearer ' + KEY } }, gate));
+  ok('열쇠가 없는 계획은 묻지 않는다', hosting.gateOk({ headers: {} }, null));
+
+  // ── 실제로 두드려 본다 — 바깥에 여는 계획으로 한 벌 더 띄운다(시험은 127.0.0.1 에 붙인다)
+  const { createAppServer } = await import('./server.mjs');
+  const site = createAppServer(R({ SE2_HOST: '0.0.0.0', SE2_ACCESS_KEY: KEY, SE2_ALLOWED_HOSTS: 'story.example.org' }));
+  await new Promise((res) => site.listen(0, '127.0.0.1', res));
+  const at = site.address().port;
+  const hit = (path, { method = 'GET', headers = {}, body = null } = {}) => new Promise((resolve) => {
+    const rq = httpRequest({ host: '127.0.0.1', port: at, path, method, headers }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { text += c; });
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, text }));
+    });
+    rq.on('error', (e) => resolve({ status: 0, headers: {}, text: String(e.message || e) }));
+    if (body) rq.write(body);
+    rq.end();
+  });
+  const AUTH = { authorization: basic('tester:' + KEY).headers.authorization };
+  const SITE = 'story.example.org';
+  const list = JSON.stringify({ op: 'project.list' });
+
+  let r = await hit('/healthz', { headers: { host: 'evil.example' } });
+  ok('살아 있는지는 누구에게나 답한다', r.status === 200 && r.text === 'ok');
+  r = await hit('/', { headers: { host: SITE } });
+  ok('**플랫폼 상태 검사(열쇠 없는 GET /)는 200 — 원고 없는 안내 페이지**', r.status === 200 && r.text.includes('/enter') && !r.text.includes('app.js'));
+  r = await hit('/', { headers: { host: SITE, 'sec-fetch-mode': 'navigate' } });
+  ok('주소창으로 들어오면 로그인 창을 띄운다', r.status === 401 && /^Basic /.test(String(r.headers['www-authenticate'] || '')));
+  eq('«들어가기»도 열쇠를 묻는다', (await hit('/enter', { headers: { host: SITE } })).status, 401);
+  r = await hit('/api/state', { headers: { host: SITE } });
+  ok('**열쇠 없이는 원고를 읽지 못한다**', r.status === 401 && JSON.parse(r.text).ok === false);
+  eq('열쇠 없이는 고치지도 못한다', (await hit('/api', { method: 'POST', headers: { host: SITE, 'content-type': 'application/json' }, body: list })).status, 401);
+  eq('틀린 열쇠도 마찬가지다', (await hit('/api/state', { headers: { host: SITE, authorization: basic('x:wrong-key-wrong-key').headers.authorization } })).status, 401);
+  eq('내려받기도 열쇠를 묻는다', (await hit('/api/download?pid=x&kind=doc&id=y', { headers: { host: SITE } })).status, 401);
+  r = await hit('/api/state', { headers: { host: SITE, ...AUTH } });
+  ok('열쇠가 있으면 허락한 이름으로 읽는다', r.status === 200 && JSON.parse(r.text).ok === true);
+  eq('**열쇠가 있어도 낯선 이름으로는 못 읽는다(DNS 재바인딩)**', (await hit('/api/state', { headers: { host: 'evil.example', ...AUTH } })).status, 403);
+  r = await hit('/api', { method: 'POST', headers: { host: SITE, ...AUTH, 'content-type': 'application/json', origin: 'https://' + SITE }, body: list });
+  ok('같은 이름의 https 화면에서 온 요청은 받는다', r.status === 200 && JSON.parse(r.text).ok === true, String(r.status));
+  eq('남의 Origin 은 받지 않는다(바깥에서도)', (await hit('/api', { method: 'POST', headers: { host: SITE, ...AUTH, 'content-type': 'application/json', origin: 'https://evil.example' }, body: list })).status, 403);
+  eq('http Origin 은 포트까지 맞아야 한다', (await hit('/api', { method: 'POST', headers: { host: SITE, ...AUTH, 'content-type': 'application/json', origin: 'http://' + SITE + ':9999' }, body: list })).status, 403);
+  eq('text/plain 은 바깥에서도 받지 않는다', (await hit('/api', { method: 'POST', headers: { host: SITE, ...AUTH, 'content-type': 'text/plain' }, body: list })).status, 415);
+  r = await hit('/enter', { headers: { host: SITE, ...AUTH } });
+  ok('열쇠를 넣고 «들어가기»면 첫 화면으로', r.status === 302 && r.headers.location === '/');
+  r = await hit('/', { headers: { host: SITE, ...AUTH, 'sec-fetch-mode': 'navigate' } });
+  ok('열쇠가 있으면 화면을 내준다', r.status === 200 && r.text.includes('app.js'));
+  site.close();
+
+  // ── 로컬 서버(이 시험의 8899)는 그대로 — 열쇠도 «들어가기»도 없다
+  const plain = (path, headers = {}) => new Promise((resolve) => {
+    const rq = httpRequest({ host: '127.0.0.1', port: PORT, path, headers }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+    rq.on('error', () => resolve(0));
+    rq.end();
+  });
+  eq('로컬도 살아 있는지 답한다', await plain('/healthz'), 200);
+  eq('로컬에는 «들어가기»가 없다', await plain('/enter'), 404);
+  eq('로컬 화면은 열쇠 없이 그대로 열린다', await plain('/', { 'sec-fetch-mode': 'navigate' }), 200);
+
+  // ── 바깥에 열면서 열쇠가 없으면 서버 프로세스가 뜨지 않는다(fail-closed)
+  const refused = spawnSync(process.execPath, [join(HERE, 'server.mjs')], {
+    env: { ...process.env, SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_DATA_DIR: BOX },
+    encoding: 'utf8', timeout: 20000, windowsHide: true,
+  });
+  ok('**열쇠 없이 바깥에 열려 하면 서지 않는다**', refused.status === 1 && refused.stdout.includes('[STOP]') && refused.stdout.includes('SE2_ACCESS_KEY'),
+    String(refused.status) + ' ' + String(refused.stdout).slice(0, 200));
+
+  // ── Replit 설정 — 바깥 주소에 붙여 띄우고, 열쇠는 적지 않는다
+  const replitFile = join(ROOT, '.replit');
+  const replit = existsSync(replitFile) ? src(replitFile) : '';
+  ok('.replit 이 있다', !!replit);
+  ok('.replit 은 바깥 주소에 붙여 서버를 띄운다', (replit.match(/SE2_HOST=0\.0\.0\.0 node tools\/server\.mjs/g) || []).length >= 2);
+  ok('**.replit 에 열쇠를 적지 않는다**', !/SE2_ACCESS_KEY\s*=/.test(replit) && !/sk-ant-|sk-[A-Za-z0-9]{20}|AIza/.test(replit));
+  ok('.replit 에 포트를 박지 않는다(플랫폼의 PORT 를 따른다)', !/SE2_PORT=/.test(replit));
 }
 
 server.close();

@@ -17,10 +17,14 @@ import { killAllCalls, MODELS, lastLimit } from './call.mjs';
 import * as auth from './auth.mjs';
 import { bookList, BOOK_CATEGORY } from './books.mjs';
 import { EDITABLE_CODES, VIEW_CODES } from './prompts.mjs';
+import { resolveHosting, hostOf, originOk, gateOk, isNavigation, GATE_REALM } from './hosting.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(dirname(HERE), 'web');
-const PORT = Number(process.env.SE2_PORT || 8801);
+// 어디에 어떻게 여는가 — 로컬 기본은 지금 그대로 127.0.0.1:8801(tools/hosting.mjs).
+// 호스팅 플랫폼에서는 PORT · SE2_HOST · 허용 호스트 · 스테이징 출입 열쇠를 따른다.
+export const HOSTING = resolveHosting(process.env);
+const PORT = HOSTING.port;
 
 const ok = (extra = {}) => ({ ok: true, ...extra });
 const bad = (error) => ({ ok: false, error: String(error) });
@@ -358,23 +362,8 @@ function send(res, code, body, type = 'application/json; charset=utf-8', extra =
 //  · Host 가 제 이름(127.0.0.1·localhost)이 아니면 받지 않는다 — 남의 도메인을 이 자리로 돌려 원고를 읽는 길(DNS 재바인딩)을 막는다.
 //  · POST /api 는 application/json 만 받는다 — text/plain 은 사전 확인(preflight) 없이 남의 페이지에서 날아온다.
 //  · Origin 이 붙어 왔으면 제 자리의 것이어야 한다. **폰 중계기는 Origin 을 싣지 않는다**(노드 fetch) — 그대로 붙는다.
-const LOCAL_NAMES = new Set(['127.0.0.1', 'localhost']);
-
-function hostOf(req) {
-  try {
-    const u = new URL('http://' + String(req.headers.host || ''));
-    return LOCAL_NAMES.has(u.hostname) ? u : null;
-  } catch { return null; }
-}
-
-function originOk(req, host) {
-  const o = req.headers.origin;
-  if (o == null) return true;
-  try {
-    const u = new URL(String(o));
-    return u.protocol === 'http:' && LOCAL_NAMES.has(u.hostname) && u.port === host.port;
-  } catch { return false; }
-}
+// 판정(hostOf · originOk)은 tools/hosting.mjs 에 있다. 로컬에서는 위 규칙 그대로이고,
+// 호스팅 실행에서는 «허락한 호스트 이름»이 제 이름에 더해지고 그 앞에 스테이징 출입 열쇠가 선다.
 
 const isJson = (req) => String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase() === 'application/json';
 
@@ -387,11 +376,34 @@ function readBody(req) {
   });
 }
 
-export const server = createServer(async (req, res) => {
+// 열쇠 없이 온 요청 — 원고를 담은 것은 아무것도 내주지 않는다.
+//  · 주소창으로 들어오는 브라우저(Sec-Fetch-Mode: navigate) → 401 + 로그인 창
+//  · 그 밖의 GET / (플랫폼의 상태 검사는 첫 화면이 200 으로 빨리 답하기를 바란다) → 원고 없는 작은 안내 페이지
+//  · 안내 페이지의 «들어가기»(/enter)와 나머지 → 401
+const LANDING = '<!doctype html><html lang="ko"><head><meta charset="utf-8">'
+  + '<meta name="viewport" content="width=device-width,initial-scale=1"><title>스토리 엔진</title></head>'
+  + '<body style="font-family:-apple-system,system-ui,sans-serif;padding:64px 16px;text-align:center">'
+  + '<p>스토리 엔진 — 시험 운영</p><p><a href="/enter">들어가기</a></p></body></html>';
+
+function refuse(req, res, url) {
+  const challenge = { 'www-authenticate': 'Basic realm="' + GATE_REALM + '", charset="UTF-8"' };
+  const look = req.method === 'GET' || req.method === 'HEAD';
+  if (look && url.pathname === '/' && !isNavigation(req)) return send(res, 200, LANDING, 'text/html; charset=utf-8');
+  if (url.pathname.startsWith('/api')) return send(res, 401, JSON.stringify(bad('출입 열쇠가 필요합니다')), 'application/json; charset=utf-8', challenge);
+  return send(res, 401, '출입 열쇠가 필요합니다', 'text/plain; charset=utf-8', challenge);
+}
+
+// 요청 하나 — plan 은 hosting.resolveHosting() 의 결과(어디에 어떻게 열었나).
+async function handle(plan, req, res) {
   try {
     const url = new URL(req.url, 'http://127.0.0.1');
-    const host = hostOf(req);
-    if (!host) return send(res, 403, JSON.stringify(bad('이 PC 안에서 연 화면만 받습니다')));
+    // 살아 있는가 — 플랫폼이 두드린다. 원고를 담지 않으므로 열쇠도 호스트 이름도 묻지 않는다.
+    if (req.method === 'GET' && url.pathname === '/healthz') return send(res, 200, 'ok', 'text/plain; charset=utf-8');
+    if (plan.gate && !gateOk(req, plan.gate)) return refuse(req, res, url);
+    const host = hostOf(req, plan.allowedHosts);
+    if (!host) return send(res, 403, JSON.stringify(bad(plan.exposed ? '허락하지 않은 호스트 이름입니다' : '이 PC 안에서 연 화면만 받습니다')));
+    // 안내 페이지의 «들어가기» — 열쇠를 넣고 돌아오면 첫 화면으로
+    if (plan.gate && req.method === 'GET' && url.pathname === '/enter') return send(res, 302, '', 'text/plain; charset=utf-8', { location: '/' });
     if (req.method === 'POST' && url.pathname === '/api') {
       if (!originOk(req, host)) return send(res, 403, JSON.stringify(bad('다른 곳에서 온 요청은 받지 않습니다')));
       if (!isJson(req)) return send(res, 415, JSON.stringify(bad('JSON 요청만 받습니다')));
@@ -428,9 +440,22 @@ export const server = createServer(async (req, res) => {
   } catch (e) {
     send(res, 500, JSON.stringify(bad((e && e.message) || e)));
   }
-});
+}
 
+// 시험이 다른 계획(바깥에 연 꼴)으로 한 벌 더 띄워 볼 수 있게 계획을 받는다.
+export function createAppServer(plan = HOSTING) {
+  return createServer((req, res) => handle(plan, req, res));
+}
+
+export const server = createAppServer(HOSTING);
+
+// 붙을 주소는 계획(HOSTING)이 정한다 — 부르는 쪽이 따로 넘기지 못하게 해서 «열쇠 없이 바깥에 열기»를 비켜 갈 길을 두지 않는다.
 export function boot(port = PORT) {
+  // 열면 안 되는 꼴이면 서지 않는다(바깥에 열면서 열쇠가 없는 따위). 까닭은 hosting.mjs 가 적어 준다. 콘솔은 ASCII 만.
+  if (HOSTING.problems.length) {
+    for (const p of HOSTING.problems) console.log('  [STOP] ' + p);
+    return Promise.reject(new Error(HOSTING.problems[0]));
+  }
   for (const p of state.list()) jobs.healStale(p.id);
   return new Promise((resolve, reject) => {
     server.once('error', (e) => {
@@ -438,14 +463,20 @@ export function boot(port = PORT) {
       else console.log('  [ERROR] ' + ((e && e.message) || e));
       reject(e);
     });
-    server.listen(port, '127.0.0.1', () => resolve(server));
+    server.listen(port, HOSTING.host, () => resolve(server));
   });
 }
 
 if (process.argv[1] && process.argv[1].endsWith('server.mjs')) {
   try { await boot(PORT); } catch { process.exit(1); }
   const addr = 'http://127.0.0.1:' + PORT;
-  console.log('  Story Engine : ' + addr);
+  if (!HOSTING.exposed) console.log('  Story Engine : ' + addr);
+  else {
+    console.log('  Story Engine : listening on ' + HOSTING.host + ':' + PORT);
+    console.log('  Host names   : ' + HOSTING.allowedHosts.join(', '));
+    console.log('  Access key   : ' + (HOSTING.gate ? 'required (HTTP Basic - any user name, the key as password)' : 'NONE'));
+  }
+  for (const n of HOSTING.notes) console.log('  [NOTE] ' + n);
   if (process.env.SE2_OPEN_BROWSER === '1') {
     try { spawn('cmd', ['/c', 'start', '', addr], { windowsHide: true, detached: true, stdio: 'ignore' }).unref(); } catch {}
   }

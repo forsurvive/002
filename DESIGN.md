@@ -9,6 +9,9 @@
 
 - Node 22 내장 모듈만. 의존성 0. 빌드 없음. ESM(.mjs).
 - 포트 **8801**(폰 동반 프로그램이 이 자리로 붙는다 — 바꾸지 않는다). `스토리 엔진 개인판.cmd` 더블클릭 → 로그인 확인 → 서버 → 브라우저.
+- **호스팅 실행**(온라인화 1차, 2026-10-04 — `tools/hosting.mjs`): 서버는 `SE2_PORT` → 플랫폼의 `PORT` → 8801 순으로 포트를 잡고,
+  `SE2_HOST` 로 붙을 주소를 받는다(기본 `127.0.0.1`). 실행기는 여전히 `SE2_PORT` 를 못박으므로 **로컬 개인판은 한 글자도 달라지지 않는다.**
+  바깥(루프백이 아닌 주소)에 열 때만 허용 호스트와 스테이징 출입 열쇠가 선다 — §6 문지기. 설계 전체는 `docs/`.
 - 부르는 값은 이 PC 의 Claude 구독에서 나간다(`claude` 실행기). 가입·결제·관리자 페이지는 없다.
 - 클로드 호출: `-p --system-prompt-file <파일> --output-format stream-json --verbose --tools ""` + stdin 프롬프트 → 마지막 `result` 이벤트의 텍스트. (`tools/call.mjs`, 실측 검증된 계약 — 손대지 않는다.)
 - `SE2_MOCK=1` 이면 호출 없이 가짜 응답(시험용).
@@ -31,6 +34,7 @@ tools/assemble.mjs    프롬프트 구획 조립
 tools/agents.mjs      비소설 에이전트 즉석 생성(F-KIND·F-AGENT)
 tools/jobs.mjs        작업 실행기(동시 실행·일시중지·삭제)
 tools/server.mjs      HTTP — 문 하나(POST /api) + 정적 파일 + 내려받기
+tools/hosting.mjs     어디에 어떻게 여는가(포트 · 붙을 주소 · 허용 호스트 · 스테이징 출입 열쇠) — 순수 함수
 tools/test.mjs        시험
 web/{index.html,style.css,app.js,tour.js,tour.demo.js}
 ```
@@ -587,6 +591,13 @@ F-TALK 이 원인을 규범으로 단정하던 자리와, F-MERGE 가 제 무게
   · `POST /api` 는 `application/json` 만(아니면 415) — text/plain 은 사전 확인 없이 남의 페이지에서 날아온다.
   · Origin 이 붙어 왔으면 같은 자리(`http://127.0.0.1:<포트>`·`http://localhost:<포트>`)의 것만. 아니면 403.
   **폰 중계기**(Host 127.0.0.1:8801 · application/json · Origin 없음)는 그대로 붙는다 — 시험이 그 꼴로 두드려 본다.
+- `GET /healthz` → `200 ok`(2026-10-04). 원고를 담지 않으므로 문지기·열쇠를 거치지 않는다 — 호스팅 플랫폼의 상태 검사용.
+- **바깥에 열 때의 문지기**(2026-10-04, `SE2_HOST` 가 루프백이 아닐 때만 — 로컬은 위 규칙 그대로).
+  · 받아 주는 Host 에 `SE2_ALLOWED_HOSTS` 와 플랫폼이 알려 준 도메인(`REPLIT_DOMAINS`·`REPLIT_DEV_DOMAIN`)이 더해진다. 그 밖은 여전히 403(재바인딩 방어).
+  · 그 이름으로 온 요청의 Origin 은 같은 이름의 것만(https 는 이름만, http 는 포트까지).
+  · 그 앞에 **스테이징 출입 열쇠**(`SE2_ACCESS_KEY`, HTTP Basic — 비밀번호 칸만 본다)가 선다. **열쇠 없이 바깥에 열려 하면 서버가 서지 않는다**(`[STOP]`) — 계정이 없는 지금 판을 맨몸으로 세우지 않는다. 굳이 열려면 `SE2_ALLOW_OPEN=1`.
+  · 열쇠 없이 온 `GET /` 는 브라우저의 주소창 이동이면 401(로그인 창), 그 밖(플랫폼 상태 검사)이면 원고 없는 안내 페이지 200(«들어가기» → `/enter`). API·내려받기·정적 파일은 401.
+  · 이것은 사람 계정이 아니라 임시 울타리다. 계정·세션·기관 격리는 온라인판에서(`docs/SECURITY.md`).
 
 ---
 

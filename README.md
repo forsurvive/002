@@ -122,3 +122,5 @@
 - 시험: `tools\node\node.exe tools\test.mjs` — 모의 호출(`SE2_MOCK=1`)과 임시 자료 상자를 스스로 켭니다. 구독을 쓰지 않고 진짜 원고에 손대지 않습니다.
 - 모의 실행(구독 소모 없음): `SE2_MOCK=1 SE2_PORT=8811 SE2_DATA_DIR=.tmp/모의상자 node tools/server.mjs`
 - 이 폴더는 개인판 하나만 담습니다. 다른 판의 코드를 가져오거나 옆 폴더를 보지 않습니다 — 고칠 때도 이 폴더만 고칩니다.
+- 개발 규칙: `CLAUDE.md` · 온라인 개인판/교육기관판으로 넓히는 설계와 계획: `docs/`(먼저 `docs/README.md`).
+- 호스팅 실행(시험 운영): `docs/REPLIT_DEPLOYMENT.md`. 위의 «여는 법»으로 쓰는 로컬 개인판에는 영향이 없습니다.

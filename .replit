@@ -1,0 +1,26 @@
+# Replit 설정 — 스테이징(온라인화 Sprint 1): 지금 개인판을 기능 그대로 띄운다.
+# 자세한 것은 docs/REPLIT_DEPLOYMENT.md
+#
+# · 포트 — Replit 이 PORT 를 주면 그것을, 없으면 8801. 서버가 연 그 포트가 아래 [[ports]] 로 외부 80 에 붙는다.
+#   실행 명령에는 포트를 박지 않는다.
+# · 주소 — 0.0.0.0. 그래서 출입 열쇠 SE2_ACCESS_KEY(16자 이상)가 Secrets 에 있어야 서버가 선다.
+#   열쇠는 이 파일에도 저장소에도 적지 않는다.
+# · AI — 아직 잇지 않는다. Secrets(또는 설정)에 SE2_MOCK=1 을 두고 돌린다(Provider 계층은 다음 단계).
+# · 저장 — data/ 의 JSON 파일은 다시 게시하면 사라질 수 있다. 시험 데이터만 넣는다(PostgreSQL 은 Phase 3).
+# · 게시 — Publishing → Reserved VM → Web server. Autoscale 은 쓰지 않는다
+#   (잠들거나 여러 벌로 늘면 «메모리가 정본»인 지금 판의 상태가 갈린다).
+
+modules = ["nodejs-22"]
+entrypoint = "tools/server.mjs"
+run = ["sh", "-c", "SE2_HOST=0.0.0.0 node tools/server.mjs"]
+
+[nix]
+channel = "stable-24_11"
+
+[[ports]]
+localPort = 8801
+externalPort = 80
+
+[deployment]
+deploymentTarget = "gce"
+run = ["sh", "-c", "SE2_HOST=0.0.0.0 node tools/server.mjs"]
