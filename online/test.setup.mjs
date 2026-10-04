@@ -43,6 +43,23 @@ export async function run({ pool, ok, eq }) {
   const { srv, base } = await serve(pool, onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_ACCESS_KEY: gateKey }), credentials);
   try {
     eq('열쇠가 없으면 문 앞에서(401)', (await fetch(base + '/api/setup')).status, 401);
+    const quiet = await fetch(base + '/api/edu', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"op":"invite.accept"}' });
+    ok('**화면 안의 요청에는 브라우저 로그인 창을 띄우지 않는다(code:gate → 화면이 다시 연다)**', quiet.status === 401 && !quiet.headers.get('www-authenticate') && (await quiet.json()).code === 'gate');
+    const nav = await fetch(base + '/school.html', { headers: { 'sec-fetch-mode': 'navigate' } });
+    const navText = await nav.text();
+    ok('**열쇠 전에는 어느 주소든 로그인 화면(열쇠 칸) — 브라우저 창을 띄우지 않는다**', nav.status === 200 && !nav.headers.get('www-authenticate') && navText.includes('login.js') && !navText.includes('school.js'));
+    eq('열쇠 전에도 로그인 화면의 파일은 받는다', (await fetch(base + '/login.js')).status, 200);
+    eq('열쇠 전에는 다른 화면 파일을 주지 않는다', (await (await fetch(base + '/school.js')).text()).includes('joinBox'), false);
+    const gp = (key, headers = {}) => fetch(base + '/api/gate', { method: 'POST', headers: { 'content-type': 'application/json', origin: base, ...headers }, body: JSON.stringify({ key }) });
+    eq('틀린 열쇠는 받지 않는다', (await gp('wrong-key')).status, 401);
+    eq('남의 Origin 에서 온 열쇠는 받지 않는다', (await gp(gateKey, { origin: 'https://evil.example' })).status, 403);
+    const g = await gp(gateKey);
+    const gck = (g.headers.get('set-cookie') || '').split(';')[0];
+    ok('**맞는 열쇠 → 출입 쿠키(열쇠 원문은 쿠키에 없다)**', g.status === 200 && /^se_gate=/.test(gck) && !gck.includes(gateKey) && /HttpOnly/.test(g.headers.get('set-cookie')));
+    ok('출입 쿠키로 지나간다', (await (await fetch(base + '/api/setup', { headers: { cookie: gck } })).json()).needed === true);
+    ok('틀린 쿠키로는 못 지나간다', (await (await fetch(base + '/api/setup', { headers: { cookie: 'se_gate=' + 'x'.repeat(43) } })).json()).code === 'gate');
+    for (let i = 0; i < 5; i++) await gp('wrong-' + i);
+    eq('**열쇠 맞히기는 몇 번 틀리면 잠시 막힌다**', (await gp(gateKey)).status, 429);
     const st = await (await fetch(base + '/api/setup', { headers: basic })).json();
     ok('계정이 없으면 «처음 설정» 을 알린다', st.ok && st.needed === true && st.ai === true);
     eq('짧은 비밀번호는 받지 않는다', (await post(base, '/api/setup', { ...body, password: 'short' }, basic)).status, 422);

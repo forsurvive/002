@@ -27,6 +27,7 @@ async function enter(e) {
   }).catch(() => null);
   const out = r ? await r.json().catch(() => ({ ok: false })) : { ok: false, error: '연결되지 않습니다' };
   if (out.ok) { location.href = '/'; return; }
+  if (out.code === 'gate') { location.reload(); return; }   // 출입 열쇠는 페이지를 다시 열 때 묻는다
   say.textContent = out.error || '들어가지 못했습니다';
 }
 
@@ -45,6 +46,7 @@ async function setup(e) {
   document.getElementById('st-key').value = '';
   const out = r ? await r.json().catch(() => ({ ok: false })) : { ok: false, error: '연결되지 않습니다' };
   if (out.ok) { if (out.note) alert(out.note); location.href = '/'; return; }
+  if (out.code === 'gate') { location.reload(); return; }
   say.textContent = out.error || '설정하지 못했습니다';
 }
 
@@ -52,6 +54,24 @@ const field = (label, id, type, extra = {}) => [
   h('div', { class: 'lab', style: 'margin-top:14px', text: label }),
   h('input', { id, type, ...extra }),
 ];
+
+// 출입 열쇠(시험 운영 중에만) — 운영자에게 받은 열쇠를 한 번 넣으면 이 브라우저는 30일 동안 묻지 않는다
+async function gate(e) {
+  e.preventDefault();
+  const say = document.getElementById('say');
+  say.textContent = '';
+  const r = await fetch('/api/gate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: document.getElementById('gt-key').value }) }).catch(() => null);
+  const out = r ? await r.json().catch(() => ({ ok: false })) : { ok: false, error: '연결되지 않습니다' };
+  if (out.ok) { location.reload(); return; }
+  say.textContent = out.error || '들어가지 못했습니다';
+}
+
+const gateForm = () => h('form', { onsubmit: gate },
+  h('div', { class: 'lab', text: '출입 열쇠' }),
+  h('input', { id: 'gt-key', type: 'password', autocomplete: 'off', spellcheck: 'false' }),
+  h('div', { class: 'when', style: 'margin-top:8px', text: '지금은 시험 운영 중입니다. 운영자에게 받은 열쇠를 넣어 주세요.' }),
+  h('div', { id: 'say', class: 'notice', style: 'min-height:22px;margin:10px 0' }),
+  h('button', { class: 'btn-red', type: 'submit', text: '들어가기' }));
 
 const loginForm = () => h('form', { onsubmit: enter },
   h('div', { class: 'lab', text: '아이디' }),
@@ -77,7 +97,7 @@ const setupForm = (ai) => h('form', { onsubmit: setup },
   document.getElementById('root').appendChild(
     h('div', { class: 'body', style: 'max-width:380px;margin:0 auto;padding-top:14vh' },
       h('div', { class: 'top-name', style: 'font-size:30px;margin-bottom:24px', text: '스토리 엔진' }),
-      st.needed ? setupForm(st.ai) : loginForm()));
+      st.code === 'gate' ? gateForm() : st.needed ? setupForm(st.ai) : loginForm()));
   const boot = document.getElementById('boot');
   if (boot) boot.remove();
 })();

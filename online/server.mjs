@@ -10,7 +10,7 @@
 // 실행: DATABASE_URL=… SE2_HOST=0.0.0.0 node online/server.mjs   (docs/REPLIT_DEPLOYMENT.md · 콘솔은 ASCII 만)
 
 import { createServer } from 'node:http';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, extname, normalize } from 'node:path';
@@ -32,7 +32,7 @@ import { createWorkflowSource } from './workflow.mjs';
 import { createWorker } from './worker.mjs';
 import { createOnlineCall } from './call.mjs';
 import { buildAi } from './ai.mjs';
-import { resolveHosting, hostOf, originOk, gateOk, GATE_REALM } from '../tools/hosting.mjs';
+import { resolveHosting, hostOf, originOk, gateOk } from '../tools/hosting.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(dirname(HERE), 'web');
@@ -203,12 +203,48 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
     return send(res, 200, await readFile(file), TYPES[extname(file)] || 'application/octet-stream');
   };
 
+  // ---------------- 출입 열쇠(스테이징) — 쿠키 값은 열쇠에서 뽑은 지문(열쇠 원문은 쿠키에 없다)
+  const GATE_COOKIE = 'se_gate';
+  const gateMark = plan.gate ? createHash('sha256').update('se-gate|' + plan.gate.key).digest('base64url') : '';
+  const gateCookieOk = (req) => {
+    const got = Buffer.from(auth.readCookie(req, GATE_COOKIE));
+    const want = Buffer.from(gateMark);
+    return !!gateMark && got.length === want.length && timingSafeEqual(got, want);
+  };
+  const gateFails = new Map();   // ip → { n, until } — 열쇠 맞히기를 늦춘다
+  async function passGate(req, res) {
+    const ip = ipOf(req);
+    const now = Date.now();
+    const f = gateFails.get(ip);
+    if (f && f.n >= 5 && f.until > now) return json(res, 429, bad('잠시 뒤에 다시 시도해 주세요', 'rate_limited'));
+    const host = hostOf(req, plan.allowedHosts);
+    if (!host) return json(res, 403, bad('허락하지 않은 호스트 이름입니다'));
+    if (!originOk(req, host)) return json(res, 403, bad('다른 곳에서 온 요청은 받지 않습니다'));
+    if (!isJson(req)) return json(res, 415, bad('JSON 요청만 받습니다'));
+    const got = await readBody(req);
+    const key = String((got.body && got.body.key) || '');
+    const fake = { headers: { authorization: 'Basic ' + Buffer.from('gate:' + key).toString('base64') } };
+    if (!key || !gateOk(fake, plan.gate)) {
+      if (!f || f.until <= now) gateFails.set(ip, { n: 1, until: now + 15 * 60 * 1000 }); else f.n += 1;
+      return json(res, 401, bad('출입 열쇠가 맞지 않습니다', 'gate'));
+    }
+    gateFails.delete(ip);
+    const cookie = [GATE_COOKIE + '=' + gateMark, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=' + 30 * 86400, ...(secure ? ['Secure'] : [])].join('; ');
+    return json(res, 200, ok(), { 'set-cookie': cookie });
+  }
+
   async function handle(req, res) {
     try {
       const url = new URL(req.url, 'http://127.0.0.1');
       if (req.method === 'GET' && url.pathname === '/healthz') return send(res, 200, 'ok', 'text/plain; charset=utf-8');
-      if (plan.gate && !gateOk(req, plan.gate)) {
-        return send(res, 401, '출입 열쇠가 필요합니다', 'text/plain; charset=utf-8', { 'www-authenticate': 'Basic realm="' + GATE_REALM + '", charset="UTF-8"' });
+      if (plan.gate && !gateOk(req, plan.gate) && !gateCookieOk(req)) {
+        // 출입 열쇠는 브라우저의 뜻 모를 로그인 창 대신 로그인 화면에서 묻는다(열쇠를 넣으면 쿠키로 30일).
+        // 열쇠 전에는 로그인 화면(원고 없는 파일 셋)과 열쇠 받기만 열린다.
+        if (req.method === 'POST' && url.pathname === '/api/gate') return passGate(req, res, url);
+        if (url.pathname.startsWith('/api')) return json(res, 401, bad('출입 열쇠가 필요합니다', 'gate'));
+        if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 401, bad('출입 열쇠가 필요합니다', 'gate'));
+        if (url.pathname === '/login.js' || url.pathname === '/style.css') return staticFile(res, url.pathname);
+        return staticFile(res, 'login.html');
       }
       const host = hostOf(req, plan.allowedHosts);
       if (!host) return json(res, 403, bad('허락하지 않은 호스트 이름입니다'));

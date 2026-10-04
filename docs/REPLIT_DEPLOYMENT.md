@@ -108,7 +108,7 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
    git fetch origin claude/charming-keller-12p0c5 && git stash -u ; git checkout -B claude/charming-keller-12p0c5 origin/claude/charming-keller-12p0c5
    ```
 2. **데이터베이스 만들기** — 작업 공간 도구 목록의 Database 에서 PostgreSQL 을 만든다(Secrets 에 `DATABASE_URL` 이 저절로 들어온다).
-3. **[Run] → 미리보기를 새 탭으로** → (출입 열쇠 창이 뜨면 `SE2_ACCESS_KEY` 값) → **처음 설정 화면**에서 아이디 · 이름 · 비밀번호 · Anthropic API 키를 넣는다.
+3. **[Run] → 미리보기를 새 탭으로** → («출입 열쇠» 칸에 `SE2_ACCESS_KEY` 값 — 브라우저마다 한 번, 30일) → **처음 설정 화면**에서 아이디 · 이름 · 비밀번호 · Anthropic API 키를 넣는다.
    계정이 하나도 없을 때 한 번만 나오는 화면이고, 출입 열쇠를 지나온 요청만 받는다. 키는 서버에서 봉해 저장되고 다시 보이지 않는다.
 
 그 뒤: 프로젝트를 만들면 «에이전트 준비»가 돌고, 문서의 [갱신] · 논의가 실제 AI 로 돈다.
