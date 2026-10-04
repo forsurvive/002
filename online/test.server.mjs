@@ -101,6 +101,24 @@ export async function run({ pool, ok, eq }) {
     const dl = await req('/api/download?pid=' + pid + '&kind=doc&id=' + dc.id, { who: 'a' });
     ok('내려받기', dl.status === 200 && (await dl.text()).startsWith('# 플롯'));
 
+    // ---------------- 상태 폴링을 가볍게 — 바뀐 것이 없으면 304
+    {
+      const s1 = await req('/api/state?pid=' + pid, { who: 'a' });
+      const tag = s1.headers.get('etag');
+      ok('상태에 지문(ETag)', !!tag && s1.status === 200 && /no-cache/.test(s1.headers.get('cache-control')));
+      eq('**바뀐 것이 없으면 304**', (await req('/api/state?pid=' + pid, { who: 'a', headers: { 'if-none-match': tag } })).status, 304);
+      await op('a', 'doc.write', { pid, id: dc.id, request: '지문 바꾸기' });
+      const s2 = await req('/api/state?pid=' + pid, { who: 'a', headers: { 'if-none-match': tag } });
+      ok('고치면 새 지문으로 200', s2.status === 200 && s2.headers.get('etag') !== tag && (await s2.json()).project.docs.find((x) => x.id === dc.id).request === '지문 바꾸기');
+      const home1 = await req('/api/state', { who: 'a' });
+      const ht = home1.headers.get('etag');
+      eq('첫 화면도 304', (await req('/api/state', { who: 'a', headers: { 'if-none-match': ht } })).status, 304);
+      await op('a', 'project.spec', { pid, name: '온라인 작품' });
+      ok('작품을 고치면 첫 화면 지문도 바뀐다', (await req('/api/state', { who: 'a', headers: { 'if-none-match': ht } })).status === 200);
+      const sb0 = await req('/api/state?pid=' + pid, { who: 'b', headers: { 'if-none-match': tag } });
+      ok('**남의 프로젝트에는 지문도 304 도 없다**', sb0.status === 200 && !sb0.headers.get('etag') && (await sb0.json()).ok === false);
+    }
+
     // ---------------- AI 작업은 줄에 선다(곧바로 jobId) — 도는 동안 기존 글은 그대로
     const ai = await op('a', 'doc.update', { pid, id: dc.id });
     ok('AI 작업은 등록만 하고 곧바로 jobId', ai.ok && /^[0-9a-f-]{36}$/.test(ai.jobId));

@@ -10,6 +10,7 @@
 // 실행: DATABASE_URL=… SE2_HOST=0.0.0.0 node online/server.mjs   (docs/REPLIT_DEPLOYMENT.md · 콘솔은 ASCII 만)
 
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, extname, normalize } from 'node:path';
@@ -163,6 +164,18 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
     return r.rowCount > 0;
   };
 
+  // 상태의 지문 — 질의 하나(덩어리를 짓는 열세 질의 대신). 남의 프로젝트면 지문을 내지 않는다(그 길은 «없음»으로 답한다).
+  const fingerprint = async (user, pid) => {
+    if (pid && !(await owns(user, pid))) return '';
+    const { rows } = await pool.query(
+      `SELECT (SELECT updated_at::text FROM projects WHERE id = $1::uuid) AS p,
+              (SELECT count(*)::text || ':' || coalesce(max(updated_at)::text, '') FROM projects WHERE owner_user_id = $2 AND deleted_at IS NULL) AS mine,
+              (SELECT coalesce(string_agg(id::text || status || step || coalesce(step_at::text, '') || coalesce(ended_at::text, '')
+                        || coalesce(dismissed_at::text, '') || coalesce(ask::text, '') || error_message_safe || coalesce(result::text, ''), ',' ORDER BY id), '')
+                 FROM jobs WHERE project_id = $1::uuid) AS jobs`, [pid || null, user.id]);
+    return 'W/"' + createHash('sha256').update(user.id + '|' + pid + '|' + rows[0].p + '|' + rows[0].mine + '|' + rows[0].jobs).digest('base64url') + '"';
+  };
+
   const staticFile = async (res, rel) => {
     const file = join(WEB, normalize(rel).replace(/^[\\/]+/, ''));
     if (!file.startsWith(WEB) || !existsSync(file)) return send(res, 404, '없음', 'text/plain; charset=utf-8');
@@ -237,13 +250,18 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       }
 
       if (req.method === 'GET' && url.pathname === '/api/state') {
+        const pid = url.searchParams.get('pid') || '';
+        // 화면은 1.5초마다 묻는다 — 바뀐 것이 없으면 프로젝트를 짓지 않고 304 로 답한다.
+        // 지문 = 이 프로젝트의 updated_at(덩어리를 고치면 늘 바뀐다) · 내 프로젝트 목록 · 작업 줄(상태 · 지금 하는 일 · 물음)
+        const etag = await fingerprint(user, pid);
+        const cache = { etag, 'cache-control': 'private, no-cache' };
+        if (etag && req.headers['if-none-match'] === etag) return send(res, 304, '', 'application/json; charset=utf-8', cache);
         const { stateOf } = createOps(depsFor(store, queue, worker, user));
         const projects = await store.listFor(user.id);
-        const pid = url.searchParams.get('pid') || '';
-        if (!pid) return json(res, 200, { ok: true, projects, me });
+        if (!pid) return json(res, 200, { ok: true, projects, me }, cache);
         const st = (await owns(user, pid)) ? await stateOf(pid) : null;
         if (!st) return json(res, 200, { ok: false, error: '없음', projects, me });
-        return json(res, 200, { ok: true, project: st, projects, me });
+        return json(res, 200, { ok: true, project: st, projects, me }, cache);
       }
 
       if (req.method === 'GET' && url.pathname === '/api/download') {

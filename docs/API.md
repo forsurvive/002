@@ -133,6 +133,8 @@
 
 ### 2-4. 상태 조회를 가볍게
 
+> **온라인 서버에 들어간 것(2026-10-04)**: `GET /api/state` 에 지문(`ETag` — 프로젝트 `updated_at` · 내 프로젝트 목록 · 작업 줄을 질의 하나로)과 `Cache-Control: private, no-cache`. 같으면 **프로젝트를 짓지 않고 304**. 브라우저가 스스로 `If-None-Match` 를 붙이므로 화면(`web/app.js`)은 고치지 않았다. 남은 것: 판 본문을 펼칠 때만 받기.
+
 지금의 `GET /api/state?pid=` 는 모든 판의 본문을 1.5초마다 싣는다. 온라인에서는:
 - 판 목록은 메타데이터만(`{ id, seq, at, title, chars, source }`), 판 본문은 `GET /api/version?pid=&id=` 로 펼칠 때만.
 - `ETag`(프로젝트 `updated_at`+작업 상태 해시) → 바뀌지 않았으면 `304`.
