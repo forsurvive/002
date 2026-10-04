@@ -101,7 +101,8 @@ function refuse(req, res, url) {
   const challenge = { 'www-authenticate': 'Basic realm="' + GATE_REALM + '", charset="UTF-8"' };
   const look = req.method === 'GET' || req.method === 'HEAD';
   if (look && url.pathname === '/' && !isNavigation(req)) return send(res, 200, LANDING, 'text/html; charset=utf-8');
-  if (url.pathname.startsWith('/api')) return send(res, 401, JSON.stringify(bad('출입 열쇠가 필요합니다')), 'application/json; charset=utf-8', challenge);
+  // 화면 안의 요청(fetch)에는 로그인 창을 띄우지 않는다 — 화면이 code:'gate' 를 받으면 페이지를 다시 열어 그때 묻는다
+  if (url.pathname.startsWith('/api')) return send(res, 401, JSON.stringify({ ...bad('출입 열쇠가 필요합니다'), code: 'gate' }), 'application/json; charset=utf-8', isNavigation(req) ? challenge : {});
   return send(res, 401, '출입 열쇠가 필요합니다', 'text/plain; charset=utf-8', challenge);
 }
 

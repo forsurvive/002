@@ -2510,6 +2510,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('«들어가기»도 열쇠를 묻는다', (await hit('/enter', { headers: { host: SITE } })).status, 401);
   r = await hit('/api/state', { headers: { host: SITE } });
   ok('**열쇠 없이는 원고를 읽지 못한다**', r.status === 401 && JSON.parse(r.text).ok === false);
+  ok('**화면 안의 요청에는 브라우저 로그인 창을 띄우지 않는다(code:gate → 화면이 다시 연다)**', !r.headers['www-authenticate'] && JSON.parse(r.text).code === 'gate');
   eq('열쇠 없이는 고치지도 못한다', (await hit('/api', { method: 'POST', headers: { host: SITE, 'content-type': 'application/json' }, body: list })).status, 401);
   eq('틀린 열쇠도 마찬가지다', (await hit('/api/state', { headers: { host: SITE, authorization: basic('x:wrong-key-wrong-key').headers.authorization } })).status, 401);
   eq('내려받기도 열쇠를 묻는다', (await hit('/api/download?pid=x&kind=doc&id=y', { headers: { host: SITE } })).status, 401);

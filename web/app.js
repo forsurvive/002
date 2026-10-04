@@ -149,12 +149,15 @@ async function api(op, body = {}) {
   });
   const out = await r.json().catch(() => ({ ok: false, error: '응답 없음' }));
   if (out.code === 'login') return toLogin(out);
+  if (out.code === 'gate') return regate(out);
   await pull(true);
   return out;
 }
 
 // 온라인판에서 세션이 끝났으면 로그인 화면으로 — 개인판은 이 답을 내지 않는다
 function toLogin(out) { location.href = '/login'; return out; }
+// 출입 열쇠가 풀렸으면 페이지를 다시 연다 — 그때 브라우저가 열쇠를 묻는다(단추마다 창이 뜨지 않게)
+function regate(out) { location.reload(); return out; }
 
 async function logout() {
   await fetch('/api/auth/logout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => null);
@@ -180,6 +183,7 @@ async function pull(force) {
     return;
   }
   if (d.code === 'login') return toLogin(d);
+  if (d.code === 'gate') return regate(d);
   S.me = d.me || null;   // 온라인판에서만 온다(로그인한 사람)
   if (d.projects) S.projects = d.projects;
   if (S.pid && d.ok === false) { S.pid = null; S.project = null; }

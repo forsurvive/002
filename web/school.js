@@ -28,7 +28,9 @@ const day = (t) => (t ? new Date(t).toLocaleDateString() : '');
 
 async function edu(op, body = {}) {
   const r = await fetch('/api/edu', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op, ...body }) }).catch(() => null);
-  return r ? r.json().catch(() => ({ ok: false, error: '응답 없음' })) : { ok: false, error: '연결되지 않습니다' };
+  const out = r ? await r.json().catch(() => ({ ok: false, error: '응답 없음' })) : { ok: false, error: '연결되지 않습니다' };
+  if (out.code === 'gate') location.reload();   // 출입 열쇠는 페이지를 다시 열 때 묻는다
+  return out;
 }
 const tell = (text) => { S.say = text || ''; render(); };
 
@@ -76,6 +78,8 @@ async function makeInvite(key, orgId, classId, role) {
 function joinBox() {
   const go = async () => {
     const body = { code: val('j-code') };
+    if (!body.code) return tell('초대 코드를 넣어 주세요');
+    if (!S.loggedIn && (!val('j-id') || !val('j-pw'))) return tell('아이디와 비밀번호를 정해 넣어 주세요');
     if (!S.loggedIn) Object.assign(body, { loginId: val('j-id'), displayName: val('j-name'), password: val('j-pw') });
     if (!S.loggedIn && body.password !== val('j-pw2')) return tell('비밀번호가 서로 다릅니다');
     const r = await edu('invite.accept', body);
@@ -105,6 +109,7 @@ function newWorkForm(c) {
     const r = await fetch('/api', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
       op: 'project.create', classId: c.id, name: val(k + '-name'), spec: { form: val(k + '-form') }, materials: [{ name: '자료', text: val(k + '-mat') }],
     }) }).then((x) => x.json()).catch(() => ({ ok: false, error: '연결되지 않습니다' }));
+    if (r.code === 'gate') return location.reload();
     if (!r.ok) return tell(r.error);
     location.href = '/';
   };
