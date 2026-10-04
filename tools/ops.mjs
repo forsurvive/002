@@ -1,6 +1,7 @@
 // 화면이 부르는 문(op) 표 — 개인판 서버(tools/server.mjs)와 온라인 서버(online/server.mjs)가 같은 표를 쓴다.
 // 문의 이름과 응답 꼴은 폰 동반 프로그램이 기댄다(CLAUDE.md 원칙 9) — 두 서버가 따로 지으면 언젠가 어긋난다.
 // 저장 · 작업 · 과금 갈래처럼 «어디서 도는가»에 따라 다른 것은 바깥이 넣는다(createOps 의 d).
+// 넣는 것은 동기여도 비동기여도 된다 — 문마다 기다린다(개인판은 메모리, 온라인판은 PostgreSQL).
 
 import * as model from './model.mjs';
 import { MODELS } from '../core/ids.mjs';
@@ -27,10 +28,10 @@ export function createOps(d) {
 
   const OPS = {
     // ---------------- 프로젝트
-    'project.list': () => ok({ projects: state.list() }),
+    'project.list': async () => ok({ projects: await state.list() }),
 
     // 필수는 셋뿐이다 — 이름·형식·자료(사용자 지시, 2026-09-19). 무엇이 빠졌는지 짚어서 돌려준다.
-    'project.create': (b) => {
+    'project.create': async (b) => {
       const name = String(b.name || '').trim();
       const spec = b.spec || {};
       const materials = arr(b.materials).filter((m) => m && String(m.text || '').trim());
@@ -39,20 +40,20 @@ export function createOps(d) {
       if (!String(spec.form || '').trim()) miss.push('형식');
       if (!materials.length) miss.push('자료');
       if (miss.length) return bad('필수 항목 누락 — ' + miss.join(' · '));
-      const p = state.create({ name, spec, standard: b.standard, request: b.request, materials });
+      const p = await state.create({ name, spec, standard: b.standard, request: b.request, materials });
       // 작법서를 문서로 세워 둔다 — 본문은 베끼지 않고 가리키기만 한다. 걸고 싶을 때 참조로 걸고, 필요 없으면 지운다.
       const books = bookList();
       if (books.length) {
-        state.update(p.id, (pr) => {
+        await state.update(p.id, (pr) => {
           const cat = model.categoryCreate(pr, BOOK_CATEGORY);
           for (const bk of books) model.docCreate(pr, { title: bk.title, src: bk.src, categoryId: cat.id });
         });
       }
-      startAgentPrep(p.id);
+      await startAgentPrep(p.id);
       return ok({ pid: p.id });
     },
 
-    'project.spec': (b) => state.update(b.pid, (p) => {
+    'project.spec': async (b) => state.update(b.pid, (p) => {
       if (b.name != null) p.name = String(b.name).trim() || p.name;
       if (b.spec) p.spec = { ...p.spec, ...b.spec };
       if (b.standard != null) p.standard = String(b.standard);
@@ -62,15 +63,15 @@ export function createOps(d) {
     }),
 
     // ---------------- 작법 프롬프트 고치기
-    'prompt.read': (b) => {
-      const p = state.get(b.pid);
+    'prompt.read': async (b) => {
+      const p = await state.get(b.pid);
       if (!p) return bad('프로젝트를 찾을 수 없습니다');
       if (!VIEW_CODES.includes(b.code)) return bad('없는 자리입니다');
       return ok({ one: engine.promptView(p, b.code) });
     },
-    'prompt.write': (b) => {
+    'prompt.write': async (b) => {
       if (!VIEW_CODES.includes(b.code)) return bad('없는 자리입니다');
-      return state.update(b.pid, (p) => {
+      return await state.update(b.pid, (p) => {
         p.prompts = p.prompts || {};
         const cur = p.prompts[b.code] || {};
         for (const k of ['name', 'role', 'task', 'craft']) if (b[k] != null) cur[k] = String(b[k]);
@@ -78,15 +79,15 @@ export function createOps(d) {
       });
     },
     // 되돌리면 작가가 고친 겹만 걷힌다 — 지어진 자리는 «지은 것»으로, 그 밖은 내장으로 돌아간다.
-    'prompt.reset': (b) => (VIEW_CODES.includes(b.code)
-      ? state.update(b.pid, (p) => { if (p.prompts) delete p.prompts[b.code]; })
+    'prompt.reset': async (b) => (VIEW_CODES.includes(b.code)
+      ? await state.update(b.pid, (p) => { if (p.prompts) delete p.prompts[b.code]; })
       : bad('없는 자리입니다')),
     // 그 자리(지어진 에이전트)가 쓸 모델. 빈 값이면 정해 둔 것을 걷어 작품의 모델을 따르게 한다.
-    'prompt.model': (b) => {
+    'prompt.model': async (b) => {
       if (!VIEW_CODES.includes(b.code)) return bad('없는 자리입니다');
       const m = String(b.model == null ? '' : b.model);
       if (m && !MODELS.includes(m)) return bad('그 모델을 쓸 수 없습니다');
-      return state.update(b.pid, (p) => {
+      return await state.update(b.pid, (p) => {
         p.slotModels = p.slotModels || {};
         if (m) p.slotModels[b.code] = m; else delete p.slotModels[b.code];
       });
@@ -94,19 +95,19 @@ export function createOps(d) {
 
     // 판정이 어긋났거나 중지·재시작으로 준비가 끊긴 프로젝트를 구한다.
     // 자동 집필을 빼기 전에는 «자동 집필 시작»이 같은 문을 한 번 더 지났다 — 그 되돌리기를 여기로 옮겼다.
-    'project.prepare': (b) => {
-      const p = state.get(b.pid);
+    'project.prepare': async (b) => {
+      const p = await state.get(b.pid);
       if (!p) return bad('프로젝트를 찾을 수 없습니다');
-      if (jobs.isKindRunning(b.pid, 'agents')) return bad('이미 도는 중입니다');
+      if (await jobs.isKindRunning(b.pid, 'agents')) return bad('이미 도는 중입니다');
       if (prepared(p)) return bad('이미 준비되어 있습니다');
-      startAgentPrep(b.pid, String(b.request || ''));
+      await startAgentPrep(b.pid, String(b.request || ''));
       return ok();
     },
 
     // 고르기 창에서 «이게 무슨 글이더라»를 그 자리에서 펼쳐 보는 문.
     // 문서(자료도 문서다)·에이전트 어느 것이든 id 하나로 본문을 내어 준다(폰도 이 문 하나로 족하다).
-    'peek': (b) => {
-      const p = state.get(b.pid);
+    'peek': async (b) => {
+      const p = await state.get(b.pid);
       if (!p) return bad('프로젝트를 찾을 수 없습니다');
       const d = model.findDoc(p, b.id);
       if (d) return ok({ one: { id: d.id, name: d.title, text: model.bodyOf(d) } });
@@ -115,38 +116,38 @@ export function createOps(d) {
       return bad('없습니다');
     },
 
-    'project.delete': (b) => {
-      jobs.stopProject(b.pid);
-      return state.remove(b.pid) ? ok() : bad('프로젝트를 찾을 수 없습니다');
+    'project.delete': async (b) => {
+      await jobs.stopProject(b.pid);
+      return await state.remove(b.pid) ? ok() : bad('프로젝트를 찾을 수 없습니다');
     },
 
     // ---------------- 자료 — 작업실 «자료» 카테고리의 문서로 들고 난다(지우면 휴지통)
-    'material.add': (b) => state.update(b.pid, (p) => { model.materialAdd(p, b.name || model.firstLineName(b.text), b.text); }),
-    'material.delete': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.materialDelete(p, id); }),
+    'material.add': async (b) => state.update(b.pid, (p) => { model.materialAdd(p, b.name || model.firstLineName(b.text), b.text); }),
+    'material.delete': async (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.materialDelete(p, id); }),
 
     // ---------------- 에이전트 (작가가 짓는다)
     // 사람마다 쓸 모델을 따로 둘 수 있다 — 빈 값이면 프로젝트에 정해 둔 것을 따른다.
-    'agent.create': (b) => {
+    'agent.create': async (b) => {
       let id = null;
-      const r = state.update(b.pid, (p) => { id = model.agentCreate(p, { ...b, model: pickModel(b.model, '') }).id; });
+      const r = await state.update(b.pid, (p) => { id = model.agentCreate(p, { ...b, model: pickModel(b.model, '') }).id; });
       return r.ok === false ? r : ok({ id });
     },
-    'agent.write': (b) => state.update(b.pid, (p) => {
+    'agent.write': async (b) => state.update(b.pid, (p) => {
       const cur = model.findAgent(p, b.id);
       model.agentWrite(p, b.id, { ...b, model: b.model == null ? undefined : pickModel(b.model, cur ? cur.model : '') });
     }),
-    'agent.delete': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.agentDelete(p, id); }),
+    'agent.delete': async (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.agentDelete(p, id); }),
 
     // ---------------- 문서 · 모순 검사 · 합평회
-    'doc.create': (b) => {
+    'doc.create': async (b) => {
       let id = null;
-      const r = state.update(b.pid, (p) => {
+      const r = await state.update(b.pid, (p) => {
         id = model.docCreate(p, { kind: b.kind, title: b.title, body: b.body, categoryId: b.categoryId }).id;
       });
       return r.ok === false ? r : ok({ id });
     },
 
-    'doc.write': (b) => state.update(b.pid, (p) => {
+    'doc.write': async (b) => state.update(b.pid, (p) => {
       model.docWrite(p, b.id, {
         title: b.title, body: b.body, request: b.request,
         refIds: b.refIds, targetIds: b.targetIds, agentIds: b.agentIds,
@@ -154,104 +155,104 @@ export function createOps(d) {
       });
     }),
 
-    'doc.final': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.docSetFinal(p, id, !!b.on); }),
+    'doc.final': async (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.docSetFinal(p, id, !!b.on); }),
 
-    'doc.delete': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.docDelete(p, id); }),
+    'doc.delete': async (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.docDelete(p, id); }),
     // 차림표에서 만들어 놓고 아무것도 담지 않은 채 창을 닫았을 때 — 없던 일로 돌린다(휴지통에도 두지 않는다).
     // 비었는지는 서버가 잰다. 그 문서를 대상으로 도는 작업이 있으면 건드리지 않는다.
-    'doc.discard': (b) => (jobs.isTargetRunning(b.pid, b.id)
+    'doc.discard': async (b) => (await jobs.isTargetRunning(b.pid, b.id)
       ? ok()
-      : state.update(b.pid, (p) => { model.docDiscard(p, b.id); })),
+      : await state.update(b.pid, (p) => { model.docDiscard(p, b.id); })),
 
-    'doc.restoreVersion': (b) => state.update(b.pid, (p) => { model.docRestoreVersion(p, b.id, Number(b.index)); }),
+    'doc.restoreVersion': async (b) => state.update(b.pid, (p) => { model.docRestoreVersion(p, b.id, Number(b.index)); }),
 
-    'doc.update': (b) => {
-      const p = state.get(b.pid);
+    'doc.update': async (b) => {
+      const p = await state.get(b.pid);
       const d = p && model.findDoc(p, b.id);
       if (!d) return bad('문서를 찾을 수 없습니다');
-      if (jobs.isTargetRunning(b.pid, d.id)) return bad('이미 도는 중입니다');
+      if (await jobs.isTargetRunning(b.pid, d.id)) return bad('이미 도는 중입니다');
       // 작가가 «어느 모델로 모을지»를 골라 보냈으면 그것으로 부른다.
       const modelPick = pickModel(b.model, '');
-      return jobs.start(b.pid, { kind: 'update', title: d.title, targetId: d.id, params: { docId: d.id, modelPick } });
+      return await jobs.start(b.pid, { kind: 'update', title: d.title, targetId: d.id, params: { docId: d.id, modelPick } });
     },
 
     // ---------------- 카테고리
-    'cat.create': (b) => {
+    'cat.create': async (b) => {
       let id = null;
-      const r = state.update(b.pid, (p) => { id = model.categoryCreate(p, b.name).id; });
+      const r = await state.update(b.pid, (p) => { id = model.categoryCreate(p, b.name).id; });
       return r.ok === false ? r : ok({ id });
     },
-    'cat.delete': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.categoryDelete(p, id); }),
+    'cat.delete': async (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.categoryDelete(p, id); }),
 
     // ---------------- 논의 스레드
-    'thread.create': (b) => {
+    'thread.create': async (b) => {
       let id = null;
-      const r = state.update(b.pid, (p) => { id = model.threadCreate(p, { title: b.title, refIds: b.refIds }).id; });
+      const r = await state.update(b.pid, (p) => { id = model.threadCreate(p, { title: b.title, refIds: b.refIds }).id; });
       return r.ok === false ? r : ok({ id });
     },
-    'thread.refs': (b) => state.update(b.pid, (p) => {
+    'thread.refs': async (b) => state.update(b.pid, (p) => {
       const t = model.findThread(p, b.id);
       if (t) t.refIds = arr(b.refIds).slice();
     }),
-    'thread.agents': (b) => state.update(b.pid, (p) => {
+    'thread.agents': async (b) => state.update(b.pid, (p) => {
       const t = model.findThread(p, b.id);
       if (t) t.agentIds = arr(b.agentIds).slice();
     }),
-    'thread.send': (b) => {
-      const p = state.get(b.pid);
+    'thread.send': async (b) => {
+      const p = await state.get(b.pid);
       const t = p && model.findThread(p, b.id);
       if (!t) return bad('스레드를 찾을 수 없습니다');
       if (!String(b.text || '').trim()) return bad('빈 말');
-      return jobs.start(b.pid, { kind: 'talk', title: t.title, targetId: t.id, params: { threadId: t.id, text: String(b.text), modelPick: pickModel(b.model, '') } });
+      return await jobs.start(b.pid, { kind: 'talk', title: t.title, targetId: t.id, params: { threadId: t.id, text: String(b.text), modelPick: pickModel(b.model, '') } });
     },
-    'thread.edit': (b) => {
-      const p = state.get(b.pid);
+    'thread.edit': async (b) => {
+      const p = await state.get(b.pid);
       const t = p && model.findThread(p, b.id);
       if (!t) return bad('스레드를 찾을 수 없습니다');
       let made = null;
-      state.update(b.pid, (pr) => { made = model.threadEditMessage(pr, b.id, b.messageId, b.text); });
+      await state.update(b.pid, (pr) => { made = model.threadEditMessage(pr, b.id, b.messageId, b.text); });
       if (!made) return bad('메시지를 찾을 수 없습니다');
-      return jobs.start(b.pid, { kind: 'talk', title: t.title, targetId: t.id, params: { threadId: t.id, text: null, modelPick: pickModel(b.model, '') } });
+      return await jobs.start(b.pid, { kind: 'talk', title: t.title, targetId: t.id, params: { threadId: t.id, text: null, modelPick: pickModel(b.model, '') } });
     },
-    'thread.title': (b) => state.update(b.pid, (p) => {
+    'thread.title': async (b) => state.update(b.pid, (p) => {
       const t = model.findThread(p, b.id);
       if (t) t.title = String(b.title || '').trim() || t.title;
     }),
-    'thread.head': (b) => state.update(b.pid, (p) => { model.threadSetHead(p, b.id, b.messageId); }),
-    'thread.doc': (b) => {
-      const p = state.get(b.pid);
+    'thread.head': async (b) => state.update(b.pid, (p) => { model.threadSetHead(p, b.id, b.messageId); }),
+    'thread.doc': async (b) => {
+      const p = await state.get(b.pid);
       const t = p && model.findThread(p, b.id);
       if (!t) return bad('스레드를 찾을 수 없습니다');
-      return jobs.start(b.pid, { kind: 'threaddoc', title: t.title, targetId: t.id, params: { threadId: t.id, request: String(b.request || ''), modelPick: pickModel(b.model, '') } });
+      return await jobs.start(b.pid, { kind: 'threaddoc', title: t.title, targetId: t.id, params: { threadId: t.id, request: String(b.request || ''), modelPick: pickModel(b.model, '') } });
     },
-    'thread.delete': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.threadDelete(p, id); }),
+    'thread.delete': async (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.threadDelete(p, id); }),
     // 갓 만들어 놓고 아무것도 담지 않은 채 창을 닫았을 때 — 없던 일로 돌린다(휴지통에도 두지 않는다).
     // 비었는지는 서버가 잰다. 답을 적으러 오는 작업이 돌고 있으면 건드리지 않는다.
-    'thread.discard': (b) => (jobs.isTargetRunning(b.pid, b.id)
+    'thread.discard': async (b) => (await jobs.isTargetRunning(b.pid, b.id)
       ? ok()
-      : state.update(b.pid, (p) => { model.threadDiscard(p, b.id); })),
+      : await state.update(b.pid, (p) => { model.threadDiscard(p, b.id); })),
 
     // ---------------- 휴지통
-    'trash.restore': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.trashRestore(p, id); }),
-    'trash.purge': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.trashPurge(p, id); }),
+    'trash.restore': async (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.trashRestore(p, id); }),
+    'trash.purge': async (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.trashPurge(p, id); }),
 
     // ---------------- 작업
     // 중지는 두지 않는다 — 삭제가 멈추고 치운다(사용자 지시, 2026-09-19).
-    'job.pause': (b) => jobs.pause(b.pid, b.id),
-    'job.resume': (b) => jobs.resume(b.pid, b.id),
-    'job.remove': (b) => jobs.remove(b.pid, b.id),
+    'job.pause': async (b) => jobs.pause(b.pid, b.id),
+    'job.resume': async (b) => jobs.resume(b.pid, b.id),
+    'job.remove': async (b) => jobs.remove(b.pid, b.id),
     // 한도에 닿아 멈춘 작업에 사람이 답한다 — 'wait' | 'api' | 'stop'
-    'job.answer': (b) => jobs.answer(b.pid, b.id, b.choice),
+    'job.answer': async (b) => jobs.answer(b.pid, b.id, b.choice),
 
     // 무엇으로 돈이 나가는가 — 사람이 고른다. 키는 내려 주지 않는다(들어 있는지만 이른다).
-    'auth.read': () => ok({ auth: auth.view() }),
-    'auth.write': (b) => ok({ auth: auth.write({ mode: b.mode, apiKey: b.apiKey }) }),
+    'auth.read': async () => ok({ auth: auth.view() }),
+    'auth.write': async (b) => ok({ auth: auth.write({ mode: b.mode, apiKey: b.apiKey }) }),
   };
 
   // ---------------------------------------------------------------- 상태
 
-  function stateOf(pid) {
-    const p = state.get(pid);
+  async function stateOf(pid) {
+    const p = await state.get(pid);
     if (!p) return null;
     return {
       id: p.id, name: p.name, spec: p.spec, standard: p.standard, request: p.request,
@@ -298,8 +299,8 @@ export function createOps(d) {
 
   // ---------------------------------------------------------------- 내려받기
 
-  function downloadOf(pid, kind, id) {
-    const p = state.get(pid);
+  async function downloadOf(pid, kind, id) {
+    const p = await state.get(pid);
     if (!p) return null;
     if (kind === 'doc') {
       const d = model.findDoc(p, id);

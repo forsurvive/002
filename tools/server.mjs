@@ -129,12 +129,12 @@ async function handle(plan, req, res) {
     if (req.method === 'GET' && url.pathname === '/api/state') {
       const pid = url.searchParams.get('pid') || '';
       if (!pid) return send(res, 200, JSON.stringify({ ok: true, projects: state.list() }));
-      const st = stateOf(pid);
+      const st = await stateOf(pid);
       if (!st) return send(res, 200, JSON.stringify({ ok: false, error: '없음' }));
       return send(res, 200, JSON.stringify({ ok: true, project: st, projects: state.list() }));
     }
     if (req.method === 'GET' && url.pathname === '/api/download') {
-      const d = downloadOf(url.searchParams.get('pid'), url.searchParams.get('kind'), url.searchParams.get('id'));
+      const d = await downloadOf(url.searchParams.get('pid'), url.searchParams.get('kind'), url.searchParams.get('id'));
       if (!d) return send(res, 404, '없음', 'text/plain; charset=utf-8');
       return send(res, 200, d.text, 'text/markdown; charset=utf-8', {
         'content-disposition': 'attachment; filename*=UTF-8\'\'' + encodeURIComponent(d.name),
