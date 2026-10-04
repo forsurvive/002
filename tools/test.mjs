@@ -2147,6 +2147,95 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('갈래 표', reasonOf(403) === 'auth' && reasonOf(413) === 'invalid' && reasonOf(503) === 'overloaded' && reasonOf(402) === 'credit');
   fakeApi.closeAllConnections && fakeApi.closeAllConnections();
   fakeApi.close();
+
+  // ── OpenAI(Responses) · Gemini(generateContent) 어댑터 — 같은 꼴의 가짜 API 로
+  const { createOpenAIProvider } = await import('../ai/openai.mjs');
+  const { createGeminiProvider } = await import('../ai/gemini.mjs');
+  const fake = (handler) => new Promise((resolve) => {
+    const srv = createServer((req, res) => {
+      let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; });
+      req.on('end', () => handler({ url: req.url, headers: req.headers, body: JSON.parse(b || '{}') }, res));
+    });
+    srv.listen(0, '127.0.0.1', () => resolve(srv));
+  });
+  const json = (res, status, obj, headers = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...headers }); res.end(JSON.stringify(obj)); };
+  const sseData = (res, list, headers = {}) => { res.writeHead(200, { 'content-type': 'text/event-stream', ...headers }); res.end(list.map((d) => (d.type ? 'event: ' + d.type + '\n' : '') + 'data: ' + JSON.stringify(d) + '\n\n').join('')); };
+
+  // OpenAI
+  let om = 'ok'; let oreq = null;
+  const oSrv = await fake((rq, res) => {
+    oreq = rq;
+    const usage = { input_tokens: 50, input_tokens_details: { cached_tokens: 20 }, output_tokens: 9, output_tokens_details: { reasoning_tokens: 4 }, total_tokens: 59 };
+    if (om === 'ok') sseData(res, [{ type: 'response.created', response: { id: 'resp_1' } }, { type: 'response.output_text.delta', delta: '첫 ' }, { type: 'response.output_text.delta', delta: '문단' }, { type: 'response.completed', response: { id: 'resp_1', status: 'completed', usage } }], { 'x-request-id': 'req_o' });
+    else if (om === 'length') sseData(res, [{ type: 'response.output_text.delta', delta: '잘린' }, { type: 'response.incomplete', response: { id: 'r', status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, usage } }]);
+    else if (om === 'filter') sseData(res, [{ type: 'response.incomplete', response: { id: 'r', status: 'incomplete', incomplete_details: { reason: 'content_filter' } } }]);
+    else if (om === 'failed') sseData(res, [{ type: 'response.failed', response: { id: 'r', status: 'failed', error: { code: 'server_error', message: 'x' } } }]);
+    else if (om === 'auth') json(res, 401, { error: { message: 'Incorrect API key provided: ' + FAKE_KEY, type: 'invalid_request_error', code: 'invalid_api_key' } });
+    else if (om === 'quota') json(res, 429, { error: { message: 'You exceeded your current quota', type: 'insufficient_quota', code: 'insufficient_quota' } });
+    else if (om === 'rate') json(res, 429, { error: { message: 'Rate limit', type: 'requests', code: 'rate_limit_exceeded' } }, { 'retry-after': '3' });
+    else if (om === 'ctx') json(res, 400, { error: { message: 'too long', type: 'invalid_request_error', code: 'context_length_exceeded' } });
+    else if (om === 'model') json(res, 404, { error: { message: 'no model', type: 'invalid_request_error', code: 'model_not_found' } });
+    else if (om === 'down') json(res, 503, { error: { message: 'down', type: 'server_error', code: null } });
+  });
+  const oa = createOpenAIProvider({ baseUrl: 'http://127.0.0.1:' + oSrv.address().port });
+  const oAsk = (x = {}) => oa.generate({ model: 'gpt-test', systemPrompt: '체계', userPrompt: '써라', credential: { apiKey: FAKE_KEY }, ...x });
+  let orr = await oAsk({ maxOutputTokens: 700 });
+  ok('OpenAI: 스트리밍 글을 모은다', prov.isProvider(oa) && orr.ok && orr.text === '첫 문단' && orr.finishReason === 'stop', JSON.stringify(orr).slice(0, 160));
+  ok('OpenAI: usage(캐시 · 추론 토큰) · 요청 id', orr.usage.inputTokens === 50 && orr.usage.cacheReadTokens === 20 && orr.usage.reasoningTokens === 4 && orr.usage.outputTokens === 9 && orr.providerRequestId === 'req_o');
+  ok('OpenAI: 요청 모양 — Responses · Bearer · instructions/input · 상한 · 스트림 · 보관 안 함', oreq.url === '/v1/responses' && oreq.headers.authorization === 'Bearer ' + FAKE_KEY
+    && oreq.body.instructions === '체계' && oreq.body.input === '써라' && oreq.body.max_output_tokens === 700 && oreq.body.stream === true && oreq.body.store === false && !('temperature' in oreq.body));
+  om = 'length'; orr = await oAsk(); ok('OpenAI: 상한에 닿으면 잘림을 남긴다', orr.ok && orr.finishReason === 'length' && orr.text === '잘린');
+  om = 'filter'; eq('OpenAI: 내용 필터는 safety', (await oAsk()).reason, 'safety');
+  om = 'failed'; eq('OpenAI: 응답 실패는 overloaded', (await oAsk()).reason, 'overloaded');
+  om = 'auth'; orr = await oAsk(); ok('**OpenAI: 키가 틀리면 auth — 결과에 키가 없다**', orr.reason === 'auth' && !JSON.stringify(orr).includes(FAKE_KEY));
+  om = 'quota'; eq('OpenAI: 잔액 부족(insufficient_quota)은 rate 가 아니라 credit', (await oAsk()).reason, 'credit');
+  om = 'rate'; orr = await oAsk(); ok('OpenAI: 밀리면 rate + 기다릴 시간', orr.reason === 'rate' && orr.retryAfterMs === 3000);
+  om = 'ctx'; eq('OpenAI: 입력이 너무 길면 invalid', (await oAsk()).reason, 'invalid');
+  om = 'model'; eq('OpenAI: 없는 모델은 model', (await oAsk()).reason, 'model');
+  om = 'down'; eq('OpenAI: 서버 장애는 overloaded', (await oAsk()).reason, 'overloaded');
+  oSrv.close();
+
+  // Gemini
+  let gm = 'ok'; let greq = null;
+  const gSrv = await fake((rq, res) => {
+    greq = rq;
+    const um = { promptTokenCount: 80, candidatesTokenCount: 12, cachedContentTokenCount: 30, thoughtsTokenCount: 5, totalTokenCount: 97 };
+    if (gm === 'ok') sseData(res, [
+      { candidates: [{ content: { role: 'model', parts: [{ text: '생각', thought: true }, { text: '첫 ' }] } }], responseId: 'g_1' },
+      { candidates: [{ content: { role: 'model', parts: [{ text: '문단' }] }, finishReason: 'STOP' }], usageMetadata: um, responseId: 'g_1' },
+    ]);
+    else if (gm === 'length') sseData(res, [{ candidates: [{ content: { parts: [{ text: '잘린' }] }, finishReason: 'MAX_TOKENS' }], usageMetadata: um }]);
+    else if (gm === 'safety') sseData(res, [{ candidates: [{ content: { parts: [{ text: '' }] }, finishReason: 'SAFETY' }] }]);
+    else if (gm === 'blocked') sseData(res, [{ promptFeedback: { blockReason: 'PROHIBITED_CONTENT' } }]);
+    else if (gm === 'badkey') json(res, 400, { error: { code: 400, message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT' } });
+    else if (gm === 'rate') json(res, 429, { error: { code: 429, message: 'Resource has been exhausted', status: 'RESOURCE_EXHAUSTED' } });
+    else if (gm === 'model') json(res, 404, { error: { code: 404, message: 'not found', status: 'NOT_FOUND' } });
+    else if (gm === 'down') json(res, 503, { error: { code: 503, message: 'overloaded', status: 'UNAVAILABLE' } });
+    else if (gm === 'slow') setTimeout(() => { try { sseData(res, []); } catch {} }, 3000);
+  });
+  const ge = createGeminiProvider({ baseUrl: 'http://127.0.0.1:' + gSrv.address().port });
+  const gAsk = (x = {}) => ge.generate({ model: 'gemini-test', systemPrompt: '체계', userPrompt: '써라', credential: { apiKey: FAKE_KEY }, ...x });
+  let gr = await gAsk({ maxOutputTokens: 600 });
+  ok('Gemini: 생각(thought)은 빼고 본문만 모은다', prov.isProvider(ge) && ge.id === 'google' && gr.ok && gr.text === '첫 문단' && gr.finishReason === 'stop', JSON.stringify(gr).slice(0, 160));
+  ok('Gemini: usage(캐시 · 생각 토큰) · 응답 id', gr.usage.inputTokens === 80 && gr.usage.outputTokens === 12 && gr.usage.cacheReadTokens === 30 && gr.usage.reasoningTokens === 5 && gr.providerRequestId === 'g_1');
+  ok('Gemini: 요청 모양 — streamGenerateContent?alt=sse · 키는 헤더(주소에 없음) · systemInstruction · 상한', greq.url === '/v1beta/models/gemini-test:streamGenerateContent?alt=sse'
+    && greq.headers['x-goog-api-key'] === FAKE_KEY && !greq.url.includes(FAKE_KEY) && greq.body.systemInstruction.parts[0].text === '체계'
+    && greq.body.contents[0].role === 'user' && greq.body.contents[0].parts[0].text === '써라' && greq.body.generationConfig.maxOutputTokens === 600);
+  gm = 'length'; gr = await gAsk(); ok('Gemini: MAX_TOKENS 는 잘림', gr.ok && gr.finishReason === 'length');
+  gm = 'safety'; eq('Gemini: SAFETY 로 멈추면 safety', (await gAsk()).reason, 'safety');
+  gm = 'blocked'; eq('Gemini: 프롬프트가 막히면 safety', (await gAsk()).reason, 'safety');
+  gm = 'badkey'; gr = await gAsk(); ok('**Gemini: 키가 틀리면 auth(400 이어도) — 결과에 키가 없다**', gr.reason === 'auth' && !JSON.stringify(gr).includes(FAKE_KEY));
+  gm = 'rate'; eq('Gemini: RESOURCE_EXHAUSTED 는 rate', (await gAsk()).reason, 'rate');
+  gm = 'model'; eq('Gemini: 없는 모델은 model', (await gAsk()).reason, 'model');
+  gm = 'down'; eq('Gemini: UNAVAILABLE 은 overloaded', (await gAsk()).reason, 'overloaded');
+  gm = 'slow'; eq('Gemini: 시간을 넘기면 timeout', (await gAsk({ timeoutMs: 1000 })).reason, 'timeout');
+  const gStop = new AbortController(); setTimeout(() => gStop.abort(), 100);
+  eq('Gemini: 사람이 세우면 stopped', (await gAsk({ signal: gStop.signal })).reason, 'stopped');
+  gSrv.closeAllConnections && gSrv.closeAllConnections();
+  gSrv.close();
+  // 세 어댑터는 같은 계약 — 같은 입력에 같은 모양
+  const shape = (r) => Object.keys(r).filter((k) => k !== 'authSource').sort().join(',');
+  ok('세 어댑터의 결과 모양이 같다', shape(ar) === shape(orr) && shape(orr) === shape(gr), shape(ar) + ' | ' + shape(orr) + ' | ' + shape(gr));
 }
 
 // ---------------------------------------------------------------- 호스팅 실행 — 포트 · 주소 · 허용 호스트 · 출입 열쇠

@@ -8,17 +8,11 @@
 // 요청/응답 모양은 공식 문서(Messages API)를 따랐다 — 바뀌면 이 파일과 시험만 고친다.
 
 import { success, failure, usageOf } from './provider.mjs';
+import { sseEvents, retryAfterOf, SAY } from './http.mjs';
 
 export const ANTHROPIC_VERSION = '2023-06-01';
 export const DEFAULT_MAX_OUTPUT = 32000;
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
-
-// 실패 문구는 갈래마다 고정이다 — provider 의 원문(원고 · 키가 섞일 수 있는)을 화면으로 올리지 않는다.
-const SAY = {
-  auth: 'AI 연결 정보를 확인해야 합니다', credit: 'AI 사용 잔액이 모자랍니다', rate: '잠시 밀렸습니다',
-  overloaded: 'AI 쪽이 잠시 붐빕니다', model: '그 모델을 쓸 수 없습니다', invalid: '요청을 처리하지 못했습니다(입력이 너무 길 수 있습니다)',
-  safety: 'AI 가 이 요청을 거절했습니다', timeout: '응답 없음', stopped: '중지됨', empty: '빈 응답', other: 'AI 호출에 실패했습니다',
-};
 
 // HTTP 상태 + 오류 종류 → 갈래
 export function reasonOf(status, type = '', message = '') {
@@ -29,28 +23,6 @@ export function reasonOf(status, type = '', message = '') {
   if (status === 529 || status === 500 || status === 502 || status === 503 || type === 'overloaded_error' || type === 'api_error') return 'overloaded';
   if (status === 400 || status === 413 || type === 'invalid_request_error' || type === 'request_too_large') return 'invalid';
   return 'other';
-}
-
-const retryAfterOf = (res) => {
-  const v = Number(res && res.headers && res.headers.get && res.headers.get('retry-after'));
-  return Number.isFinite(v) && v > 0 ? v * 1000 : 0;
-};
-
-// SSE 한 덩이씩 — «event: …» / «data: {…}» 줄을 모아 빈 줄에서 끊는다.
-async function* sseEvents(body) {
-  const decoder = new TextDecoder();
-  let buf = '';
-  for await (const chunk of body) {
-    buf += decoder.decode(chunk, { stream: true });
-    let i;
-    while ((i = buf.indexOf('\n\n')) >= 0) {
-      const block = buf.slice(0, i);
-      buf = buf.slice(i + 2);
-      const data = block.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trimStart()).join('\n');
-      if (!data) continue;
-      try { yield JSON.parse(data); } catch { /* 깨진 줄은 건너뛴다 */ }
-    }
-  }
 }
 
 export function createAnthropicProvider({ baseUrl = 'https://api.anthropic.com', fetchImpl = globalThis.fetch } = {}) {
