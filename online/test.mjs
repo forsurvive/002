@@ -85,7 +85,7 @@ const auth = await import('./auth.mjs');
 }
 
 // 이어지는 시험 파일 — 각 파일은 run({ pool, ok, eq }) 하나를 내보낸다(이 파일을 거꾸로 import 하지 않는다).
-for (const f of ['./test.store.mjs', './test.server.mjs', './test.import.mjs', './test.jobs.mjs']) {
+for (const f of ['./test.store.mjs', './test.server.mjs', './test.import.mjs', './test.jobs.mjs', './test.call.mjs']) {
   let mod = null;
   try { mod = await import(f); } catch (e) { if (!(e && e.code === 'ERR_MODULE_NOT_FOUND')) throw e; }
   if (mod && mod.run) await mod.run({ pool, ok, eq });
