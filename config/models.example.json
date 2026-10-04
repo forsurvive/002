@@ -1,0 +1,14 @@
+{
+  "_note": "모델 카탈로그 예시. config/models.json 으로 복사해 실제 model id 와 가격(백만 토큰당 USD)을 채운다. 각 회사의 공식 모델 문서에서 확인한다 — 폐기 예정 모델을 넣지 않는다. modelId 가 비었거나 <…> 이면 쓰지 않는다.",
+  "models": [
+    { "provider": "anthropic", "tier": "high_reasoning", "modelId": "<Anthropic 최고 성능 모델 id>", "maxOutputTokens": 32000, "price": { "inputPerMTok": 0, "outputPerMTok": 0, "cacheReadPerMTok": 0, "cacheWritePerMTok": 0 } },
+    { "provider": "anthropic", "tier": "balanced",       "modelId": "<Anthropic 균형형 모델 id>",   "maxOutputTokens": 32000 },
+    { "provider": "anthropic", "tier": "fast",           "modelId": "<Anthropic 빠른 모델 id>",     "maxOutputTokens": 16000 },
+    { "provider": "openai",    "tier": "high_reasoning", "modelId": "<OpenAI 최고 성능 모델 id>",   "maxOutputTokens": 32000 },
+    { "provider": "openai",    "tier": "balanced",       "modelId": "<OpenAI 균형형 모델 id>",     "maxOutputTokens": 32000 },
+    { "provider": "openai",    "tier": "fast",           "modelId": "<OpenAI 경량 모델 id>",       "maxOutputTokens": 16000 },
+    { "provider": "google",    "tier": "high_reasoning", "modelId": "<Gemini 최고 성능 모델 id>",   "maxOutputTokens": 32000 },
+    { "provider": "google",    "tier": "balanced",       "modelId": "<Gemini 균형형 모델 id>",     "maxOutputTokens": 32000 },
+    { "provider": "google",    "tier": "fast",           "modelId": "<Gemini 빠른 모델 id>",       "maxOutputTokens": 16000 }
+  ]
+}

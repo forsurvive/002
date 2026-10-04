@@ -15,6 +15,7 @@ export const REASONS = [
   'auth', 'credit', 'model',       // 키 · 잔액 · 모델 — 다시 불러도 같다
   'invalid',                       // 요청 형식 · 입력 길이 초과
   'safety',                        // 안전 정책으로 거절
+  'credential',                    // 연결된 키가 없다 · 열 수 없다 — «연결 필요»(학생에게는 «선생님께 문의»)
   'timeout', 'stopped', 'empty', 'other',
 ];
 

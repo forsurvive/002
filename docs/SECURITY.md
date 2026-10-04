@@ -66,6 +66,8 @@
 
 ## 5. Credential 저장
 
+> 구현(2026-10-04): `ai/credentials.mjs` — 아래 설계대로 봉인 · AAD · key_version · 끝 4자리 표시 · 앞 키 끊기. 저장소는 지금 메모리 구현만 있고 PostgreSQL 구현은 Phase 3.
+
 - **봉투 암호화**: AES-256-GCM, 행마다 12바이트 nonce, 인증 태그 저장. AAD = `owner_type|owner_id|provider|credential_id`(행 바꿔치기 방지).
 - 마스터 키: 플랫폼 Secrets 의 `CREDENTIALS_KEY_V1`(32바이트, base64). 행에 `key_version` → 새 키로 다시 암호화(rotate) 가능.
 - 복호화는 **worker 의 호출 직전**에만, 결과 문자열은 그 호출의 지역 변수로만. 웹 서버는 «저장·폐기·연결 테스트 요청»만 한다.

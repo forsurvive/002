@@ -2236,6 +2236,74 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 세 어댑터는 같은 계약 — 같은 입력에 같은 모양
   const shape = (r) => Object.keys(r).filter((k) => k !== 'authSource').sort().join(',');
   ok('세 어댑터의 결과 모양이 같다', shape(ar) === shape(orr) && shape(orr) === shape(gr), shape(ar) + ' | ' + shape(orr) + ' | ' + shape(gr));
+
+  // ── 모델 카탈로그 — tier → 실제 model id 는 설정에만
+  const cat = await import('../ai/catalog.mjs');
+  const exampleCfg = JSON.parse(readFileSync(join(ROOT, 'config', 'models.example.json'), 'utf8'));
+  ok('예시 설정은 아직 쓸 수 없다(자리표시만) — 그렇다고 이른다', cat.createCatalog(exampleCfg.models).entries().length === 0 && cat.createCatalog(exampleCfg.models).problems.length === 9);
+  const C1 = cat.createCatalog([
+    { provider: 'anthropic', tier: 'balanced', modelId: 'claude-test-b', maxOutputTokens: 9000, price: { inputPerMTok: 3, outputPerMTok: 15 } },
+    { provider: 'openai', tier: 'fast', modelId: 'gpt-test-f' },
+    { provider: 'openai', tier: 'fast', modelId: 'gpt-dup' },
+    { provider: 'nope', tier: 'fast', modelId: 'x' },
+    { provider: 'google', tier: 'balanced', modelId: 'gem-old', active: false },
+  ]);
+  ok('카탈로그가 찾아 준다', C1.resolve('anthropic', 'balanced').modelId === 'claude-test-b' && C1.resolve('google', 'balanced') === null);
+  ok('틀린 줄은 문제로 적는다(겹침 · 모르는 provider)', C1.problems.length === 2, C1.problems.join(' / '));
+  ok('**화면에 내보내는 선택지에는 model id 가 없다**', C1.choices().every((c) => !JSON.stringify(c).includes('test-')) && C1.choices().length === 2);
+  ok('허락된 것만 보인다', C1.choices({ providers: ['openai'] }).length === 1);
+  let ch = cat.chooseModel({ pick: { provider: 'openai', tier: 'fast' }, stage: { tier: 'high_reasoning' }, project: { provider: 'anthropic' } });
+  ok('고른 값이 먼저', ch.provider === 'openai' && ch.tier === 'fast' && ch.source.provider === 'pick');
+  ch = cat.chooseModel({ pick: { provider: 'openai', tier: 'fast' }, allowPick: false, stage: { tier: 'high_reasoning' }, project: { provider: 'anthropic' } });
+  ok('정책이 막으면 고른 값을 버리고 단계 · 프로젝트를 따른다', ch.provider === 'anthropic' && ch.tier === 'high_reasoning' && ch.source.tier === 'stage');
+  ch = cat.chooseModel({ project: { provider: 'google', tier: 'high_reasoning' }, providers: ['anthropic'], tiers: ['balanced', 'fast'] });
+  ok('허락 밖의 것은 잘린다', ch.provider === 'anthropic' && ch.tier === 'balanced');
+
+  // ── 자격증명 — 봉해 두고, 부를 때만 연다. 비용 주체는 프로젝트가 정한다.
+  const credM = await import('../ai/credentials.mjs');
+  const { randomBytes: rb } = await import('node:crypto');
+  const K1 = rb(32).toString('base64');
+  const keyring = credM.keysFromEnv({ CREDENTIALS_KEY_V1: K1, CREDENTIALS_KEY_V2: 'short', OTHER: 'x' });
+  ok('마스터 키를 읽고 틀린 것은 이른다', keyring.current === 1 && keyring.problems.length === 1);
+  const cstore = credM.memoryCredentialStore();
+  const creds = credM.createCredentialService({ store: cstore, keys: keyring });
+  const ORG_KEY = 'sk-org-' + 'o'.repeat(30); const USER_KEY = 'sk-user-' + 'u'.repeat(30);
+  const setOrg = await creds.set({ ownerType: 'organization', ownerId: 'org_A', provider: 'anthropic', apiKey: ORG_KEY });
+  await creds.set({ ownerType: 'user', ownerId: 'u_1', provider: 'anthropic', apiKey: USER_KEY });
+  ok('**넣은 키는 원문으로 돌아오지 않는다 — 끝 네 자리만**', setOrg.ok && !JSON.stringify(setOrg).includes(ORG_KEY) && setOrg.credential.keyHint === '…' + ORG_KEY.slice(-4));
+  ok('**저장소에도 원문이 없다**', !JSON.stringify(cstore._rows).includes(ORG_KEY) && !JSON.stringify(cstore._rows).includes(USER_KEY));
+  const rOrg = await creds.resolve({ organizationId: 'org_A', ownerUserId: 'student_9' }, 'anthropic');
+  ok('**기관 프로젝트는 기관 키로**(학생 자신의 키가 아니다)', rOrg.ok && rOrg.credential.apiKey === ORG_KEY && rOrg.ownerType === 'organization');
+  const rUser = await creds.resolve({ ownerUserId: 'u_1' }, 'anthropic');
+  ok('**개인 프로젝트는 본인 키로**', rUser.ok && rUser.credential.apiKey === USER_KEY && rUser.ownerType === 'user');
+  eq('다른 기관의 키로는 열리지 않는다', (await creds.resolve({ organizationId: 'org_B' }, 'anthropic')).reason, 'credential_missing');
+  eq('연결하지 않은 provider 는 «연결 필요»', (await creds.resolve({ ownerUserId: 'u_1' }, 'openai')).reason, 'credential_missing');
+  // 행을 바꿔치기하면(다른 소유자의 행에 남의 봉인을 옮겨 붙이면) 열리지 않는다
+  const orgRow = cstore._rows.find((r) => r.ownerType === 'organization');
+  const userRow = cstore._rows.find((r) => r.ownerType === 'user');
+  const savedSeal = userRow.sealed; userRow.sealed = orgRow.sealed;
+  eq('**봉인을 다른 행에 옮겨 붙이면 열리지 않는다**', (await creds.resolve({ ownerUserId: 'u_1' }, 'anthropic')).reason, 'credential_unreadable');
+  userRow.sealed = savedSeal;
+  await creds.set({ ownerType: 'user', ownerId: 'u_1', provider: 'anthropic', apiKey: USER_KEY + '2' });
+  ok('새 키를 넣으면 앞 키는 끊긴다', (await creds.list('user', 'u_1')).filter((c) => c.status === 'active').length === 1
+    && (await creds.resolve({ ownerUserId: 'u_1' }, 'anthropic')).credential.apiKey === USER_KEY + '2');
+  ok('플랫폼이 대 주는 요금제는 플랫폼 키', credM.ownerOf({ ownerUserId: 'u' }, { managedAi: true }).ownerType === 'platform');
+
+  // ── 라우터 — 고르고, 찾고, 열고, 부른다
+  const { createProviderRouter } = await import('../ai/router.mjs');
+  const seenR = [];
+  const fakeAdapter = (id) => ({ id, generate: async (inp) => { seenR.push(id + ':' + inp.model + ':' + inp.credential.apiKey.slice(0, 6) + ':' + inp.maxOutputTokens); return prov.success({ text: id + ' 답', usage: { input_tokens: 1e6, output_tokens: 1e6 } }); } });
+  const router = createProviderRouter({ catalog: C1, credentials: creds, providers: { anthropic: fakeAdapter('anthropic'), openai: fakeAdapter('openai'), google: fakeAdapter('google') } });
+  let rr = await router.generate({ userPrompt: '써라', metadata: { project: { organizationId: 'org_A' }, model: { stage: { provider: 'anthropic', tier: 'balanced' } } } });
+  ok('라우터: 카탈로그의 id · 출력 상한 · 기관 키로 부른다', rr.ok && seenR.pop() === 'anthropic:claude-test-b:sk-org:9000', JSON.stringify(rr.routing));
+  ok('라우터: 무엇을 골랐는지 남긴다(키 원문 없이)', rr.routing.modelId === 'claude-test-b' && rr.routing.ownerType === 'organization' && rr.routing.credentialId.startsWith('cred_') && !JSON.stringify(rr).includes(ORG_KEY));
+  ok('라우터: 가격표로 비용을 추정한다', Math.abs(rr.costUsd - 18) < 1e-9 && rr.costSource === 'estimated');
+  rr = await router.generate({ userPrompt: '써라', metadata: { project: { organizationId: 'org_A' }, model: { stage: { provider: 'google', tier: 'balanced' } } } });
+  eq('라우터: 카탈로그에 없으면 부르지 않는다(model)', rr.reason, 'model');
+  rr = await router.generate({ userPrompt: '써라', metadata: { project: { organizationId: 'org_A' }, model: { stage: { provider: 'openai', tier: 'fast' } } } });
+  ok('라우터: 키가 없으면 «연결 필요»로 멈춘다', rr.reason === 'credential' && rr.routing.ownerType === 'organization');
+  rr = await router.generate({ userPrompt: '써라', metadata: { project: { organizationId: 'org_A' }, policy: { providers: ['anthropic'], allowPick: false }, model: { pick: { provider: 'openai', tier: 'fast' }, project: { tier: 'balanced' } } } });
+  ok('라우터: 기관 정책이 학생의 선택을 막는다', rr.ok && rr.routing.provider === 'anthropic' && rr.routing.source.provider !== 'pick');
 }
 
 // ---------------------------------------------------------------- 호스팅 실행 — 포트 · 주소 · 허용 호스트 · 출입 열쇠
