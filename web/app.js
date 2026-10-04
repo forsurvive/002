@@ -173,7 +173,12 @@ async function pull(force) {
   if (S.tour) return;   // 1.5초마다 도는 갱신도 멈춘다(가짜 pid 를 물으면 튜토리얼이 튕긴다)
   const url = S.pid ? '/api/state?pid=' + encodeURIComponent(S.pid) : '/api/state';
   let d;
-  try { d = await (await fetch(url)).json(); } catch { return; }
+  let status = 0;
+  try { const r = await fetch(url); status = r.status; d = await r.json(); } catch {
+    // 한 번도 그리지 못했는데 상태를 못 받으면 빈 화면 대신 까닭을 보인다(서버가 내려갔거나 · 문지기에 막혔거나)
+    if (!S.drawn) bootSay('서버의 답을 읽지 못했습니다' + (status ? ' (' + status + ')' : '') + ' — 잠시 뒤 새로 고침해 주세요');
+    return;
+  }
   if (d.code === 'login') return toLogin(d);
   S.me = d.me || null;   // 온라인판에서만 온다(로그인한 사람)
   if (d.projects) S.projects = d.projects;
@@ -186,6 +191,13 @@ async function pull(force) {
 }
 
 // ---------------------------------------------------------------- 그리기
+
+// 첫 그리기 전의 알림 — 화면이 비어 있는 채로 멈추지 않게(무엇이 막혔는지 사람이 볼 수 있게)
+function bootSay(text) {
+  const n = document.getElementById('root');
+  if (n) n.replaceChildren(h('div', { class: 'body' }, h('div', { class: 'notice', text })));
+}
+window.addEventListener('error', (e) => { if (!S.drawn) bootSay('화면을 그리지 못했습니다 — ' + String((e && e.message) || e).slice(0, 160)); });
 
 // 다시 그려도 보던 자리와 치던 자리를 지킨다 — 1.5초마다 도는 갱신이 화면을 흔들지 않도록.
 const SCROLLERS = ['.main', '#layer1 .panel-body', '#layer2 .panel-body', '#d-body', '#d-out'];
@@ -205,6 +217,7 @@ function render() {
   S.saveOpen = null;
   S.askOpen = null;
   S.redrawing = true;
+  S.drawn = true;
   $('root').replaceChildren(S.pid && S.project ? app() : projectList());
   $('layer1').replaceChildren(...(S.open ? [layerOne()] : []));
   $('layer2').replaceChildren(...(S.pick ? [pickLayer()] : S.confirm ? [confirmLayer()] : []));

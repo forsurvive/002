@@ -77,4 +77,6 @@ const setupForm = (ai) => h('form', { onsubmit: setup },
     h('div', { class: 'body', style: 'max-width:380px;margin:0 auto;padding-top:14vh' },
       h('div', { class: 'top-name', style: 'font-size:30px;margin-bottom:24px', text: '스토리 엔진' }),
       st.needed ? setupForm(st.ai) : loginForm()));
+  const boot = document.getElementById('boot');
+  if (boot) boot.remove();
 })();
