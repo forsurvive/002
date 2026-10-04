@@ -100,9 +100,12 @@ export function slotModelsOf(v) {
 
 export function loadProject(id) {
   ensureDirs();
-  const p = readJson(projPath(id));
+  return normalizeProject(readJson(projPath(id)));
+}
+
+// 옛 파일에 빠진 칸이 있어도 화면이 깨지지 않게 골격을 덮어씌운다. 파일을 모른다 — 온라인판 가져오기도 같은 셈을 쓴다.
+export function normalizeProject(p) {
   if (!p || !p.id) return null;
-  // 옛 파일에 빠진 칸이 있어도 화면이 깨지지 않게 골격을 덮어씌운다.
   const base = blankProject(p.id, p.name);
   const out = {
     ...base, ...p,
