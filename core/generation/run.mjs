@@ -2,6 +2,7 @@
 // tools/engine.mjs 의 run* 을 의미 그대로 옮겼다(온라인화 Phase 1 — Core 분리).
 // 저장(store: get/update)과 호출(call: 재시도·한도 물음까지 맡은 한 번의 부르기)은 바깥이 넣어 준다 —
 // 개인판은 state.mjs 와 engine.callAsking(CLI), 온라인판은 PostgreSQL 과 Provider worker 가 맡는다.
+// store 는 동기(개인판 메모리)여도 비동기(온라인 DB)여도 된다 — 늘 await 로 받는다.
 
 import * as model from '../domain/model.mjs';
 
@@ -10,7 +11,7 @@ const KIND_CODE = { doc: 'F-UPDATE', check: 'F-CONTRA', review: 'F-REVIEW' };
 // 갱신 — 문서·모순 검사·합평회가 모두 이 길을 쓴다.
 // modelPick 은 작가가 «어느 모델로 모을지»를 고른 값(비어 있으면 평소대로).
 export async function runUpdate({ store, call }, pid, docId, ctx, { modelPick = '' } = {}) {
-  const project = store.get(pid);
+  const project = await store.get(pid);
   const d = project && model.findDoc(project, docId);
   if (!d) return { ok: false, error: '문서를 찾을 수 없습니다' };
   if (ctx) ctx.step(d.title);
@@ -35,14 +36,14 @@ export async function runUpdate({ store, call }, pid, docId, ctx, { modelPick = 
   if (!r.ok) return r;
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
 
-  store.update(pid, (p) => { model.docWrite(p, docId, { body: r.text }); });
+  await store.update(pid, (p) => { model.docWrite(p, docId, { body: r.text }); });
   if (ctx) ctx.addDoc(docId);
   return { ok: true };
 }
 
 // 합평회 — 걸린 사람마다 한 호출씩 제 합평을 내고, 마지막 한 호출이 그것들을 하나로 모은다.
 async function runPanelReview({ store, call }, pid, d, agentIds, common, ctx) {
-  const project = store.get(pid);
+  const project = await store.get(pid);
   const crew = model.agentsByIds(project, agentIds);
   if (crew.length < 2) return call({ ...common, code: 'F-REVIEW', agentIds }, ctx);
 
@@ -68,19 +69,19 @@ async function runPanelReview({ store, call }, pid, d, agentIds, common, ctx) {
 export async function runTalk({ store, call }, pid, threadId, text, ctx, { modelPick = '' } = {}) {
   let askedId = null;
   if (text != null) {
-    store.update(pid, (p) => {
+    await store.update(pid, (p) => {
       const m = model.threadAddMessage(p, threadId, 'user', text);
       if (m) askedId = m.id;
     });
     if (!askedId) return { ok: false, error: '스레드를 찾을 수 없습니다' };
   } else {
-    const p0 = store.get(pid);
+    const p0 = await store.get(pid);
     const t0 = p0 && model.findThread(p0, threadId);
     if (!t0) return { ok: false, error: '스레드를 찾을 수 없습니다' };
     askedId = t0.headId;
   }
 
-  const project = store.get(pid);
+  const project = await store.get(pid);
   const t = model.findThread(project, threadId);
   if (ctx && ctx.gate) await ctx.gate();
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
@@ -97,7 +98,7 @@ export async function runTalk({ store, call }, pid, threadId, text, ctx, { model
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   // 답은 «물은 그 말» 밑에 붙는다 — 기다리는 사이 머리가 옮겨 가도 엉뚱한 가지로 새지 않는다.
   // 그동안 작가가 다른 가지로 옮겨 갔으면 보던 자리를 빼앗지 않는다.
-  store.update(pid, (p) => {
+  await store.update(pid, (p) => {
     const th = model.findThread(p, threadId);
     if (!th) return;
     // 기다리는 사이 같은 줄에서 말을 더 이었으면 그 줄 끝에 답한다(가지를 쪼개지 않는다).
@@ -111,7 +112,7 @@ export async function runTalk({ store, call }, pid, threadId, text, ctx, { model
 
 // 논의 정리 문서 — 지금 보고 있는 가지만 대상으로 한다.
 export async function runThreadDoc({ store, call }, pid, threadId, request, ctx, { modelPick = '' } = {}) {
-  const project = store.get(pid);
+  const project = await store.get(pid);
   const t = project && model.findThread(project, threadId);
   if (!t) return { ok: false, error: '스레드를 찾을 수 없습니다' };
   if (ctx && ctx.gate) await ctx.gate();
@@ -127,7 +128,7 @@ export async function runThreadDoc({ store, call }, pid, threadId, request, ctx,
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
 
   let docId = null;
-  store.update(pid, (p) => {
+  await store.update(pid, (p) => {
     const d = model.docCreate(p, { title: t.title, body: r.text });
     docId = d.id;
   });

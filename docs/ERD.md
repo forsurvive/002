@@ -87,7 +87,7 @@ erDiagram
 | `threads` | id · project_id · title · head_message_id · created_at · updated_at · deleted_at · legacy_id | `threads[]` |
 | `thread_links` | thread_id · target_document_id · pinned_version_id · sort_order | `thread.refIds[]` |
 | `thread_agents` | thread_id · agent_id · sort_order | `thread.agentIds[]` |
-| `thread_messages` | id · thread_id · parent_id · role(`user`/`assistant`) · text · created_by · generation_run_id · created_at · legacy_id | `messages[]` — 가지 구조(parent_id) 그대로 |
+| `thread_messages` | id · thread_id · project_id · parent_id · role(`user`/`assistant`) · text · created_by · generation_run_id · created_at · sort_order · legacy_id | `messages[]` — 가지 구조(parent_id) 그대로 |
 
 판에 관한 결정 — **지금은 «직전 판» 배열, 온라인은 «모든 판 + 현재 판 가리킴»**:
 - 저장(제목·본문이 바뀔 때)마다 새 `document_versions` 행을 만들고 `documents.current_version_id` 를 옮긴다.
@@ -157,6 +157,6 @@ CREATE INDEX runs_org_time ON generation_runs (organization_id, started_at);
 | `refIds` / `targetIds` / `agentIds` | `document_links`(reference/target, 순서) / `document_agents` |
 | `categories[]` | `categories` |
 | `threads[]` + `messages[]` | `threads` + `thread_messages` + `thread_links` + `thread_agents` |
-| `trash[]` | 원래 표의 `deleted_at`(+ 카테고리의 `orphan_from_category_id`로 되돌릴 자리) |
+| `trash[]` | `trash_entries`(언제 · 어느 기능 · 무엇 · 되살릴 짐) + 원래 표의 `deleted_at`(영구 삭제는 `purged_at` — 행은 남는다) |
 | `jobs[]` | `jobs`(끝난 기록만, 선택) |
 | `data/auth.json` | **옮기지 않는다**(평문 키) — 사용자가 온라인에서 다시 연결 |
