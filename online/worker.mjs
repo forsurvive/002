@@ -12,6 +12,7 @@ import { prepareThenStudy } from '../core/generation/agents.mjs';
 import { BUILTIN, AGENT_SLOTS, SLOT_DUTY } from '../tools/prompts.mjs';
 import { promptFor, slotModel } from '../tools/prompt-pick.mjs';
 import { retryPlan, LEASE_MS } from './jobs.mjs';
+import { SAY as TENANCY_SAY } from './tenancy.mjs';
 
 const PARK = Symbol('park');
 const PROMPTS = { builtin: BUILTIN, slots: AGENT_SLOTS, duty: SLOT_DUTY, promptFor, slotModel };   // 다음 호출 앞에서 내려놓으라는 신호
@@ -26,7 +27,7 @@ const SAY = {
  * deps = { queue, store, call, prepare? }  — store 는 createProjectStore, call 은 createOnlineCall 의 결과
  * opts = { concurrency, heartbeatMs, idleMs, leaseMs, log }
  */
-export function createWorker({ queue, store, call, prepare = null }, {
+export function createWorker({ queue, store, call, prepare = null, allowed = null }, {
   concurrency = Number(process.env.WORKER_CONCURRENCY) || 4, heartbeatMs = 15000, idleMs = 10 * 60 * 1000, leaseMs = LEASE_MS, log = () => {},
 } = {}) {
   const id = 'w-' + process.pid + '-' + randomBytes(3).toString('hex');
@@ -77,7 +78,9 @@ export function createWorker({ queue, store, call, prepare = null }, {
 
     let res;
     try {
-      res = await runKind(deps, row.kind, params, ctx);
+      // 돌리기 직전에 한 번 더 — 줄에 서 있던 사이 기관 라이선스가 끝났을 수 있다(사람 말은 tenancy 가 정한다)
+      const gate = allowed ? await allowed(row) : { ok: true };
+      res = gate.ok ? await runKind(deps, row.kind, params, ctx) : { ok: false, reason: 'license', error: TENANCY_SAY[gate.reason] || TENANCY_SAY.missing };
     } catch (e) {
       res = e === PARK ? PARK : { ok: false, reason: 'other', error: '' };
       if (e !== PARK) log('job ' + row.id + ' threw ' + ((e && e.name) || 'error'));

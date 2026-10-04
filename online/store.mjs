@@ -370,11 +370,11 @@ export function createProjectStore(pool) {
     },
 
     // 빈 프로젝트를 세우고(덩어리는 개인판 createProject 와 같은 골격) 넣을 것이 있으면 update 로 넣는다
-    async create(fields = {}, { ownerUserId, organizationId = null } = {}) {
+    async create(fields = {}, { ownerUserId, organizationId = null, classId = null } = {}) {
       const { rows } = await pool.query(
-        `INSERT INTO projects (owner_user_id, organization_id, name, spec, standard, request, model_policy)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-        [ownerUserId, organizationId, String(fields.name || '새 작품'), { outline: '', form: '', length: '', ...(fields.spec || {}) },
+        `INSERT INTO projects (owner_user_id, organization_id, class_id, name, spec, standard, request, model_policy)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+        [ownerUserId, organizationId, classId, String(fields.name || '새 작품'), { outline: '', form: '', length: '', ...(fields.spec || {}) },
           String(fields.standard || ''), String(fields.request || ''), JSON.stringify({ alias: 'opus' })]);
       return rows[0].id;
     },

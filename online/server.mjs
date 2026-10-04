@@ -26,6 +26,7 @@ import { materialsToDocs, materialDocs, findThread, threadAddMessage } from '../
 import { agentsReady, STUDY_TITLE } from '../core/generation/agents.mjs';
 import { AGENT_SLOTS } from '../tools/prompts.mjs';
 import { createJobQueue } from './jobs.mjs';
+import { createTenancy, SAY } from './tenancy.mjs';
 import { createWorker } from './worker.mjs';
 import { createOnlineCall } from './call.mjs';
 import { buildAi } from './ai.mjs';
@@ -42,6 +43,8 @@ const NOT_FOUND = '프로젝트를 찾을 수 없습니다';
 
 // pid 없이 부르는 문 — 나머지는 모두 «이 사람의 프로젝트»여야 한다
 const NO_PID = new Set(['project.list', 'project.create', 'auth.read', 'auth.write']);
+// 읽기만 하는 문 — 열람 권한(강사 · 정책이 허락한 기관 관리자)으로도 부를 수 있다
+const READ_OPS = new Set(['peek', 'prompt.read']);
 
 /**
  * 호스팅 계획 — 개인판과 같은 해석(포트 · 붙을 주소 · 허락한 호스트 이름)을 쓴다.
@@ -55,7 +58,7 @@ export function onlinePlan(env = process.env) {
 }
 
 // 온라인판에서 문 표에 넣는 것 — 저장은 PostgreSQL, 작업은 영속 큐(online/jobs.mjs), 과금 갈래는 화면에 없다.
-function depsFor(store, queue, worker, user) {
+function depsFor(store, queue, worker, user, { tenancy = null, place = null } = {}) {
   const by = { userId: user.id };
   const state = {
     // 작업 줄은 jobs 표가 맡는다 — 덩어리에 싣지 않고 읽을 때 붙인다(화면은 개인판과 같은 p.jobs 를 본다)
@@ -66,7 +69,8 @@ function depsFor(store, queue, worker, user) {
     },
     update: (pid, fn) => store.update(pid, fn, by),
     async create(fields) {
-      const id = await store.create(fields, { ownerUserId: user.id });
+      // 수업 안에 만들면 그 기관 · 수업에 묶인다(비용 주체 ORGANIZATION — 기관 키로 돈다)
+      const id = await store.create(fields, { ownerUserId: user.id, organizationId: place ? place.organizationId : null, classId: place ? place.classId : null });
       // 만들며 넣은 자료는 곧바로 «자료» 카테고리의 문서가 된다(개인판 state.create 와 같다)
       await store.update(id, (p) => { p.materials = fields.materials || []; materialsToDocs(p); }, by);
       return { id };
@@ -76,6 +80,11 @@ function depsFor(store, queue, worker, user) {
   };
   const jobs = {
     async start(pid, { kind, title = '작업', targetId = '', params = {} }) {
+      // 기관 프로젝트는 AI 작업을 넣을 때마다 라이선스를 다시 본다(worker 도 돌리기 직전에 한 번 더)
+      if (tenancy) {
+        const a = await tenancy.aiAllowed(pid);
+        if (!a.ok) return bad(SAY[a.reason] || SAY.missing);
+      }
       let p = { ...params };
       if (kind === 'talk') {
         // 작가의 말은 작업 «앞»에 저장한다 — 재시도 · 이어 하기에도 말이 한 번만 얹히고, 서버가 내려가도 말은 남는다
@@ -123,6 +132,7 @@ function depsFor(store, queue, worker, user) {
  */
 export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null } = {}) {
   const store = createProjectStore(pool);
+  const tenancy = createTenancy(pool);
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
 
   // 화면은 제 자리의 파일만 부른다 — 스크립트는 외부 파일만, 꾸밈은 style 속성을 쓰므로 인라인 꾸밈만 허락
@@ -158,16 +168,13 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
 
   const isJson = (req) => String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase() === 'application/json';
 
-  // 그 사람의 프로젝트인가 — 지운 것 · 남의 것 · 이상한 id 는 모두 «없음»으로 같게 답한다
-  const owns = async (user, pid) => {
-    if (!UUID.test(String(pid || ''))) return false;
-    const r = await pool.query('SELECT 1 FROM projects WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NULL', [pid, user.id]);
-    return r.rowCount > 0;
-  };
+  // 읽을 수 있는 프로젝트인가 — 판정은 online/tenancy.mjs 한 곳(주인 · 맡은 수업의 강사 · 정책이 허락한 기관 관리자).
+  // 지운 것 · 남의 것 · 이상한 id 는 모두 «없음»으로 같게 답한다.
+  const canRead = async (user, pid) => (await tenancy.access(user, pid)).read;
 
   // 상태의 지문 — 질의 하나(덩어리를 짓는 열세 질의 대신). 남의 프로젝트면 지문을 내지 않는다(그 길은 «없음»으로 답한다).
   const fingerprint = async (user, pid) => {
-    if (pid && !(await owns(user, pid))) return '';
+    if (pid && !(await canRead(user, pid))) return '';
     const { rows } = await pool.query(
       `SELECT (SELECT updated_at::text FROM projects WHERE id = $1::uuid) AS p,
               (SELECT count(*)::text || ':' || coalesce(max(updated_at)::text, '') FROM projects WHERE owner_user_id = $2 AND deleted_at IS NULL) AS mine,
@@ -262,10 +269,20 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const op = String(body.op || '');
         if (!op) return json(res, 400, bad('op 없음'));
         if (op === 'auth.write') return json(res, 403, bad('온라인판에서는 키를 여기서 받지 않습니다'));
-        const { OPS } = createOps(depsFor(store, queue, worker, user));
+        // 수업 안에 만들기 — 그 수업의 멤버이고 라이선스가 유효할 때만(아니면 개인 프로젝트로 새지 않게 거절한다)
+        let place = null;
+        if (op === 'project.create' && body.classId) {
+          place = await tenancy.canCreateInClass(user, body.classId);
+          if (!place.ok) return json(res, place.reason === 'missing' ? 404 : 403, bad(SAY[place.reason] || NOT_FOUND, place.reason));
+        }
+        const { OPS } = createOps(depsFor(store, queue, worker, user, { tenancy, place }));
         const fn = OPS[op];
         if (!fn) return json(res, 404, bad('그런 문이 없습니다: ' + op));
-        if (!NO_PID.has(op) && !(await owns(user, body.pid))) return json(res, 404, bad(NOT_FOUND));
+        if (!NO_PID.has(op)) {
+          const acc = await tenancy.access(user, body.pid);
+          if (!acc.read) return json(res, 404, bad(NOT_FOUND));
+          if (!acc.write && !READ_OPS.has(op)) return json(res, 403, bad(SAY.read_only, 'read_only'));
+        }
         let out;
         try { out = await fn(body); } catch (e) { out = bad((e && e.message) || e); }
         if (out && out.ok !== false && (op === 'project.create' || op === 'project.delete')) {
@@ -281,18 +298,20 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const etag = await fingerprint(user, pid);
         const cache = { etag, 'cache-control': 'private, no-cache' };
         if (etag && req.headers['if-none-match'] === etag) return send(res, 304, '', 'application/json; charset=utf-8', cache);
-        const { stateOf } = createOps(depsFor(store, queue, worker, user));
+        const { stateOf } = createOps(depsFor(store, queue, worker, user, { tenancy }));
         const projects = await store.listFor(user.id);
         if (!pid) return json(res, 200, { ok: true, projects, me }, cache);
-        const st = (await owns(user, pid)) ? await stateOf(pid) : null;
+        const acc = await tenancy.access(user, pid);
+        const st = acc.read ? await stateOf(pid) : null;
+        if (st && !acc.write) st.readOnly = true;   // 강사 · 기관 관리자의 열람 — 화면이 고치기 단추를 숨길 근거(막는 것은 서버다)
         if (!st) return json(res, 200, { ok: false, error: '없음', projects, me });
         return json(res, 200, { ok: true, project: st, projects, me }, cache);
       }
 
       if (req.method === 'GET' && url.pathname === '/api/download') {
         const pid = url.searchParams.get('pid');
-        const { downloadOf } = createOps(depsFor(store, queue, worker, user));
-        const d = (await owns(user, pid)) ? await downloadOf(pid, url.searchParams.get('kind'), url.searchParams.get('id')) : null;
+        const { downloadOf } = createOps(depsFor(store, queue, worker, user, { tenancy }));
+        const d = (await canRead(user, pid)) ? await downloadOf(pid, url.searchParams.get('kind'), url.searchParams.get('id')) : null;
         if (!d) return send(res, 404, '없음', 'text/plain; charset=utf-8');
         return send(res, 200, d.text, 'text/markdown; charset=utf-8', {
           'content-disposition': 'attachment; filename*=UTF-8\'\'' + encodeURIComponent(d.name),
@@ -334,7 +353,8 @@ export async function main(env = process.env) {
   const store = createProjectStore(pool);
   const call = createOnlineCall({ pool, store, generator: ai.generator, ...(ai.aliasTiers ? { aliasTiers: ai.aliasTiers } : {}) });
   // 같은 프로세스에서 worker 를 함께 돌린다(파일럿 — VM 하나). SE_WORKER=0 이면 웹만(worker 를 따로 띄울 때)
-  const worker = env.SE_WORKER === '0' ? null : createWorker({ queue, store, call }, { log: (m) => console.log('  [worker] ' + m) });
+  const tenancyW = createTenancy(pool);
+  const worker = env.SE_WORKER === '0' ? null : createWorker({ queue, store, call, allowed: (row) => tenancyW.aiAllowed(row.project_id) }, { log: (m) => console.log('  [worker] ' + m) });
   if (worker) await worker.start();
   const srv = createOnlineServer({ pool, plan, queue, worker, credentials: ai.credentials, trustProxy: env.SE_TRUST_PROXY === '1', denyFrames: env.NODE_ENV === 'production' });
   await new Promise((resolve) => srv.listen(plan.port, plan.host, resolve));
