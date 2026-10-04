@@ -2,7 +2,8 @@
 // 자동 집필과 손 작업이 모두 이 문을 지난다.
 
 import { BUILTIN, haveBrain } from './prompts.mjs';
-import { buildSystem, buildUser, cleanResponse } from './assemble.mjs';
+import { cleanResponse } from './assemble.mjs';
+import { planCall } from '../core/reference/plan.mjs';
 import { runClaudeCall } from './call.mjs';
 import * as auth from './auth.mjs';
 import * as state from './state.mjs';
@@ -42,29 +43,8 @@ export function promptView(project, code) {
   };
 }
 
-const asItem = (d) => ({ id: d.id, name: d.title, text: model.bodyOf(d) });
-
-export function docsByIds(project, ids = []) {
-  const out = [];
-  for (const id of ids) {
-    const d = model.findDoc(project, id);
-    if (d) out.push(asItem(d));
-  }
-  return out;
-}
-
-// 확정본은 호출 직전에 다시 읽는다 — 그래야 도중에 켠 것이 다음 호출부터 들어간다.
-export function finalDocs(project, { onlyIds = null } = {}) {
-  return project.docs
-    .filter((d) => d.isFinal && (!onlyIds || onlyIds.includes(d.id)))
-    .map(asItem);
-}
-
-// 만들 때 넣은 자료 — 이제는 작업실 «자료» 카테고리의 문서다(지금 본문으로 읽는다).
-// 에이전트 준비(종류 판정 · 짓기 · «자료 분석»)만 이것을 통째로 «■ 자료» 구획에 싣는다.
-export function materialItems(project) {
-  return model.materialDocs(project).map(asItem);
-}
+// 참조 조립(무엇을 어느 구획에 싣나)은 core/reference/plan.mjs 로 옮겼다 — 지금까지의 이름도 그대로 내보낸다.
+export { docsByIds, finalDocs, materialItems } from '../core/reference/plan.mjs';
 
 // 일하는 법(tools/prompts.data.json)을 읽지 못했으면 부르지 않는다.
 // 그 파일 없이 부르면 구독만 태우고 빈 자리로 쓴 글이 나온다 — 폴더를 옮기다 빠뜨린 때가 그렇다.
@@ -91,63 +71,20 @@ export async function callOnce({
 
   const project = state.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
-  const pr = promptFor(project, code);
+  // 무엇을 어느 구획에 싣고 어느 모델로 부를지는 Core 의 계획이 정한다(core/reference/plan.mjs).
+  const plan = planCall(project, {
+    refIds, targetIds, agentIds, request, taskExtra, materials, allFinals, talk, prev, next,
+    noCount, finalFirst, keepSeat, extraTargets, modelPick,
+  }, { pr: promptFor(project, code), slotModel: slotModel(project, code) });
 
-  // 자료도 보통 문서다 — 참조로 걸면 참조로, 확정본이면 확정본으로 실린다.
-  // 다만 에이전트 준비(materials)가 자료를 통째로 «■ 자료» 구획에 실을 때는 그 문서들을 다른 구획에 겹쳐 싣지 않는다.
-  const mats = materials ? materialItems(project) : [];
-  const matIds = new Set(mats.map((m) => m.id));
-
-  // 한 문서는 한 구획에만 실린다.
-  //  · 보통은 대상 > 확정본 > 참조 순서(합평할 원고가 확정본이어도 대상 자리에 남는다).
-  //  · 모순 검사만 확정본 > 대상 > 참조 — 고른 문서 가운데 확정본이 있으면 그것이 기준이 되어야 한다.
-  const finalsAll = (allFinals ? finalDocs(project) : finalDocs(project, { onlyIds: [...refIds, ...targetIds] }))
-    .filter((d) => !matIds.has(d.id));
-  const taken = new Set(matIds);
-  let finals; let targets;
-  // 고른 대상이 모두 확정본이면 기준으로 뺄 것이 없다 — 그때는 대상 자리에 그대로 둔다(구획이 사라지면 지시가 가리킬 곳이 없다).
-  const allTargetsFinal = targetIds.length > 0 && targetIds.every((id) => finalsAll.some((d) => d.id === id));
-  if (finalFirst && !allTargetsFinal) {
-    finals = finalsAll;
-    finals.forEach((d) => taken.add(d.id));
-    targets = docsByIds(project, targetIds).filter((d) => !taken.has(d.id));
-    targets.forEach((d) => taken.add(d.id));
-  } else {
-    targets = docsByIds(project, targetIds);
-    targets.forEach((d) => taken.add(d.id));
-    finals = finalsAll.filter((d) => !taken.has(d.id));
-    finals.forEach((d) => taken.add(d.id));
-  }
-  const refs = docsByIds(project, refIds).filter((d) => !taken.has(d.id));
-  // 문서가 아닌 것도 «대상» 자리에 설 수 있다(합평 모으기가 받는 여러 합평 같은 것).
-  if (extraTargets.length) targets = [...targets, ...extraTargets];
-
-  const task = [pr.task, taskExtra].filter((x) => String(x || '').trim()).join('\n');
-  // 작가가 걸어 둔 사람들 — 있으면 이들이 «누가 쓰는가»를 대신한다.
-  // keepSeat 이면 그 자리의 사람이 맨 앞에 그대로 남고 걸린 사람은 거기에 더해진다(논의 스레드).
-  // 자리의 작법은 «■ 작법» 첫 덩이로 이미 실리므로 여기서는 이름과 역할만 세운다.
-  const picked = model.agentsByIds(project, agentIds);
-  const crew = keepSeat ? [{ id: '', name: pr.name, role: pr.role, craft: '', model: '' }, ...picked] : picked;
-  // 쓸 모델 — 부르는 쪽이 못 박았으면 그것이 먼저다(작가가 «어느 모델로 모을지»를 고른 때).
-  // 아니면 «제 모델을 정해 둔 첫 사람», 그다음 그 자리(지어진 에이전트)에 정해 둔 것, 그도 없으면 프로젝트의 것.
-  const bringsModel = picked.find((c) => String(c.model || '').trim());
-  const useModel = String(modelPick || '').trim() || (bringsModel ? bringsModel.model : '') || slotModel(project, code) || project.model;
-  // 부르는 쪽이 따로 정하지 않았으면 작품에 걸어 둔 토글을 따른다.
-  const nc = noCount == null ? project.noCount !== false : !!noCount;
-  const systemPrompt = buildSystem({ prompt: pr, prev, next, crew, withFinalRule: finals.length > 0, withNoCount: nc });
-  const prompt = buildUser({
-    project,
-    // 에이전트 준비만 자료를 통째로 싣는다. 손으로 여는 자리에서 고른 자료는 참조 · 확정본 구획으로 간다.
-    materials: mats,
-    refs, finals, targets, talk, request, task, noCount: nc,
-  });
-
-  const r = await runClaudeCall({ systemPrompt, prompt, mockKey: code, signal, model: useModel });
+  const r = await runClaudeCall({ systemPrompt: plan.systemPrompt, prompt: plan.userPrompt, mockKey: code, signal, model: plan.model });
   // 사유(reason)와 한도(limit)를 떨어뜨리지 않는다 — 작업이 이것으로 «멈출까 실패할까»를 가른다.
   if (!r.ok) return { ok: false, error: r.error, reason: r.reason, limit: r.limit };
   const text = cleanResponse(r.text);
   if (!text) return { ok: false, error: '빈 응답', reason: 'empty', limit: r.limit };
-  return { ok: true, text, usage: r.usage, limit: r.limit, authSource: r.authSource };
+  // planned — 무엇을 보고 만들었나(본문은 빼고 이름·길이만). 생성 기록(generation_runs)의 재료다.
+  const planned = { model: plan.model, modelSource: plan.modelSource, inputs: plan.inputs.map(({ role, id, name, text: t }) => ({ role, id, name, chars: t.length })) };
+  return { ok: true, text, usage: r.usage, limit: r.limit, authSource: r.authSource, planned };
 }
 
 // 다시 부를 값이 있을 때만 다시 부른다.

@@ -1999,6 +1999,23 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('tools/assemble.mjs 는 Core 의 그것이다', asm.buildUser === coreAsm.buildUser);
   ok('이름표는 한 벌이다', store.newId === coreIds.newId && store.MODELS === coreIds.MODELS);
   ok('작법서 본문은 개인판이 꽂아 준 길로 푼다', model.bodyOf({ src: '없는 책' }) === '' && model.bodyOf({ body: '본문' }) === '본문');
+  // planCall — 무엇을 어느 구획에 싣고 어느 모델로 부르나(engine.callOnce 앞부분을 옮김). 실은 것의 목록을 함께 준다.
+  const { planCall } = await import('../core/reference/plan.mjs');
+  const pp = store.blankProject('p_plan', '계획');
+  const fa = model.docCreate(pp, { title: '세계', body: '세계 본문' });
+  const fb = model.docCreate(pp, { title: '인물', body: '인물 본문' });
+  const fc = model.docCreate(pp, { title: '원고', body: '원고 본문' });
+  model.docSetFinal(pp, fa.id, true);
+  const g1 = model.agentCreate(pp, { name: '갑', role: '편집', craft: '', model: 'sonnet' });
+  const pr = { name: '자리', role: '쓴다', task: '할 일', craft: '작법' };
+  const pl = planCall(pp, { refIds: [fa.id, fb.id, fc.id], targetIds: [fc.id], agentIds: [g1.id], keepSeat: true }, { pr, slotModel: '' });
+  eq('실은 것은 구획 차례대로 한 번씩', pl.inputs.map((x) => x.role + ':' + x.name).join(','), 'reference:인물,final:세계,target:원고');
+  ok('실은 것은 프롬프트에 실제로 있다', pl.inputs.every((x) => pl.userPrompt.includes(x.text)));
+  ok('모델은 첫 사람의 것 — 어디서 왔는지 적는다', pl.model === 'sonnet' && pl.modelSource === 'agent');
+  ok('고른 모델이 먼저', planCall(pp, { modelPick: 'fable', agentIds: [g1.id] }, { pr }).modelSource === 'pick');
+  ok('자리 모델 · 작품 모델 차례', planCall(pp, {}, { pr, slotModel: 'opus' }).modelSource === 'slot' && planCall(pp, {}, { pr }).modelSource === 'project');
+  const pc = planCall(pp, { refIds: [fb.id], targetIds: [fa.id, fc.id], finalFirst: true }, { pr });
+  eq('모순 검사는 확정본이 기준 자리에 선다', pc.inputs.map((x) => x.role + ':' + x.name).join(','), 'reference:인물,final:세계,target:원고');
 }
 
 // ---------------------------------------------------------------- 호스팅 실행 — 포트 · 주소 · 허용 호스트 · 출입 열쇠
