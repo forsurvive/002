@@ -125,8 +125,8 @@
 | `POST /api/auth/login` `{ loginId, password }` | 성공 → `se_session` 쿠키(HttpOnly · SameSite=Lax · 바깥에 열면 Secure). 실패 → 401 `{ code: 'unauthenticated' }` 한 가지 문구, 거듭되면 429 `rate_limited` |
 | `POST /api/auth/logout` | 세션 폐기 + 쿠키 지움 |
 | `GET /api/me` | `{ me: { loginId, displayName } }` |
-| `POST /api` `{ op, pid, … }` | **개인판과 같은 문 표**(`tools/ops.mjs`) · 같은 응답 꼴. 다른 점: pid 가 필요한 문은 «이 사람의 프로젝트»가 아니면 **404**(남의 것 · 지운 것 · 이상한 id 모두 같은 답) · `auth.write` 403 · AI 작업을 여는 문(`doc.update` `thread.send` `thread.edit` `thread.doc` `project.prepare`)은 `{ ok:false, error:'…준비 중' }`(Sprint 9 영속 큐와 함께 연다) |
-| `GET /api/state[?pid]` | 개인판과 같은 꼴 + `me`. `project.auth` 는 `{ mode:'online', modes:[], hasKey:false }` — 화면이 «무엇으로»(키 칸)를 세우지 않는다 |
+| `POST /api` `{ op, pid, … }` | **개인판과 같은 문 표**(`tools/ops.mjs`) · 같은 응답 꼴. 다른 점: pid 가 필요한 문은 «이 사람의 프로젝트»가 아니면 **404**(남의 것 · 지운 것 · 이상한 id 모두 같은 답) · `auth.write` 403 · AI 작업을 여는 문(`doc.update` `thread.send` `thread.edit` `thread.doc`)은 **영속 큐에 넣고 곧바로 `{ ok, jobId }`**(같은 대상에 도는 작업이 있으면 «이미 도는 중») · `job.pause/resume/answer/remove` 는 큐의 손잡이 · `project.prepare`(에이전트 준비)는 아직 «준비 중» |
+| `GET /api/state[?pid]` | 개인판과 같은 꼴 + `me`. `project.jobs` 는 jobs 표에서(대기 중은 `status:'running', step:'대기 중'`, 사람의 답을 기다림은 `paused` + `ask.say`). `project.auth` 는 `{ mode:'online', modes:[], hasKey:false }` — 화면이 «무엇으로»(키 칸)를 세우지 않는다 |
 | `GET /api/download` | 개인판과 같다(같은 소유 검사) |
 
 로그인 전 `/api*` 는 401 `{ code:'login' }` → 화면(`web/app.js`)이 `/login` 으로 보낸다. 가입 문은 없다 — 계정은 운영자가 `node online/admin.mjs create-user <아이디>` 로 만든다(SECURITY §7).

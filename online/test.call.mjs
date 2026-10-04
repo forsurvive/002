@@ -2,6 +2,8 @@
 // 가짜 Provider 를 쓴다(망 · 실제 키 없음). 가짜 키도 «키처럼 생긴 값»일 뿐 실제 비밀이 아니다.
 
 import { randomBytes, createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import * as M from '../core/domain/model.mjs';
 import { createCredentialService } from '../ai/credentials.mjs';
 import { createCatalog } from '../ai/catalog.mjs';
@@ -77,6 +79,21 @@ export async function run({ pool, ok, eq }) {
   await store.update(pid, (p) => { M.docWrite(p, d1, { body: '세계는 평평하다' }); });
   const still = (await pool.query('SELECT body FROM document_versions WHERE id = $1', [fin.document_version_id])).rows[0];
   eq('옛 판은 그대로 남아 «무엇을 보고 만들었나»를 답한다', still.body, '세계는 둥글다');
+
+  // ---------------- 운영자 도구로 키 넣기 — 키는 표준 입력으로만, 콘솔에는 끝 네 자리만(ASCII)
+  {
+    await createUser(pool, { loginId: 'keyed', password: 'long-enough-1' });
+    const admin = fileURLToPath(new URL('./admin.mjs', import.meta.url));
+    const env = { ...process.env, DATABASE_URL: process.env.DATABASE_URL_TEST, CREDENTIALS_KEY_V1: randomBytes(32).toString('base64') };
+    const r1 = spawnSync(process.execPath, [admin, 'set-key', 'keyed', 'openai'], { input: FAKE_KEY + '-admin\n', env, encoding: 'utf8' });
+    ok('운영자가 키를 넣는다', r1.status === 0 && /stored \(sealed\): openai \.\.\.[a-z0-9]{4}/.test(r1.stdout) && !r1.stdout.includes(FAKE_KEY), r1.stdout + r1.stderr);
+    ok('콘솔은 ASCII 만', /^[\x00-\x7f]*$/.test(r1.stdout));
+    ok('키는 명령줄 인자로 받지 않는다(인자에 넣어도 키로 쓰지 않는다)', spawnSync(process.execPath, [admin, 'set-key', 'keyed', 'openai', FAKE_KEY], { input: '', env, encoding: 'utf8' }).status !== 0);
+    const row = (await pool.query("SELECT c.status FROM provider_credentials c JOIN users u ON u.id::text = c.owner_id WHERE u.login_id = 'keyed' AND c.provider = 'openai' AND c.status = 'active'")).rows;
+    eq('봉해서 하나 저장', row.length, 1);
+    ok('**DB 에 원문이 없다**', !JSON.stringify((await pool.query('SELECT * FROM provider_credentials')).rows).includes(FAKE_KEY));
+    ok('감사 로그(키 값 없이)', (await pool.query("SELECT details FROM audit_logs WHERE action = 'credential.set'")).rows.every((r) => !JSON.stringify(r).includes(FAKE_KEY)));
+  }
 
   // ---------------- 실패 갈래가 그대로 올라온다
   const { generator: g2 } = fakeRouter(pool, { reply: () => failure('rate', '잠시 붐빕니다', { retryAfterMs: 20000 }), keys });

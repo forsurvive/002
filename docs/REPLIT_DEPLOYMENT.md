@@ -79,7 +79,7 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
 ### 3-2. 온라인판에서 더해질 것(Phase 3~)
 
 `DATABASE_URL`(Replit 이 넣어 줌) · `SESSION_SECRET` · `CREDENTIALS_KEY_V1`(credential 암호화 마스터 키, 32바이트 base64) · `NODE_ENV`(`staging`/`production`) ·
-`SE_TRUST_PROXY=1`(플랫폼 앞단 뒤) · `SE_MIGRATE_ON_BOOT`(기본 켬) · `DB_POOL_MAX`(기본 5) · `WORKER_CONCURRENCY` · (플랫폼이 AI 를 대 줄 때만) `ANTHROPIC_API_KEY`·`OPENAI_API_KEY`·`GEMINI_API_KEY`.
+`SE_TRUST_PROXY=1`(플랫폼 앞단 뒤) · `SE_WORKER=0`(웹만 — worker 를 따로 띄울 때) · `SE_MIGRATE_ON_BOOT`(기본 켬) · `DB_POOL_MAX`(기본 5) · `WORKER_CONCURRENCY` · (플랫폼이 AI 를 대 줄 때만) `ANTHROPIC_API_KEY`·`OPENAI_API_KEY`·`GEMINI_API_KEY`.
 **기관/개인의 API 키는 환경 변수에 두지 않는다** — DB 에 암호화(명세 AH-7).
 
 ## 4. Sprint 1 — 사용자가 할 일(계정 필요)
@@ -99,7 +99,7 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
 
 ## 4-1. 온라인 서버를 작업 공간에서 띄워 보기(Sprint 6~8 — 계정 필요)
 
-코드는 준비되어 있다(`online/server.mjs`, 시험 `online/test.mjs`). AI 작업은 아직 닫혀 있다(편집 · 판 · 참조 · 확정본 · 논의 · 휴지통만).
+코드는 준비되어 있다(`online/server.mjs`, 시험 `online/test.mjs`). 편집 · 판 · 참조 · 확정본 · 논의 · 휴지통에 더해 **AI 작업(갱신 · 논의 · 정리 · 합평)** 도 돈다 — 아래 7~8 을 마친 뒤에. 에이전트 준비만 아직 개인판에만 있다.
 
 1. 작업 공간 왼쪽 도구에서 **Database(PostgreSQL)** 를 만든다 → Secrets 에 `DATABASE_URL` 이 저절로 들어온다(값을 채팅이나 코드에 옮기지 않는다).
 2. Shell: `npm ci` (온라인판 의존성 `pg` 하나).
@@ -108,6 +108,12 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
    처음 띄울 때 마이그레이션이 앞으로만 적용된다(`SE_MIGRATE_ON_BOOT=0` 이면 건너뜀).
 5. 미리보기의 새 탭에서 `/login` → 3 의 계정으로 들어가 프로젝트 만들기 · 문서 · 판 복원 · 참조 · 확정본 · 휴지통을 해 본다.
    두 번째 계정을 만들어 첫 계정의 프로젝트가 보이지 않는지도 본다.
+7. **AI 를 쓰려면**(실제 비밀값 — 사람이 넣는다):
+   - Secrets 에 `CREDENTIALS_KEY_V1` = 32바이트 무작위 값의 base64(Shell: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` 의 출력을 **Secrets 에만** 붙여 넣는다. 잃으면 저장한 키를 열 수 없다 — 비밀번호 관리자에도 보관).
+   - `config/models.example.json` 을 `config/models.json` 으로 복사하고 `modelId` 칸을 각 회사 공식 모델 문서의 id 로 채운다(모르면 비워 두고 알려 주면 확인해 채운다).
+   - 서버를 다시 띄운다(콘솔의 `[NOTE]` 두 줄이 사라지면 된 것).
+8. 계정에 AI 키 넣기: Shell 에서 `node online/admin.mjs set-key <아이디> anthropic` → 키를 붙여 넣는다(화면에 찍히지 않음, 봉해서만 저장, 다시 보여 주지 않음). **키를 채팅에 붙여 넣지 않는다.**
+   문서에서 [갱신] → 작업 줄이 «대기 중» → 쓰는 중 → 완료, 본문이 새 판으로.
 6. (선택) 개인판 작품 옮기기: 개인판 폴더의 `data/projects/p_….json` 을 작업 공간에 올리고
    `node online/import.mjs <파일> --owner <아이디>` → 수량과 `check … : OK` 줄이 나온다(`MISMATCH` 가 있으면 멈추고 알린다). 원본 파일은 건드리지 않는다.
 

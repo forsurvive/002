@@ -1,0 +1,138 @@
+// worker — 영속 작업 큐(online/jobs.mjs)에서 작업을 집어 Core 의 작업 종류 표(core/generation/kinds.mjs)로 돌린다.
+// 개인판 실행기(tools/jobs.mjs)와 같은 약속을 지킨다:
+//   · 일시중지는 돌던 호출을 끝까지 두고 «다음 호출 앞»(ctx.gate)에서 선다 — 온라인은 거기서 작업을 내려놓는다(worker 를 붙잡지 않는다).
+//   · 취소는 숨(heartbeat) 때 보고 진행 중 호출을 끊는다. 결과는 버리고 문서는 그대로.
+//   · 실패해도 기존 글을 덮어쓰지 않는다 — Core 가 결과를 끝에 한 번, 새 판으로만 쓴다.
+// 실패 갈래(JOB_SYSTEM §5): 잠깐 밀림 → 백오프로 다시 줄 · 키 없음 → 사람의 답을 기다림 · 나머지 → 실패(사람 말로).
+// 쉴 때는 DB 를 두드리지 않는다 — 웹이 wake() 로 깨우고, 도는 작업이 있을 때만 숨과 회수를 한다(§8).
+
+import { randomBytes } from 'node:crypto';
+import { runKind } from '../core/generation/kinds.mjs';
+import { retryPlan, LEASE_MS } from './jobs.mjs';
+
+const PARK = Symbol('park');   // 다음 호출 앞에서 내려놓으라는 신호
+
+// 사람에게 보일 실패 문구 — 어댑터 · Core 의 문구는 이미 사람 말이다. 갈래만 있고 문구가 없으면 이것으로.
+const SAY = {
+  credential: 'AI 연결이 필요합니다', auth: 'AI 키가 맞지 않습니다', credit: 'AI 사용 잔액이 없습니다', model: '쓸 수 있는 모델이 없습니다',
+  invalid: '요청을 처리할 수 없습니다', safety: '안전 정책으로 답하지 않았습니다', empty: '빈 응답', timeout: '응답이 너무 오래 걸렸습니다', other: '실패',
+};
+
+/**
+ * deps = { queue, store, call, prepare? }  — store 는 createProjectStore, call 은 createOnlineCall 의 결과
+ * opts = { concurrency, heartbeatMs, idleMs, leaseMs, log }
+ */
+export function createWorker({ queue, store, call, prepare = null }, {
+  concurrency = Number(process.env.WORKER_CONCURRENCY) || 4, heartbeatMs = 15000, idleMs = 10 * 60 * 1000, leaseMs = LEASE_MS, log = () => {},
+} = {}) {
+  const id = 'w-' + process.pid + '-' + randomBytes(3).toString('hex');
+  const running = new Map();   // jobId → { controller }
+  let stopped = false;
+  let ticking = null;
+  let idleTimer = null;
+
+  async function runOne(row) {
+    const controller = new AbortController();
+    let lost = false; let cancelled = false;
+    const pending = [];
+    running.set(row.id, { controller });
+    const params = row.params || {};
+    const userId = row.requested_by;
+
+    const check = async () => {
+      const h = await queue.heartbeat(row.id, id, { leaseMs });
+      if (!h) { lost = true; controller.abort(); return null; }
+      if (h.cancel) { cancelled = true; controller.abort(); }
+      return h;
+    };
+    const beat = setInterval(() => { check().catch(() => {}); }, heartbeatMs);
+
+    // 작업마다 저장은 «누가 고쳤나»(판의 created_by)를 그 작업을 맡긴 사람으로 남긴다
+    const jobStore = { get: (pid) => store.get(pid), update: (pid, fn) => store.update(pid, fn, { userId }) };
+    const deps = {
+      store: jobStore,
+      call: (args, ctx) => call(args, ctx),
+      prepare: prepare || (async () => ({ ok: false, error: '에이전트 준비는 온라인판에서 아직 준비 중입니다', reason: 'invalid' })),
+    };
+    const ctx = {
+      pid: row.project_id, jobId: row.id, userId, threadId: params.threadId || '', signal: controller.signal,
+      // Core 는 이 둘을 기다리지 않는다 — 끝내기 전에 모두 닿게 모아 둔다(끝낸 뒤에 오면 울타리에 막혀 산출 문서를 잃는다)
+      step: (text) => { pending.push(queue.step(row.id, id, text).catch(() => {})); },
+      addDoc: (docId) => { pending.push(queue.addDoc(row.id, id, docId).catch(() => {})); },
+      // 호출과 호출 사이 — 손잡이 요청을 읽는다. 멈추라 했으면 여기서 내려놓는다.
+      async gate() {
+        const h = await check();
+        if (h && h.pause && !controller.signal.aborted) throw PARK;
+        return !controller.signal.aborted;
+      },
+    };
+
+    let res;
+    try {
+      res = await runKind(deps, row.kind, params, ctx);
+    } catch (e) {
+      res = e === PARK ? PARK : { ok: false, reason: 'other', error: '' };
+      if (e !== PARK) log('job ' + row.id + ' threw ' + ((e && e.name) || 'error'));
+    } finally {
+      clearInterval(beat);
+      await Promise.all(pending);
+      running.delete(row.id);
+    }
+
+    if (lost) return;   // 울타리 밖 — 이미 다른 worker 가 맡았거나 회수됐다. 아무것도 쓰지 않는다.
+    if (res === PARK) return queue.park(row.id, id, { status: 'paused' });
+    // 이 worker 가 내려가느라 끊은 것 — 취소가 아니다. 곧바로 다시 줄 세운다(다른 worker · 다시 뜬 worker 가 잇는다).
+    if (stopped && !cancelled) return queue.retryLater(row.id, id, { delayMs: 0, errorCode: 'worker_stopped' });
+    if (cancelled || controller.signal.aborted) return queue.finish(row.id, id, { status: 'cancelled' });
+    if (res && res.ok !== false) return queue.finish(row.id, id, { status: 'done' });
+
+    const reason = String((res && res.reason) || 'other');
+    const say = String((res && res.error) || SAY[reason] || SAY.other).slice(0, 200);
+    if (reason === 'credential') return queue.park(row.id, id, { status: 'waiting_for_user', ask: { reason, say: SAY.credential } });
+    const again = retryPlan(reason, row.attempt, (res.retryAfterMs || 0) / 1000);
+    if (again && row.attempt < row.max_attempts) return queue.retryLater(row.id, id, { delayMs: again.delayMs, errorCode: reason, errorSafe: say });
+    return queue.finish(row.id, id, { status: 'failed', errorCode: reason, errorSafe: say });
+  }
+
+  // 빈 슬롯만큼 집는다. 집을 것이 없으면 쉰다(안전망 시계만 남긴다).
+  async function tick() {
+    if (ticking) return ticking;
+    ticking = (async () => {
+      try {
+        while (!stopped && running.size < concurrency) {
+          const row = await queue.claim(id, { leaseMs });
+          if (!row) break;
+          runOne(row).catch((e) => log('job ' + row.id + ' finish failed ' + ((e && e.code) || (e && e.name) || '')))
+            .finally(() => { if (!stopped) tick(); });
+        }
+      } finally {
+        ticking = null;
+      }
+      arm();
+    })();
+    return ticking;
+  }
+
+  // 도는 것이 있으면 회수를 자주(죽은 동료의 작업), 없으면 긴 안전망 하나만
+  function arm() {
+    if (stopped) return;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { queue.reap().catch(() => {}).finally(() => tick()); }, running.size ? leaseMs : idleMs);
+  }
+
+  return {
+    id,
+    // 웹이 작업을 넣은 뒤 부른다(같은 프로세스). 여러 대가 되면 LISTEN/NOTIFY 로 바꾼다.
+    wake() { if (!stopped) tick(); },
+    async start() { await queue.reap(); await tick(); },
+    // 새로 집지 않고, 도는 호출에 유예를 준다. 못 끝내면 끊는다(lease 가 지나면 회수가 다시 줄 세운다).
+    async stop({ graceMs = 25000 } = {}) {
+      stopped = true;
+      clearTimeout(idleTimer);
+      const until = Date.now() + graceMs;
+      while (running.size && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+      for (const [, h] of running) h.controller.abort();
+    },
+    get busy() { return running.size; },
+  };
+}

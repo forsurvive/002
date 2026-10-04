@@ -123,6 +123,7 @@ function limitSay(L) {
 function jobLine(j) {
   // 한도에 닿아 물음이 매달린 자리 — 무엇이 닫혔고 언제 풀리는지 이른다.
   if (j.ask) {
+    if (j.ask.say) return j.ask.say;   // 온라인판 — 서버가 사람 말로 적어 보낸 까닭(«AI 연결이 필요합니다» 등)
     const what = j.ask.reason === 'quota-week' ? '주간 한도' : '구독 한도';
     const when = atTime(j.ask.resetsAt);
     return what + (when ? ' · ' + when + ' 에 풀림' : '');

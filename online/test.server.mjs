@@ -1,4 +1,4 @@
-// 온라인 서버 시험 — online/test.mjs 가 이어 부른다. 실제 HTTP 로 두드린다(모의 AI 도 쓰지 않는다: AI 작업은 아직 닫혀 있다).
+// 온라인 서버 시험 — online/test.mjs 가 이어 부른다. 실제 HTTP 로 두드린다. 여기서는 worker 를 띄우지 않는다(작업은 줄에 서기만 한다) — 돌리는 쪽은 test.worker.mjs.
 
 import { request as httpRequest } from 'node:http';
 import { createOnlineServer, onlinePlan } from './server.mjs';
@@ -101,11 +101,15 @@ export async function run({ pool, ok, eq }) {
     const dl = await req('/api/download?pid=' + pid + '&kind=doc&id=' + dc.id, { who: 'a' });
     ok('내려받기', dl.status === 200 && (await dl.text()).startsWith('# 플롯'));
 
-    // ---------------- AI 작업은 아직 닫혀 있다 — 기존 글을 건드리지 않는다
+    // ---------------- AI 작업은 줄에 선다(곧바로 jobId) — 도는 동안 기존 글은 그대로
     const ai = await op('a', 'doc.update', { pid, id: dc.id });
-    ok('AI 작업은 «준비 중»으로 답한다', ai.ok === false && /준비 중/.test(ai.error));
+    ok('AI 작업은 등록만 하고 곧바로 jobId', ai.ok && /^[0-9a-f-]{36}$/.test(ai.jobId));
     eq('그 사이 본문은 그대로', (await stateOf('a', pid)).project.docs.find((x) => x.id === dc.id).body, '첫 판');
-    ok('작업 목록은 비어 있다', (await stateOf('a', pid)).project.jobs.length === 0);
+    const line = (await stateOf('a', pid)).project.jobs.find((j) => j.id === ai.jobId);
+    ok('작업 줄은 개인판 꼴(대기 중 · 대상)', line && line.status === 'running' && line.step === '대기 중' && line.targetId === dc.id);
+    ok('같은 문서에 또 맡기면 «이미 도는 중»', /이미 도는 중/.test((await op('a', 'doc.update', { pid, id: dc.id })).error));
+    ok('에이전트 준비는 아직 «준비 중»', /준비 중/.test((await op('a', 'project.prepare', { pid })).error || '') || (await op('a', 'project.prepare', { pid })).ok === false);
+    ok('남은 작업은 목록에서 치울 수 있다', (await op('a', 'job.remove', { pid, id: ai.jobId })).ok && !(await stateOf('a', pid)).project.jobs.some((j) => j.id === ai.jobId));
 
     // ---------------- 격리 — 남의 프로젝트는 «없음»
     const sb = await stateOf('b', pid);

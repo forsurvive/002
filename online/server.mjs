@@ -5,7 +5,8 @@
 //   · 로그인(앱 자체 계정 · HttpOnly 쿠키). 로그인하지 않은 /api 는 401 { code: 'login' } — 화면이 /login 으로 보낸다.
 //   · 프로젝트 격리: pid 가 오는 모든 문은 «이 사람의 프로젝트인가»를 서버가 먼저 본다. 아니면 404(있는지도 흘리지 않는다).
 //   · 키는 화면으로 받지 않는다(auth.write 거절). 돈 나가는 길은 서버의 자격증명만 쓴다(docs/SECURITY.md).
-//   · AI 작업은 영속 작업 큐(Sprint 9)와 함께 연다 — 그 전까지 작업을 여는 문은 «준비 중»으로 답한다(기존 글은 건드리지 않는다).
+//   · AI 작업은 영속 작업 큐에 넣고(online/jobs.mjs) worker 가 돌린다(online/worker.mjs). 키는 서버의 자격증명만 쓴다.
+//     에이전트 준비(종류 판정 · 자리 짓기 · 자료 분석)는 아직 개인판에만 있다 — 그 문은 «준비 중»으로 답한다.
 // 실행: DATABASE_URL=… SE2_HOST=0.0.0.0 node online/server.mjs   (docs/REPLIT_DEPLOYMENT.md · 콘솔은 ASCII 만)
 
 import { createServer } from 'node:http';
@@ -20,7 +21,11 @@ import { createProjectStore } from './store.mjs';
 import * as auth from './auth.mjs';
 import { createOps } from '../tools/ops.mjs';
 import * as pick from '../tools/prompt-pick.mjs';
-import { materialsToDocs } from '../core/domain/model.mjs';
+import { materialsToDocs, findThread, threadAddMessage } from '../core/domain/model.mjs';
+import { createJobQueue } from './jobs.mjs';
+import { createWorker } from './worker.mjs';
+import { createOnlineCall } from './call.mjs';
+import { buildAi } from './ai.mjs';
 import { resolveHosting, hostOf, originOk, gateOk, GATE_REALM } from '../tools/hosting.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -31,7 +36,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ok = (extra = {}) => ({ ok: true, ...extra });
 const bad = (error, code) => ({ ok: false, error: String(error), ...(code ? { code } : {}) });
 const NOT_FOUND = '프로젝트를 찾을 수 없습니다';
-const AI_NOT_YET = '온라인판의 AI 작업은 준비 중입니다';
+const AGENTS_NOT_YET = '에이전트 준비는 온라인판에서 아직 준비 중입니다';
 
 // pid 없이 부르는 문 — 나머지는 모두 «이 사람의 프로젝트»여야 한다
 const NO_PID = new Set(['project.list', 'project.create', 'auth.read', 'auth.write']);
@@ -47,11 +52,16 @@ export function onlinePlan(env = process.env) {
   return plan;
 }
 
-// 온라인판에서 문 표에 넣는 것 — 저장은 PostgreSQL, 작업은 아직 없음, 과금 갈래는 화면에 없다.
-function depsFor(store, user) {
+// 온라인판에서 문 표에 넣는 것 — 저장은 PostgreSQL, 작업은 영속 큐(online/jobs.mjs), 과금 갈래는 화면에 없다.
+function depsFor(store, queue, worker, user) {
   const by = { userId: user.id };
   const state = {
-    get: (pid) => store.get(pid),
+    // 작업 줄은 jobs 표가 맡는다 — 덩어리에 싣지 않고 읽을 때 붙인다(화면은 개인판과 같은 p.jobs 를 본다)
+    async get(pid) {
+      const p = await store.get(pid);
+      if (p) p.jobs = await queue.list(pid);
+      return p;
+    },
     update: (pid, fn) => store.update(pid, fn, by),
     async create(fields) {
       const id = await store.create(fields, { ownerUserId: user.id });
@@ -62,17 +72,41 @@ function depsFor(store, user) {
     remove: (pid) => store.remove(pid),
     list: () => store.listFor(user.id),
   };
-  const notRunning = () => bad('도는 작업이 아닙니다');
   const jobs = {
-    start: () => bad(AI_NOT_YET),
-    pause: notRunning, resume: notRunning, remove: notRunning, answer: notRunning,
-    stopProject() {}, isTargetRunning: () => false, isKindRunning: () => false,
+    async start(pid, { kind, title = '작업', targetId = '', params = {} }) {
+      if (kind === 'agents') return bad(AGENTS_NOT_YET);
+      let p = { ...params };
+      if (kind === 'talk') {
+        // 작가의 말은 작업 «앞»에 저장한다 — 재시도 · 이어 하기에도 말이 한 번만 얹히고, 서버가 내려가도 말은 남는다
+        if (await queue.isTargetActive(pid, targetId)) return bad('이미 도는 중입니다');
+        let askedId = '';
+        await store.update(pid, (pr) => {
+          const t = findThread(pr, p.threadId);
+          if (!t) return;
+          if (p.text != null) { const m = threadAddMessage(pr, p.threadId, 'user', String(p.text)); askedId = m ? m.id : ''; }
+          else askedId = t.headId || '';   // 지난 말을 고쳐 돋은 가지 — 그 끝에 답한다
+        }, by);
+        if (!askedId) return bad('스레드를 찾을 수 없습니다');
+        p = { ...p, text: null, askedId };
+      }
+      const r = await queue.enqueue({ pid, requestedBy: user.id, kind, title, targetId, params: p });
+      if (!r.ok) return bad(r.error);
+      if (worker) worker.wake();
+      return ok({ jobId: r.jobId });
+    },
+    pause: (pid, id) => queue.pause(pid, id),
+    resume: async (pid, id) => { const r = await queue.resume(pid, id); if (r.ok && worker) worker.wake(); return r; },
+    remove: (pid, id) => queue.dismiss(pid, id),
+    answer: async (pid, id, choice) => { const r = await queue.answer(pid, id, choice); if (r.ok && worker) worker.wake(); return r; },
+    stopProject: (pid) => queue.cancelProject(pid),
+    isTargetRunning: (pid, id) => queue.isTargetActive(pid, id),
+    isKindRunning: (pid, kind) => queue.isKindActive(pid, kind),
   };
   // 키도 갈래도 내려 주지 않는다 — modes 가 비면 화면이 «무엇으로» 칸을 세우지 않는다
   const view = () => ({ mode: 'online', modes: [], hasKey: false });
   return {
     state, jobs, engine: pick, auth: { view, write: view }, limit: () => null,
-    prepared: () => true,           // 에이전트 준비는 AI 작업과 함께 연다
+    prepared: () => true,           // 에이전트 준비(종류 판정 · 자리 짓기 · 자료 분석)는 아직 개인판에만 있다
     startAgentPrep: async () => {},
   };
 }
@@ -80,9 +114,10 @@ function depsFor(store, user) {
 /**
  * pool 과 계획을 받아 서버를 짓는다(시험이 같은 것을 띄운다).
  *   trustProxy : 앞단 프록시가 붙인 X-Forwarded-For 의 마지막 값을 사람의 주소로 믿는가(플랫폼 뒤에서만 켠다)
+ *   queue · worker : 작업 큐와 (같은 프로세스의) worker — 작업을 넣으면 worker 를 깨운다. worker 가 없으면 넣기만 한다(따로 띄운 worker 가 집는다)
  *   denyFrames : 남의 페이지 안(iframe)에 싣지 못하게 한다 — 운영에서만 켠다(작업 공간의 미리보기 창이 iframe 이다, docs/SECURITY.md §6)
  */
-export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false } = {}) {
+export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null } = {}) {
   const store = createProjectStore(pool);
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
 
@@ -187,7 +222,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const op = String(body.op || '');
         if (!op) return json(res, 400, bad('op 없음'));
         if (op === 'auth.write') return json(res, 403, bad('온라인판에서는 키를 여기서 받지 않습니다'));
-        const { OPS } = createOps(depsFor(store, user));
+        const { OPS } = createOps(depsFor(store, queue, worker, user));
         const fn = OPS[op];
         if (!fn) return json(res, 404, bad('그런 문이 없습니다: ' + op));
         if (!NO_PID.has(op) && !(await owns(user, body.pid))) return json(res, 404, bad(NOT_FOUND));
@@ -200,7 +235,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       }
 
       if (req.method === 'GET' && url.pathname === '/api/state') {
-        const { stateOf } = createOps(depsFor(store, user));
+        const { stateOf } = createOps(depsFor(store, queue, worker, user));
         const projects = await store.listFor(user.id);
         const pid = url.searchParams.get('pid') || '';
         if (!pid) return json(res, 200, { ok: true, projects, me });
@@ -211,7 +246,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
 
       if (req.method === 'GET' && url.pathname === '/api/download') {
         const pid = url.searchParams.get('pid');
-        const { downloadOf } = createOps(depsFor(store, user));
+        const { downloadOf } = createOps(depsFor(store, queue, worker, user));
         const d = (await owns(user, pid)) ? await downloadOf(pid, url.searchParams.get('kind'), url.searchParams.get('id')) : null;
         if (!d) return send(res, 404, '없음', 'text/plain; charset=utf-8');
         return send(res, 200, d.text, 'text/markdown; charset=utf-8', {
@@ -243,12 +278,21 @@ if (process.argv[1] && process.argv[1].endsWith(join('online', 'server.mjs'))) {
     const r = await migrate(pool);
     if (r.applied.length) console.log('  Migrations   : applied ' + r.applied.join(', '));
   }
-  const srv = createOnlineServer({ pool, plan, trustProxy: process.env.SE_TRUST_PROXY === '1', denyFrames: process.env.NODE_ENV === 'production' });
+  // AI — 카탈로그 · 자격증명 · 어댑터. 모자란 것이 있어도 서버는 선다(작업이 «연결 필요»·«모델 없음»으로 멈춘다).
+  const ai = buildAi(pool, process.env);
+  for (const p of ai.problems) console.log('  [NOTE] ' + p);
+  const queue = createJobQueue(pool);
+  const store = createProjectStore(pool);
+  const call = createOnlineCall({ pool, store, generator: ai.generator, ...(ai.aliasTiers ? { aliasTiers: ai.aliasTiers } : {}) });
+  // 같은 프로세스에서 worker 를 함께 돌린다(파일럿 — VM 하나). SE_WORKER=0 이면 웹만(worker 를 따로 띄울 때)
+  const worker = process.env.SE_WORKER === '0' ? null : createWorker({ queue, store, call }, { log: (m) => console.log('  [worker] ' + m) });
+  if (worker) await worker.start();
+  const srv = createOnlineServer({ pool, plan, queue, worker, trustProxy: process.env.SE_TRUST_PROXY === '1', denyFrames: process.env.NODE_ENV === 'production' });
   srv.listen(plan.port, plan.host, () => {
     console.log('  Story Engine (online) : listening on ' + plan.host + ':' + plan.port);
     console.log('  Host names   : ' + plan.allowedHosts.join(', '));
     for (const n of plan.notes) console.log('  [NOTE] ' + n);
   });
-  const bye = () => { srv.close(); pool.end().finally(() => process.exit(0)); };
+  const bye = async () => { srv.close(); if (worker) await worker.stop(); pool.end().finally(() => process.exit(0)); };
   process.on('SIGINT', bye); process.on('SIGTERM', bye);
 }
