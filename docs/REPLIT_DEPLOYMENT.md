@@ -97,27 +97,24 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
    상태 검사는 첫 화면(`/`)을 두드린다 — 열쇠 없는 상태 검사에는 원고 없는 안내 페이지가 200 으로 답한다.
 6. `https://<이름>.replit.app` 을 열어 3~4 를 한 번 더.
 
-## 4-1. 온라인 서버를 작업 공간에서 띄워 보기(Sprint 6~8 — 계정 필요)
+## 4-1. 온라인판 띄우기 — 사람이 할 일은 셋(2026-10-04 간소화)
 
-코드는 준비되어 있다(`online/server.mjs`, 시험 `online/test.mjs`). 편집 · 판 · 참조 · 확정본 · 논의 · 휴지통에 더해 **AI 작업(에이전트 준비 · 갱신 · 논의 · 정리 · 합평)** 도 돈다 — 아래 7~8 을 마친 뒤에.
+[Run] 이 `online/start.mjs` 를 부른다. 그것이 스스로: 데이터베이스가 있으면 온라인판 · 없으면 개인판을 고르고,
+온라인판 의존성을 설치(npm ci)하고, 마이그레이션을 적용하고, AI 키를 봉할 마스터 키가 Secrets 에 없으면 `data/online-master.key` 를 만들어 쓴다.
+모델 표(`config/models.json` — Anthropic 세 tier)는 저장소에 들어 있다.
 
-1. 작업 공간 왼쪽 도구에서 **Database(PostgreSQL)** 를 만든다 → Secrets 에 `DATABASE_URL` 이 저절로 들어온다(값을 채팅이나 코드에 옮기지 않는다).
-2. Shell: `npm ci` (온라인판 의존성 `pg` 하나).
-3. Shell: `node online/admin.mjs create-user <아이디> --name <표시 이름>` → 비밀번호를 묻는다(화면에 찍히지 않음, 10자 이상).
-4. Shell: `SE2_HOST=0.0.0.0 SE_TRUST_PROXY=1 node online/server.mjs` → 콘솔에 `Story Engine (online) : listening on 0.0.0.0:…`.
-   처음 띄울 때 마이그레이션이 앞으로만 적용된다(`SE_MIGRATE_ON_BOOT=0` 이면 건너뜀).
-5. 미리보기의 새 탭에서 `/login` → 3 의 계정으로 들어가 프로젝트 만들기 · 문서 · 판 복원 · 참조 · 확정본 · 휴지통을 해 본다.
-   두 번째 계정을 만들어 첫 계정의 프로젝트가 보이지 않는지도 본다.
-7. **AI 를 쓰려면**(실제 비밀값 — 사람이 넣는다):
-   - Secrets 에 `CREDENTIALS_KEY_V1` = 32바이트 무작위 값의 base64(Shell: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` 의 출력을 **Secrets 에만** 붙여 넣는다. 잃으면 저장한 키를 열 수 없다 — 비밀번호 관리자에도 보관).
-   - `config/models.example.json` 을 `config/models.json` 으로 복사하고 `modelId` 칸을 각 회사 공식 모델 문서의 id 로 채운다(모르면 비워 두고 알려 주면 확인해 채운다).
-   - 서버를 다시 띄운다(콘솔의 `[NOTE]` 두 줄이 사라지면 된 것).
-8. 계정에 AI 키 넣기: Shell 에서 `node online/admin.mjs set-key <아이디> anthropic` → 키를 붙여 넣는다(화면에 찍히지 않음, 봉해서만 저장, 다시 보여 주지 않음). **키를 채팅에 붙여 넣지 않는다.**
-   문서에서 [갱신] → 작업 줄이 «대기 중» → 쓰는 중 → 완료, 본문이 새 판으로.
-6. (선택) 개인판 작품 옮기기: 개인판 폴더의 `data/projects/p_….json` 을 작업 공간에 올리고
-   `node online/import.mjs <파일> --owner <아이디>` → 수량과 `check … : OK` 줄이 나온다(`MISMATCH` 가 있으면 멈추고 알린다). 원본 파일은 건드리지 않는다.
+1. **최신 코드 받기** — Shell 에 한 줄 붙여 넣기(Replit Agent 가 바꿔 둔 것은 지우지 않고 한쪽에 치워 둔다):
+   ```
+   git fetch origin claude/charming-keller-12p0c5 && git stash -u ; git checkout -B claude/charming-keller-12p0c5 origin/claude/charming-keller-12p0c5
+   ```
+2. **데이터베이스 만들기** — 작업 공간 도구 목록의 Database 에서 PostgreSQL 을 만든다(Secrets 에 `DATABASE_URL` 이 저절로 들어온다).
+3. **[Run] → 미리보기를 새 탭으로** → (출입 열쇠 창이 뜨면 `SE2_ACCESS_KEY` 값) → **처음 설정 화면**에서 아이디 · 이름 · 비밀번호 · Anthropic API 키를 넣는다.
+   계정이 하나도 없을 때 한 번만 나오는 화면이고, 출입 열쇠를 지나온 요청만 받는다. 키는 서버에서 봉해 저장되고 다시 보이지 않는다.
 
-`.replit` 의 Run 은 아직 개인판(호스팅 꼴)이다 — 게시를 온라인 서버로 바꾸는 것은 AI 작업(Sprint 9)과 production DB 를 갖춘 뒤에 한다.
+그 뒤: 프로젝트를 만들면 «에이전트 준비»가 돌고, 문서의 [갱신] · 논의가 실제 AI 로 돈다.
+**게시(배포)할 때만** `data/online-master.key` 의 값을 Secrets 의 `CREDENTIALS_KEY_V1` 으로 옮긴다(다시 게시하면 파일이 사라질 수 있다 — 콘솔 `[NOTE]` 가 알려 준다).
+
+손으로 하는 길(선택): 계정 추가 `node online/admin.mjs create-user <아이디>` · 키 바꾸기 `node online/admin.mjs set-key <아이디> anthropic` · 개인판 작품 옮기기 `node online/import.mjs <파일> --owner <아이디>`.
 
 ## 5. PostgreSQL (Phase 3 계획)
 

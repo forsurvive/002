@@ -30,13 +30,51 @@ async function enter(e) {
   say.textContent = out.error || '들어가지 못했습니다';
 }
 
-document.getElementById('root').appendChild(
-  h('div', { class: 'body', style: 'max-width:380px;margin:0 auto;padding-top:14vh' },
-    h('div', { class: 'top-name', style: 'font-size:30px;margin-bottom:24px', text: '스토리 엔진' }),
-    h('form', { onsubmit: enter },
-      h('div', { class: 'lab', text: '아이디' }),
-      h('input', { id: 'lg-id', type: 'text', autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
-      h('div', { class: 'lab', style: 'margin-top:14px', text: '비밀번호' }),
-      h('input', { id: 'lg-pw', type: 'password', autocomplete: 'current-password' }),
-      h('div', { id: 'say', class: 'notice', style: 'min-height:22px;margin:10px 0' }),
-      h('button', { class: 'btn-red', type: 'submit', text: '들어가기' }))));
+// 처음 설정 — 계정이 하나도 없을 때만 서버가 needed 를 준다. 운영자 계정과 (있으면) AI 키를 한 번에.
+// 키는 서버가 봉해 저장하고 다시 돌려주지 않는다 — 이 화면도 보낸 뒤 칸을 비운다.
+async function setup(e) {
+  e.preventDefault();
+  const say = document.getElementById('say');
+  const v = (id) => document.getElementById(id).value;
+  say.textContent = '';
+  if (v('st-pw') !== v('st-pw2')) { say.textContent = '비밀번호가 서로 다릅니다'; return; }
+  const r = await fetch('/api/setup', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ loginId: v('st-id'), password: v('st-pw'), displayName: v('st-name'), apiKey: v('st-key') }),
+  }).catch(() => null);
+  document.getElementById('st-key').value = '';
+  const out = r ? await r.json().catch(() => ({ ok: false })) : { ok: false, error: '연결되지 않습니다' };
+  if (out.ok) { if (out.note) alert(out.note); location.href = '/'; return; }
+  say.textContent = out.error || '설정하지 못했습니다';
+}
+
+const field = (label, id, type, extra = {}) => [
+  h('div', { class: 'lab', style: 'margin-top:14px', text: label }),
+  h('input', { id, type, ...extra }),
+];
+
+const loginForm = () => h('form', { onsubmit: enter },
+  h('div', { class: 'lab', text: '아이디' }),
+  h('input', { id: 'lg-id', type: 'text', autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
+  h('div', { class: 'lab', style: 'margin-top:14px', text: '비밀번호' }),
+  h('input', { id: 'lg-pw', type: 'password', autocomplete: 'current-password' }),
+  h('div', { id: 'say', class: 'notice', style: 'min-height:22px;margin:10px 0' }),
+  h('button', { class: 'btn-red', type: 'submit', text: '들어가기' }));
+
+const setupForm = (ai) => h('form', { onsubmit: setup },
+  h('div', { class: 'when', text: '처음 설정 — 쓸 계정을 만듭니다. 이 화면은 한 번만 나옵니다.' }),
+  field('아이디(영문 소문자 · 숫자)', 'st-id', 'text', { autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
+  field('이름', 'st-name', 'text'),
+  field('비밀번호(10자 이상)', 'st-pw', 'password', { autocomplete: 'new-password' }),
+  field('비밀번호 한 번 더', 'st-pw2', 'password', { autocomplete: 'new-password' }),
+  ai ? field('Anthropic API 키(나중에 넣어도 됩니다)', 'st-key', 'password', { autocomplete: 'off', spellcheck: 'false' }) : h('input', { id: 'st-key', type: 'hidden' }),
+  h('div', { id: 'say', class: 'notice', style: 'min-height:22px;margin:10px 0' }),
+  h('button', { class: 'btn-red', type: 'submit', text: '만들고 들어가기' }));
+
+(async () => {
+  const st = await fetch('/api/setup').then((r) => r.json()).catch(() => ({}));
+  document.getElementById('root').appendChild(
+    h('div', { class: 'body', style: 'max-width:380px;margin:0 auto;padding-top:14vh' },
+      h('div', { class: 'top-name', style: 'font-size:30px;margin-bottom:24px', text: '스토리 엔진' }),
+      st.needed ? setupForm(st.ai) : loginForm()));
+})();

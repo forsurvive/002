@@ -118,9 +118,10 @@ function depsFor(store, queue, worker, user) {
  * pool 과 계획을 받아 서버를 짓는다(시험이 같은 것을 띄운다).
  *   trustProxy : 앞단 프록시가 붙인 X-Forwarded-For 의 마지막 값을 사람의 주소로 믿는가(플랫폼 뒤에서만 켠다)
  *   queue · worker : 작업 큐와 (같은 프로세스의) worker — 작업을 넣으면 worker 를 깨운다. worker 가 없으면 넣기만 한다(따로 띄운 worker 가 집는다)
+ *   credentials : 자격증명 서비스(ai/credentials.mjs) — 처음 설정에서 AI 키를 봉해 넣을 때 쓴다
  *   denyFrames : 남의 페이지 안(iframe)에 싣지 못하게 한다 — 운영에서만 켠다(작업 공간의 미리보기 창이 iframe 이다, docs/SECURITY.md §6)
  */
-export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null } = {}) {
+export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null } = {}) {
   const store = createProjectStore(pool);
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
 
@@ -210,6 +211,30 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         if (!r.ok) return json(res, r.code === 'rate_limited' ? 429 : 401, bad(r.error, r.code));
         return json(res, 200, ok(), { 'set-cookie': auth.sessionCookie(r.token, { secure }) });
       }
+      // ---------------- 처음 설정 — 계정이 하나도 없을 때 한 번만. 운영자 계정(+ 그 계정의 AI 키)을 화면에서 만든다.
+      // 출입 열쇠(SE2_ACCESS_KEY)를 지나온 요청이거나 이 컴퓨터 안(루프백)에서 온 요청만 받는다 — 낯선 사람이 먼저 차지하지 못하게.
+      if (url.pathname === '/api/setup') {
+        const empty = (await pool.query('SELECT count(*)::int AS n FROM users')).rows[0].n === 0;
+        // 바깥에 열었으면(플랫폼 앞단을 거치면 소켓 주소가 루프백일 수 있다) 출입 열쇠만 믿는다
+        const trusted = !!plan.gate || (!plan.exposed && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || ''));
+        if (req.method === 'GET') return json(res, 200, ok({ needed: empty && trusted, ai: !!credentials }));
+        if (req.method !== 'POST') return json(res, 405, bad('POST 만 받습니다'));
+        if (!empty) return json(res, 409, bad('이미 설정을 마쳤습니다 — 로그인해 주세요'));
+        if (!trusted) return json(res, 403, bad('출입 열쇠(SE2_ACCESS_KEY)를 정한 뒤에 설정할 수 있습니다'));
+        const made = await auth.createUser(pool, { loginId: body.loginId, password: body.password, displayName: body.displayName || '', isPlatformAdmin: true });
+        if (!made.ok) return json(res, made.code === 'conflict' ? 409 : 422, bad(made.error, made.code));
+        await auth.audit(pool, { actor: made.user.id, action: 'setup.first_admin', targetType: 'user', targetId: made.user.id, ip: ipOf(req) });
+        let keyNote = '';
+        const apiKey = String(body.apiKey || '').trim();
+        if (apiKey && credentials) {
+          const k = await credentials.set({ ownerType: 'user', ownerId: made.user.id, provider: 'anthropic', apiKey, createdBy: made.user.id });
+          if (k.ok) await auth.audit(pool, { actor: made.user.id, action: 'credential.set', targetType: 'user', targetId: made.user.id, details: { provider: 'anthropic', ownerType: 'user', credentialId: k.credential.id } });
+          else keyNote = 'AI 키를 저장하지 못했습니다 — 나중에 다시 넣어 주세요';
+        }
+        const r = await auth.login(pool, { loginId: body.loginId, password: body.password, ip: ipOf(req), userAgent: req.headers['user-agent'] || '' });
+        return json(res, 200, ok({ note: keyNote }), r.ok ? { 'set-cookie': auth.sessionCookie(r.token, { secure }) } : {});
+      }
+
       const token = auth.readCookie(req);
       if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
         await auth.logout(pool, token);
@@ -289,30 +314,40 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
 }
 
 // 직접 띄울 때 — 마이그레이션을 앞으로만 적용하고(SE_MIGRATE_ON_BOOT=0 이면 건너뜀) 연다.
-if (process.argv[1] && process.argv[1].endsWith(join('online', 'server.mjs'))) {
-  const plan = onlinePlan(process.env);
-  if (plan.problems.length) { for (const p of plan.problems) console.log('  [STOP] ' + p); process.exit(1); }
-  if (!process.env.DATABASE_URL) { console.log('  [STOP] DATABASE_URL is not set (put it in the platform secrets)'); process.exit(1); }
-  const pool = createPool(process.env.DATABASE_URL);
-  if (process.env.SE_MIGRATE_ON_BOOT !== '0') {
+/**
+ * 띄우기 — 마이그레이션을 앞으로만 적용하고(SE_MIGRATE_ON_BOOT=0 이면 건너뜀) AI 배선 · worker · 웹을 연다.
+ * online/start.mjs(Replit 의 Run)와 직접 실행이 함께 쓴다. 돌려주는 값: 서버(닫기용) — 서지 못하면 null.
+ */
+export async function main(env = process.env) {
+  const plan = onlinePlan(env);
+  if (plan.problems.length) { for (const p of plan.problems) console.log('  [STOP] ' + p); return null; }
+  if (!env.DATABASE_URL) { console.log('  [STOP] DATABASE_URL is not set (create the database in the platform)'); return null; }
+  const pool = createPool(env.DATABASE_URL);
+  if (env.SE_MIGRATE_ON_BOOT !== '0') {
     const r = await migrate(pool);
     if (r.applied.length) console.log('  Migrations   : applied ' + r.applied.join(', '));
   }
   // AI — 카탈로그 · 자격증명 · 어댑터. 모자란 것이 있어도 서버는 선다(작업이 «연결 필요»·«모델 없음»으로 멈춘다).
-  const ai = buildAi(pool, process.env);
+  const ai = buildAi(pool, env);
   for (const p of ai.problems) console.log('  [NOTE] ' + p);
   const queue = createJobQueue(pool);
   const store = createProjectStore(pool);
   const call = createOnlineCall({ pool, store, generator: ai.generator, ...(ai.aliasTiers ? { aliasTiers: ai.aliasTiers } : {}) });
   // 같은 프로세스에서 worker 를 함께 돌린다(파일럿 — VM 하나). SE_WORKER=0 이면 웹만(worker 를 따로 띄울 때)
-  const worker = process.env.SE_WORKER === '0' ? null : createWorker({ queue, store, call }, { log: (m) => console.log('  [worker] ' + m) });
+  const worker = env.SE_WORKER === '0' ? null : createWorker({ queue, store, call }, { log: (m) => console.log('  [worker] ' + m) });
   if (worker) await worker.start();
-  const srv = createOnlineServer({ pool, plan, queue, worker, trustProxy: process.env.SE_TRUST_PROXY === '1', denyFrames: process.env.NODE_ENV === 'production' });
-  srv.listen(plan.port, plan.host, () => {
-    console.log('  Story Engine (online) : listening on ' + plan.host + ':' + plan.port);
-    console.log('  Host names   : ' + plan.allowedHosts.join(', '));
-    for (const n of plan.notes) console.log('  [NOTE] ' + n);
-  });
+  const srv = createOnlineServer({ pool, plan, queue, worker, credentials: ai.credentials, trustProxy: env.SE_TRUST_PROXY === '1', denyFrames: env.NODE_ENV === 'production' });
+  await new Promise((resolve) => srv.listen(plan.port, plan.host, resolve));
+  console.log('  Story Engine (online) : listening on ' + plan.host + ':' + plan.port);
+  console.log('  Host names   : ' + plan.allowedHosts.join(', '));
+  for (const n of plan.notes) console.log('  [NOTE] ' + n);
+  const users = (await pool.query('SELECT count(*)::int AS n FROM users')).rows[0].n;
+  if (!users) console.log('  [NOTE] No account yet - open the app in a browser to finish the first-run setup');
   const bye = async () => { srv.close(); if (worker) await worker.stop(); pool.end().finally(() => process.exit(0)); };
   process.on('SIGINT', bye); process.on('SIGTERM', bye);
+  return srv;
+}
+
+if (process.argv[1] && process.argv[1].endsWith(join('online', 'server.mjs'))) {
+  if (!(await main(process.env))) process.exit(1);
 }

@@ -1,0 +1,13 @@
+{
+  "_note": "운영 카탈로그. 화면은 High Reasoning / Balanced / Fast 만 보이고, 실제 model id 와 가격(백만 토큰당 USD)은 여기에만 둔다. 2026-10-04 Anthropic 공식 표(현재 모델) 기준. 모델이 바뀌면 이 파일만 고친다. OpenAI · Gemini 는 확인 뒤 더한다(config/models.example.json 꼴).",
+  "aliases": { "opus": "high_reasoning", "sonnet": "balanced", "fable": "high_reasoning" },
+  "_aliases_note": "개인판 모델 별칭 → 온라인 tier. fable(개인판의 최상위 별칭)도 우선 high_reasoning 으로 — 더 비싼 최상위 모델을 따로 둘지는 운영 결정.",
+  "models": [
+    { "provider": "anthropic", "tier": "high_reasoning", "modelId": "claude-opus-5-5", "displayName": "Claude Opus 5.5", "maxOutputTokens": 32000,
+      "price": { "inputPerMTok": 4, "outputPerMTok": 20, "cacheReadPerMTok": 0.2, "cacheWritePerMTok": 5 } },
+    { "provider": "anthropic", "tier": "balanced", "modelId": "claude-sonnet-5-5", "displayName": "Claude Sonnet 5.5", "maxOutputTokens": 32000,
+      "price": { "inputPerMTok": 2, "outputPerMTok": 10, "cacheReadPerMTok": 0.2, "cacheWritePerMTok": 2.5 } },
+    { "provider": "anthropic", "tier": "fast", "modelId": "claude-haiku-4-5", "displayName": "Claude Haiku 4.5", "maxOutputTokens": 16000,
+      "price": { "inputPerMTok": 1, "outputPerMTok": 5, "cacheReadPerMTok": 0.1, "cacheWritePerMTok": 1.25 } }
+  ]
+}

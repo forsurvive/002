@@ -21,7 +21,7 @@
 | 단계 | 상태 |
 |---|---|
 | Sprint 0 — 분석 · 기준선 | 완료: 원본 이력 37커밋 보존, 시험 676/0, 이 문서들, 루트 `CLAUDE.md` |
-| Sprint 1 — Replit 에서 지금 판 실행 | 코드 준비 완료(`tools/hosting.mjs`, `.replit`, 시험 725/0). **Replit 가져오기·게시는 사용자 계정 필요** |
+| Sprint 1 — Replit 에서 지금 판 실행 | 완료. [Run] 은 `online/start.mjs` — 데이터베이스가 있으면 온라인판, 없으면 개인판. 처음 설정 화면 · 자동 npm ci · 마스터 키 파일 대체 · 모델 표(`config/models.json`) 포함(REPLIT_DEPLOYMENT §4-1 — 사람이 할 일 셋) |
 | Sprint 2 — Core 분리 | 완료(에이전트 준비는 Provider 단계에서): ① `model`·`assemble`·id 를 `core/` 로 옮김 · ② `planCall()` 추출(프롬프트 옮기기 전후 동일 확인) · ③ 생성 실행을 `core/generation` 으로(저장·호출을 넣어 받음, 시험 750/0) · ④ 작업 = 종류 + 매개변수(`core/generation/kinds.mjs`, 시험 760/0) |
 | Sprint 3~5 · 11 일부 — AI Provider · 카탈로그 · credential | 코드 완료: 계약(`ai/provider.mjs`) · CLI 어댑터(`ai/local-cli.mjs`) · 모든 호출이 `engine.callModel` 한 자리를 지남 · Anthropic · OpenAI · Gemini 어댑터(`ai/anthropic.mjs` · `ai/openai.mjs` · `ai/gemini.mjs`, 공식 명세 확인 후 가짜 API 로 시험, 시험 813/0) · 모델 카탈로그(`ai/catalog.mjs` + `config/models.example.json`) · 자격증명 봉인/해석(`ai/credentials.mjs`) · Provider 라우터(`ai/router.mjs`, 시험 837/0) → 남은 것: 실제 키 연기 시험 · 앱 연결(온라인 서버 · DB 와 함께) |
 | Sprint 6~8 — PostgreSQL · 인증 · 개인 프로젝트 온라인 저장 | 진행 중: 첫 스키마(`migrations/001_initial_schema.sql`) · 마이그레이션 실행기 · 앱 계정/세션(`online/auth.mjs`) · 실제 PostgreSQL 시험(`online/test.mjs`, CI 에도) · 프로젝트 저장소(`online/store.mjs` + `migrations/002_aggregate_ids_trash.sql` — 표에서 Core 덩어리를 짓고 바뀐 행만 한 트랜잭션으로 씀, Core 연산 왕복 시험 105/0) · 온라인 서버(`online/server.mjs` — 로그인 · 프로젝트 소유 검사 404 · 개인판과 한 벌의 문 표 `tools/ops.mjs` · 로그인 화면 · 운영자 계정 발급 `online/admin.mjs`, 온라인 시험 158/0, 브라우저 확인) · 개인판 JSON 가져오기(`online/import.mjs` — 다시 지어 견준 보고서 · 끊긴 참조 걸러 내기 · 못 옮기는 꼴이면 아무것도 쓰지 않음, 온라인 시험 174/0) → 다음: Sprint 9 |
