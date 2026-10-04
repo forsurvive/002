@@ -2083,6 +2083,70 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   engP.useGenerator(null);
   ok('꽂은 Provider 로 부른다', viaP.ok && viaP.text === '가짜 답' && seenP.join(',') === 'F-UPDATE@sonnet' && viaP.usage.inputTokens === 3, JSON.stringify(viaP).slice(0, 160));
   ok('비우면 CLI 로 돌아온다', (await engP.callOnce({ pid: pj, code: 'F-UPDATE', request: '써 다오' })).text.startsWith('(모의)'));
+
+  // ── Anthropic 어댑터 — 망 · 키 없이, 이 프로세스가 띄운 가짜 Messages API 로 시험한다
+  const { createAnthropicProvider, reasonOf } = await import('../ai/anthropic.mjs');
+  const FAKE_KEY = 'sk-ant-test-' + 'x'.repeat(24);
+  let mode = 'ok'; let lastReq = null;
+  const sse = (evs) => evs.map((e) => 'event: ' + e.type + '\ndata: ' + JSON.stringify(e) + '\n\n').join('');
+  const okStream = (stop = 'end_turn') => sse([
+    { type: 'message_start', message: { id: 'msg_1', usage: { input_tokens: 120, output_tokens: 1, cache_read_input_tokens: 100, cache_creation_input_tokens: 0 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '첫 ' } },
+    { type: 'ping' },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '문단' } },
+    { type: 'message_delta', delta: { stop_reason: stop }, usage: { output_tokens: 42 } },
+    { type: 'message_stop' },
+  ]);
+  const fakeApi = createServer((req, res) => {
+    let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; });
+    req.on('end', () => {
+      lastReq = { path: req.url, headers: req.headers, body: JSON.parse(b || '{}') };
+      const err = (status, type, message, extra = {}) => { res.writeHead(status, { 'content-type': 'application/json', 'request-id': 'req_err', ...extra }); res.end(JSON.stringify({ type: 'error', error: { type, message } })); };
+      if (mode === 'ok') { res.writeHead(200, { 'content-type': 'text/event-stream', 'request-id': 'req_123' }); res.end(okStream()); }
+      else if (mode === 'length') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(okStream('max_tokens')); }
+      else if (mode === 'refusal') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(okStream('refusal')); }
+      else if (mode === 'midError') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(sse([{ type: 'message_start', message: { id: 'm', usage: {} } }, { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }])); }
+      else if (mode === 'auth') err(401, 'authentication_error', 'invalid x-api-key ' + FAKE_KEY);
+      else if (mode === 'rate') err(429, 'rate_limit_error', 'slow down', { 'retry-after': '7' });
+      else if (mode === 'over') err(529, 'overloaded_error', 'Overloaded');
+      else if (mode === 'credit') err(400, 'invalid_request_error', 'Your credit balance is too low to access the Anthropic API.');
+      else if (mode === 'model') err(404, 'not_found_error', 'model: nope');
+      else if (mode === 'slow') { setTimeout(() => { try { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(okStream()); } catch {} }, 3000); }
+      else if (mode === 'cut') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write(sse([{ type: 'message_start', message: { id: 'm', usage: {} } }])); res.destroy(); }
+    });
+  });
+  await new Promise((r) => fakeApi.listen(0, '127.0.0.1', r));
+  const anth = createAnthropicProvider({ baseUrl: 'http://127.0.0.1:' + fakeApi.address().port });
+  const ask = (extra = {}) => anth.generate({ model: 'claude-test-model', systemPrompt: '■ 작법\n체계', userPrompt: '■ 이번에 할 일\n써라', credential: { apiKey: FAKE_KEY }, ...extra });
+  ok('Anthropic 어댑터는 계약을 지킨다', prov.isProvider(anth) && anth.id === 'anthropic');
+  let ar = await ask({ maxOutputTokens: 900 });
+  ok('스트리밍 글을 모아 돌려준다', ar.ok && ar.text === '첫 문단' && ar.finishReason === 'stop', JSON.stringify(ar).slice(0, 200));
+  ok('usage · 요청 id 를 남긴다', ar.usage.inputTokens === 120 && ar.usage.outputTokens === 42 && ar.usage.cacheReadTokens === 100 && ar.providerRequestId === 'req_123');
+  ok('요청 모양 — 끝점 · 키 헤더 · 버전 · 모델 · 출력 상한 · 스트림', lastReq.path === '/v1/messages' && lastReq.headers['x-api-key'] === FAKE_KEY
+    && lastReq.headers['anthropic-version'] === '2023-06-01' && lastReq.body.model === 'claude-test-model' && lastReq.body.max_tokens === 900 && lastReq.body.stream === true);
+  ok('시스템 프롬프트에 캐시 지점을 둔다', lastReq.body.system[0].cache_control.type === 'ephemeral' && lastReq.body.system[0].text.includes('체계')
+    && lastReq.body.messages[0].role === 'user' && lastReq.body.messages[0].content.includes('써라'));
+  mode = 'length'; ar = await ask();
+  ok('출력 상한에 닿으면 성공이되 잘림을 남긴다', ar.ok && ar.finishReason === 'length');
+  mode = 'refusal'; eq('거절은 safety', (await ask()).reason, 'safety');
+  mode = 'midError'; eq('스트림 중간 오류도 갈래로', (await ask()).reason, 'overloaded');
+  mode = 'auth'; ar = await ask();
+  ok('**키가 틀리면 auth — 오류 문구 · 결과에 키가 없다**', ar.reason === 'auth' && !JSON.stringify(ar).includes(FAKE_KEY));
+  mode = 'rate'; ar = await ask();
+  ok('밀리면 rate + 기다릴 시간', ar.reason === 'rate' && ar.retryAfterMs === 7000);
+  mode = 'over'; eq('과부하는 overloaded', (await ask()).reason, 'overloaded');
+  mode = 'credit'; eq('잔액 부족은 credit', (await ask()).reason, 'credit');
+  mode = 'model'; eq('없는 모델은 model', (await ask()).reason, 'model');
+  mode = 'cut'; eq('연결이 끊기면 other — throw 하지 않는다', (await ask()).reason, 'other');
+  mode = 'slow'; eq('시간을 넘기면 timeout', (await ask({ timeoutMs: 1000 })).reason, 'timeout');
+  const stopper = new AbortController(); setTimeout(() => stopper.abort(), 100);
+  eq('사람이 세우면 stopped', (await ask({ signal: stopper.signal })).reason, 'stopped');
+  eq('키가 없으면 부르지 않는다', (await anth.generate({ model: 'm', userPrompt: 'x' })).reason, 'auth');
+  eq('빈 프롬프트는 부르지 않는다', (await ask({ userPrompt: '  ' })).reason, 'empty');
+  ok('갈래 표', reasonOf(403) === 'auth' && reasonOf(413) === 'invalid' && reasonOf(503) === 'overloaded' && reasonOf(402) === 'credit');
+  fakeApi.closeAllConnections && fakeApi.closeAllConnections();
+  fakeApi.close();
 }
 
 // ---------------------------------------------------------------- 호스팅 실행 — 포트 · 주소 · 허용 호스트 · 출입 열쇠

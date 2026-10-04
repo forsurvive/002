@@ -1,6 +1,6 @@
 # AI Provider 추상화 설계
 
-> 상태: **설계 초안 v1 (2026-10-04)**. 구현은 Phase 2(Sprint 3~5).
+> 상태: **설계 v1 (2026-10-04)**. 구현 진행: 계약 `ai/provider.mjs` · CLI 어댑터 `ai/local-cli.mjs` · Anthropic `ai/anthropic.mjs`(가짜 API 시험만 — 실제 키 연기 시험 전) · OpenAI/Gemini 는 다음.
 > 각 Provider 의 요청/응답 모양은 설계용 요약이다. **어댑터를 쓰는 시점에 공식 최신 문서로 다시 확인한다**(명세 부록 AD) —
 > 모델 id·가격·폐기 일정은 바뀐다. 그래서 이 문서와 코드에는 실제 model id 를 박지 않고 **설정 데이터**로 둔다.
 

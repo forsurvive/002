@@ -23,4 +23,4 @@
 | Sprint 0 — 분석 · 기준선 | 완료: 원본 이력 37커밋 보존, 시험 676/0, 이 문서들, 루트 `CLAUDE.md` |
 | Sprint 1 — Replit 에서 지금 판 실행 | 코드 준비 완료(`tools/hosting.mjs`, `.replit`, 시험 725/0). **Replit 가져오기·게시는 사용자 계정 필요** |
 | Sprint 2 — Core 분리 | 완료(에이전트 준비는 Provider 단계에서): ① `model`·`assemble`·id 를 `core/` 로 옮김 · ② `planCall()` 추출(프롬프트 옮기기 전후 동일 확인) · ③ 생성 실행을 `core/generation` 으로(저장·호출을 넣어 받음, 시험 750/0) · ④ 작업 = 종류 + 매개변수(`core/generation/kinds.mjs`, 시험 760/0) |
-| Sprint 3 — AI Provider 계약 · CLI 어댑터 | 진행 중: 계약(`ai/provider.mjs`) · CLI 어댑터(`ai/local-cli.mjs`) · 모든 호출이 `engine.callModel` 한 자리를 지남(시험 769/0) → 다음: Anthropic 어댑터 |
+| Sprint 3 — AI Provider 계약 · CLI 어댑터 | 진행 중: 계약(`ai/provider.mjs`) · CLI 어댑터(`ai/local-cli.mjs`) · 모든 호출이 `engine.callModel` 한 자리를 지남 · Anthropic 어댑터(`ai/anthropic.mjs`, 가짜 API 로 시험, 시험 788/0) → 다음: OpenAI · Gemini 어댑터, 실제 키로 연기 시험 |
