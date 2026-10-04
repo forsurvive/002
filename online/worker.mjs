@@ -8,9 +8,13 @@
 
 import { randomBytes } from 'node:crypto';
 import { runKind } from '../core/generation/kinds.mjs';
+import { prepareThenStudy } from '../core/generation/agents.mjs';
+import { BUILTIN, AGENT_SLOTS, SLOT_DUTY } from '../tools/prompts.mjs';
+import { promptFor, slotModel } from '../tools/prompt-pick.mjs';
 import { retryPlan, LEASE_MS } from './jobs.mjs';
 
-const PARK = Symbol('park');   // 다음 호출 앞에서 내려놓으라는 신호
+const PARK = Symbol('park');
+const PROMPTS = { builtin: BUILTIN, slots: AGENT_SLOTS, duty: SLOT_DUTY, promptFor, slotModel };   // 다음 호출 앞에서 내려놓으라는 신호
 
 // 사람에게 보일 실패 문구 — 어댑터 · Core 의 문구는 이미 사람 말이다. 갈래만 있고 문구가 없으면 이것으로.
 const SAY = {
@@ -52,7 +56,8 @@ export function createWorker({ queue, store, call, prepare = null }, {
     const deps = {
       store: jobStore,
       call: (args, ctx) => call(args, ctx),
-      prepare: prepare || (async () => ({ ok: false, error: '에이전트 준비는 온라인판에서 아직 준비 중입니다', reason: 'invalid' })),
+      // 에이전트 준비 · 자료 분석 — Core 의 본체에 온라인 저장 · 부르기(call.raw 는 판정 · 짓기용)를 넣는다
+      prepare: prepare || ((pid, c, request) => prepareThenStudy({ store: jobStore, call, raw: call.raw, prompts: PROMPTS }, pid, c, request)),
     };
     const ctx = {
       pid: row.project_id, jobId: row.id, userId, threadId: params.threadId || '', signal: controller.signal,

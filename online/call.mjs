@@ -21,39 +21,32 @@ export const DEFAULT_ALIAS_TIERS = { opus: 'high_reasoning', sonnet: 'balanced' 
  * 돌려주는 call(args, ctx) 는 Core(run.mjs)가 부르는 모양 그대로: { ok, text, error, reason, retryAfterMs, runId }
  */
 export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_ALIAS_TIERS, policyOf = () => ({}) }) {
-  return async function call(args, ctx = {}) {
-    if (!haveBrain()) return { ok: false, error: '내장 프롬프트를 읽지 못했습니다', reason: 'prompts' };
-    const { pid, code } = args;
-    const project = await store.get(pid);
-    if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다', reason: 'other' };
-    const row = (await pool.query('SELECT owner_user_id, organization_id FROM projects WHERE id = $1', [pid])).rows[0];
-    const plan = planCall(project, args, { pr: promptFor(project, code), slotModel: slotModel(project, code) });
+  const ids = async (pid, table, legacy) => (legacy
+    ? ((await pool.query(`SELECT id${table === 'documents' ? ', current_version_id' : ''} FROM ${table} WHERE project_id = $1 AND legacy_id = $2`, [pid, legacy])).rows[0] || null)
+    : null);
 
-    // 생성 기록 — 부르기 전에 남긴다(무엇을 보고 만들려 했나는 실패해도 남는다)
-    const jobId = ctx.jobId || null;
-    const target = (args.targetIds || [])[0] || '';
-    const ids = async (table, legacy) => (legacy
-      ? ((await pool.query(`SELECT id${table === 'documents' ? ', current_version_id' : ''} FROM ${table} WHERE project_id = $1 AND legacy_id = $2`, [pid, legacy])).rows[0] || null)
-      : null);
-    const tdoc = await ids('documents', target);
-    const thread = ctx.threadId ? await ids('threads', ctx.threadId) : null;
+  // 공통 — 기록을 남기고 · 라우터로 부르고 · 결과를 적는다
+  async function send(pid, project, { systemPrompt, userPrompt, alias, modelSource = '', code, inputs = [], request = '', target = '', signal = null }, ctx) {
+    const row = (await pool.query('SELECT owner_user_id, organization_id FROM projects WHERE id = $1', [pid])).rows[0];
+    const tdoc = await ids(pid, 'documents', target);
+    const thread = ctx.threadId ? await ids(pid, 'threads', ctx.threadId) : null;
     const run = (await pool.query(
       `INSERT INTO generation_runs (job_id, project_id, organization_id, requested_by, purpose, prompt_key, prompt_layer, target_document_id, thread_id, request_text, model_source)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-      [jobId, pid, row.organization_id, ctx.userId || null, String(code || ''), String(code || ''),
+      [ctx.jobId || null, pid, row.organization_id, ctx.userId || null, String(code || ''), String(code || ''),
         project.prompts && project.prompts[code] ? 'override' : project.agents && project.agents[code] ? 'generated' : 'builtin',
-        tdoc ? tdoc.id : null, thread ? thread.id : null, String(args.request || ''), String(plan.modelSource || '')])).rows[0].id;
-    for (const [i, x] of plan.inputs.entries()) {
-      const d = x.id ? await ids('documents', x.id) : null;
+        tdoc ? tdoc.id : null, thread ? thread.id : null, String(request || ''), String(modelSource || '')])).rows[0].id;
+    for (const [i, x] of inputs.entries()) {
+      const d = x.id ? await ids(pid, 'documents', x.id) : null;
       await pool.query(
         `INSERT INTO generation_run_inputs (run_id, role, document_id, document_version_id, title, content_sha256, char_count, sort_order)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [run, x.role === 'agent' ? 'agent' : x.role, d ? d.id : null, d ? d.current_version_id : null, String(x.name || ''), sha(x.text || ''), String(x.text || '').length, i]);
+        [run, x.role, d ? d.id : null, d ? d.current_version_id : null, String(x.name || ''), sha(x.text || ''), String(x.text || '').length, i]);
     }
 
-    const tier = aliasTiers[plan.model] || '';
+    const tier = aliasTiers[alias] || '';
     const r = await generator.generate({
-      systemPrompt: plan.systemPrompt, userPrompt: plan.userPrompt, signal: args.signal || ctx.signal || null,
+      systemPrompt, userPrompt, signal: signal || ctx.signal || null,
       metadata: {
         project: { id: pid, ownerUserId: row.owner_user_id, organizationId: row.organization_id },
         policy: policyOf(row),
@@ -77,5 +70,28 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
     if (!r.ok) return { ok: false, error: r.error, reason: r.reason, retryAfterMs: r.retryAfterMs || 0, runId: run };
     if (!text) return { ok: false, error: '빈 응답', reason: 'empty', runId: run };
     return { ok: true, text, usage: r.usage, costUsd: r.costUsd, runId: run };
+  }
+
+  // 계획을 거치는 부르기 — Core(run.mjs)가 부르는 모양: call(args, ctx)
+  async function call(args, ctx = {}) {
+    if (!haveBrain()) return { ok: false, error: '내장 프롬프트를 읽지 못했습니다', reason: 'prompts' };
+    const { pid, code } = args;
+    const project = await store.get(pid);
+    if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다', reason: 'other' };
+    const plan = planCall(project, args, { pr: promptFor(project, code), slotModel: slotModel(project, code) });
+    return send(pid, project, {
+      systemPrompt: plan.systemPrompt, userPrompt: plan.userPrompt, alias: plan.model, modelSource: plan.modelSource, code,
+      inputs: plan.inputs, request: args.request, target: (args.targetIds || [])[0] || '', signal: args.signal,
+    }, ctx);
+  }
+
+  // 이미 지은 프롬프트로 곧장 — 에이전트 준비(F-KIND · F-AGENT)가 쓴다(core/generation/agents.mjs 의 raw)
+  call.raw = async ({ systemPrompt, prompt, code, signal = null, model = '' }, ctx = {}) => {
+    if (!haveBrain()) return { ok: false, error: '내장 프롬프트를 읽지 못했습니다', reason: 'prompts' };
+    const project = await store.get(ctx.pid);
+    if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다', reason: 'other' };
+    return send(ctx.pid, project, { systemPrompt, userPrompt: prompt, alias: model, modelSource: 'control', code, signal }, ctx);
   };
+
+  return call;
 }

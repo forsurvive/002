@@ -141,6 +141,24 @@ export async function run({ pool, ok, eq }) {
     ok('**회수된 작업을 살아 있는 worker 가 끝낸다**', (await until(pid, dead.jobId, (j) => j.status === 'done')).status === 'done');
     ok('**죽었던 worker 가 돌아와도 끝내기를 덮어쓰지 못한다**', !(await queue.finish(dead.jobId, 'ghost-worker', { status: 'failed' })) && (await queue.get(dead.jobId)).status === 'done');
 
+    // ---------------- 에이전트 준비 — 만들면 곧바로 선다(판정 → 자리 일곱 → 자료 분석), 개인판과 같은 본체
+    behave = async () => success({ text: '분류: 에세이\n이름: 길잡이\n역할: 안내한다\n할 일: 쓴다\n작법:\n' + '가'.repeat(2100) });
+    const np = (await op('project.create', { name: '에세이 작품', spec: { form: '에세이' }, materials: [{ name: '메모', text: '자료 글' }] })).pid;
+    const prep = (await state(np)).jobs.find((j) => j.kind === 'agents');
+    ok('**만들면 에이전트 준비 작업이 선다**', !!prep);
+    const pd = await until(np, prep.id, (j) => j.status === 'done' || j.status === 'failed', 10000);
+    ok('준비가 끝난다', pd.status === 'done', JSON.stringify(pd));
+    const ps = await state(np);
+    ok('비소설로 판정 · 자리마다 지은 프롬프트', ps.agentKind === '에세이' && ps.prompts.filter((x) => x.made).length >= 7 && ps.prepared === true);
+    ok('이어서 «자료 분석» 문서', ps.docs.some((d) => d.title === '자료 분석') && pd.docIds.length === 1);
+    const keys = (await pool.query('SELECT prompt_key, count(*)::int AS n FROM generation_runs WHERE project_id = $1 GROUP BY prompt_key', [np])).rows;
+    const n2 = Object.fromEntries(keys.map((r) => [r.prompt_key, r.n]));
+    ok('생성 기록: 판정 1 · 짓기 7 · 자료 분석 1', n2['F-KIND'] === 1 && n2['F-AGENT'] === 7 && n2.S02 === 1, JSON.stringify(n2));
+    const kindRun = (await pool.query("SELECT model_source, status FROM generation_runs WHERE project_id = $1 AND prompt_key = 'F-KIND'", [np])).rows[0];
+    ok('제어 호출도 기록된다(출처 control)', kindRun.model_source === 'control' && kindRun.status === 'succeeded');
+    // 다시 눌러도 이미 된 자리는 다시 짓지 않는다
+    ok('준비가 끝나면 [다시] 는 «이미 준비되어 있습니다»', /이미 준비/.test((await op('project.prepare', { pid: np })).error || ''));
+
     // ---------------- 남의 작업에는 손잡이가 없다
     await createUser(pool, { loginId: 'worker-b', password: 'long-enough-b' });
     const lb = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loginId: 'worker-b', password: 'long-enough-b' }) });

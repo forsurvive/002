@@ -108,7 +108,7 @@ export async function run({ pool, ok, eq }) {
     const line = (await stateOf('a', pid)).project.jobs.find((j) => j.id === ai.jobId);
     ok('작업 줄은 개인판 꼴(대기 중 · 대상)', line && line.status === 'running' && line.step === '대기 중' && line.targetId === dc.id);
     ok('같은 문서에 또 맡기면 «이미 도는 중»', /이미 도는 중/.test((await op('a', 'doc.update', { pid, id: dc.id })).error));
-    ok('에이전트 준비는 아직 «준비 중»', /준비 중/.test((await op('a', 'project.prepare', { pid })).error || '') || (await op('a', 'project.prepare', { pid })).ok === false);
+    ok('만들 때 선 에이전트 준비가 줄에 있다 — 다시 누르면 «이미 도는 중»', (await stateOf('a', pid)).project.jobs.some((j) => j.kind === 'agents') && /이미 도는 중/.test((await op('a', 'project.prepare', { pid })).error || ''));
     ok('남은 작업은 목록에서 치울 수 있다', (await op('a', 'job.remove', { pid, id: ai.jobId })).ok && !(await stateOf('a', pid)).project.jobs.some((j) => j.id === ai.jobId));
 
     // ---------------- 격리 — 남의 프로젝트는 «없음»

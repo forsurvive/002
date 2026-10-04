@@ -14,6 +14,7 @@ export async function run({ pool, ok, eq }) {
   await store.update(pid, (p) => { d1 = M.docCreate(p, { title: '하나' }).id; d2 = M.docCreate(p, { title: '둘' }).id; d3 = M.docCreate(p, { title: '셋' }).id; });
   const clear = () => pool.query("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued','running','paused','waiting_for_user')");
 
+  await clear();   // 앞선 시험(서버)이 남긴 활성 작업 — 이 시험의 claim 셈을 흐리지 않게
   // ---------------- 넣기 · 중복
   const a = await q.enqueue({ pid, requestedBy: u.id, kind: 'update', title: '하나', targetId: d1, params: { docId: d1 } });
   ok('넣으면 곧바로 jobId', a.ok && /^[0-9a-f-]{36}$/.test(a.jobId));

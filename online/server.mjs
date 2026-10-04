@@ -6,7 +6,7 @@
 //   · 프로젝트 격리: pid 가 오는 모든 문은 «이 사람의 프로젝트인가»를 서버가 먼저 본다. 아니면 404(있는지도 흘리지 않는다).
 //   · 키는 화면으로 받지 않는다(auth.write 거절). 돈 나가는 길은 서버의 자격증명만 쓴다(docs/SECURITY.md).
 //   · AI 작업은 영속 작업 큐에 넣고(online/jobs.mjs) worker 가 돌린다(online/worker.mjs). 키는 서버의 자격증명만 쓴다.
-//     에이전트 준비(종류 판정 · 자리 짓기 · 자료 분석)는 아직 개인판에만 있다 — 그 문은 «준비 중»으로 답한다.
+//     프로젝트를 만들면 개인판처럼 에이전트 준비(종류 판정 · 자리 짓기 · 자료 분석) 작업이 곧바로 선다.
 // 실행: DATABASE_URL=… SE2_HOST=0.0.0.0 node online/server.mjs   (docs/REPLIT_DEPLOYMENT.md · 콘솔은 ASCII 만)
 
 import { createServer } from 'node:http';
@@ -21,7 +21,9 @@ import { createProjectStore } from './store.mjs';
 import * as auth from './auth.mjs';
 import { createOps } from '../tools/ops.mjs';
 import * as pick from '../tools/prompt-pick.mjs';
-import { materialsToDocs, findThread, threadAddMessage } from '../core/domain/model.mjs';
+import { materialsToDocs, materialDocs, findThread, threadAddMessage } from '../core/domain/model.mjs';
+import { agentsReady, STUDY_TITLE } from '../core/generation/agents.mjs';
+import { AGENT_SLOTS } from '../tools/prompts.mjs';
 import { createJobQueue } from './jobs.mjs';
 import { createWorker } from './worker.mjs';
 import { createOnlineCall } from './call.mjs';
@@ -36,7 +38,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ok = (extra = {}) => ({ ok: true, ...extra });
 const bad = (error, code) => ({ ok: false, error: String(error), ...(code ? { code } : {}) });
 const NOT_FOUND = '프로젝트를 찾을 수 없습니다';
-const AGENTS_NOT_YET = '에이전트 준비는 온라인판에서 아직 준비 중입니다';
 
 // pid 없이 부르는 문 — 나머지는 모두 «이 사람의 프로젝트»여야 한다
 const NO_PID = new Set(['project.list', 'project.create', 'auth.read', 'auth.write']);
@@ -74,7 +75,6 @@ function depsFor(store, queue, worker, user) {
   };
   const jobs = {
     async start(pid, { kind, title = '작업', targetId = '', params = {} }) {
-      if (kind === 'agents') return bad(AGENTS_NOT_YET);
       let p = { ...params };
       if (kind === 'talk') {
         // 작가의 말은 작업 «앞»에 저장한다 — 재시도 · 이어 하기에도 말이 한 번만 얹히고, 서버가 내려가도 말은 남는다
@@ -106,8 +106,10 @@ function depsFor(store, queue, worker, user) {
   const view = () => ({ mode: 'online', modes: [], hasKey: false });
   return {
     state, jobs, engine: pick, auth: { view, write: view }, limit: () => null,
-    prepared: () => true,           // 에이전트 준비(종류 판정 · 자리 짓기 · 자료 분석)는 아직 개인판에만 있다
-    startAgentPrep: async () => {},
+    // 준비가 온전히 끝났는가 — 개인판 서버와 같은 셈(프롬프트가 다 서 있고, 자료가 있다면 «자료 분석»까지)
+    prepared: (p) => agentsReady(p, AGENT_SLOTS) && (!materialDocs(p).length || p.docs.some((d) => d.title === STUDY_TITLE)),
+    // 프로젝트를 만든 직후 그 프로젝트 전용 에이전트를 짓는다(소설이면 판정만 남기고 끝난다)
+    startAgentPrep: (pid, request = '') => jobs.start(pid, { kind: 'agents', title: '에이전트 준비', params: { request } }),
   };
 }
 
