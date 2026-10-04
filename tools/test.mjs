@@ -880,7 +880,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('**어느 모듈도 상점 모듈을 부르지 않는다**', stillCalls.length === 0, stillCalls.join(' '));
   const cloudOps = OP_NAMES.filter((n) => n.startsWith('cloud.'));
   ok('서버에 상점 문이 없다', cloudOps.length === 0, cloudOps.join(' '));
-  const srv = src(join(HERE, 'server.mjs'));
+  // 문 표는 tools/ops.mjs 로 옮겼다 — 서버와 문 표를 함께 본다
+  const srv = src(join(HERE, 'server.mjs')) + src(join(HERE, 'ops.mjs'));
   ok('열쇠를 받던 길이 코드에 없다', !srv.includes("'/link'"));
   eq('열쇠를 받던 길(/link)은 없는 문이다', (await fetch(base + '/link?token=x', { redirect: 'manual' })).status, 404);
   const home = await (await fetch(base + '/api/state')).json();
@@ -1101,7 +1102,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('키가 들었다고만 이른다', a.auth.hasKey, true);
   ok('키를 내려 주지 않는다', !JSON.stringify(a).includes('sk-ant-시험-키'));
   // 상태가 내려 주는 것도 view() 다 — read() 를 쓰면 키가 화면까지 간다
-  ok('상태는 view() 를 쓴다', src(join(HERE, 'server.mjs')).includes('auth: auth.view()'));
+  ok('상태는 view() 를 쓴다', src(join(HERE, 'ops.mjs')).includes('auth: auth.view()'));   // 상태 그리기는 문 표(ops.mjs)와 함께 옮겼다
 
   // childEnv 가 고른 갈래를 따른다
   const withKey = cli.childEnv({ mode: 'api', apiKey: 'sk-ant-xyz' });
@@ -2040,7 +2041,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 
   // 작업 = 종류 + 매개변수(데이터) — 개인판 실행기와 온라인 worker 가 같은 표를 쓴다
   const kinds = await import('../core/generation/kinds.mjs');
-  const serverSrc = src(join(HERE, 'server.mjs'));
+  const serverSrc = src(join(HERE, 'server.mjs')) + src(join(HERE, 'ops.mjs'));   // 작업 등록은 서버와 문 표 두 곳에 있다
   const usedKinds = [...new Set([...serverSrc.matchAll(/kind: '([a-z]+)'/g)].map((m) => m[1]))];
   ok('서버가 등록하는 작업 종류가 모두 표에 있다', usedKinds.length >= 4 && usedKinds.every((k) => kinds.KIND_NAMES.includes(k)), usedKinds.join(','));
   ok('서버는 작업을 클로저가 아니라 매개변수로 등록한다', !/jobs\.start\([^)]*run:/.test(serverSrc));
