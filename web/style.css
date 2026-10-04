@@ -365,6 +365,12 @@ details summary:hover { opacity: .7; }
 }
 
 /* 고르기 창에서 한 줄을 눌러 펼친 내용 */
+.lecture {
+  position: fixed; right: 24px; bottom: 24px; width: min(360px, calc(100vw - 48px)); z-index: 15;
+  background: var(--paper); border-radius: var(--r-l); box-shadow: var(--shadow-l); padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 8px; font-size: 14px; line-height: 1.6;
+}
+.lecture .lab { margin: 6px 0 0; }
 .peek {
   white-space: pre-wrap; word-break: break-word;
   background: var(--group); border-radius: var(--r-m);

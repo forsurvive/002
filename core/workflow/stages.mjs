@@ -46,7 +46,10 @@ export function docOf(p, t, key, episode = 0) {
   if (!s) return null;
   if (s.output === 'revision') return docOf(p, t, s.reviseOf, 0);
   const st = stateOf(p, slotKey(key, s.output === 'perEpisode' ? episode : 0));
-  return st ? livingDoc(p, st.docId) : null;
+  if (st) return livingDoc(p, st.docId);
+  // 아직 단계로 시작하지 않았어도 같은 이름의 문서가 있으면 그것이 이 단계의 문서다(«자료 분석»처럼 준비 작업이 먼저 만든 것 · 손으로 만든 것)
+  if (s.output === 'document') return p.docs.find((x) => x.title === docTitle(s, 0) && !x.material) || null;
+  return null;
 }
 
 // 이 단계에 추천하는 참조 — 앞 단계(inputs)의 결과 문서들. 회차 단계는 같은 회차의 앞 단계를 먼저 찾는다.
@@ -83,7 +86,7 @@ function inputDocs(p, t, s, episode) {
 function statusOf(p, t, s, episode) {
   if (s.output === 'input') return (String((p.spec || {}).form || '').trim() && model.materialDocs(p).length) ? 'approved' : 'not_started';
   const st = stateOf(p, slotKey(s.key, s.output === 'perEpisode' ? episode : 0));
-  if (!st) return 'not_started';
+  if (!st) return s.output === 'document' && docOf(p, t, s.key, 0) ? 'draft' : 'not_started';
   if (st.status === 'skipped') return 'skipped';
   if (st.status === 'approved') return 'approved';
   return s.output === 'final' || docOf(p, t, s.key, episode) ? 'draft' : 'not_started';

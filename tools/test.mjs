@@ -2004,6 +2004,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('**강제 순서가 아니다 — 앞 단계 미승인이면 알리기만**', world.status === 'draft' && world.prevPending === true);
   // 자료 분석이 이미 있으면 그 문서를 쓴다(준비 작업이 먼저 만든 것)
   const pre = model.docCreate(p, { title: '자료 분석', body: '분석' });
+  eq('**시작 전이어도 같은 이름의 문서가 있으면 초안으로 보인다**', wf.view(p, tpl)[1].status, 'draft');
   eq('같은 이름의 문서가 있으면 그것을 이 단계의 문서로', wf.startStage(p, tpl, 'study').docId, pre.id);
   ok('세계관의 추천 참조 = 자료 분석', wf.recommendRefs(p, tpl, 'world').join() === pre.id);
   // 승인 ≠ 확정본

@@ -283,7 +283,8 @@ function app() {
       h('div', { class: 'side-top' },
         h('button', { class: 'side-title', text: '스토리 엔진', onclick: goHome }),
         brandMark()),
-      ['작업실', '설정'].map((t) => h('button', {
+      // 단계 탭은 단계 흐름이 실려 올 때만(서버가 템플릿을 갖고 있을 때) 선다
+      ['작업실', ...(p.workflow ? ['단계'] : []), '설정'].map((t) => h('button', {
         class: 'tab' + (S.tab === t ? ' on' : ''), text: t, onclick: () => { S.tab = t; render(); },
       })),
       h('div', { class: 'side-jobs' }, (p.jobs || []).map(jobRow)),
@@ -297,7 +298,8 @@ function app() {
           h('button', { class: 'top-name', text: p.name, onclick: goHome }),
           // 온라인판 — 강사 · 기관 관리자의 열람. 고치는 문은 서버가 막는다(이 표시는 알림일 뿐이다)
           p.readOnly ? h('span', { class: 'mark', text: '읽기만' }) : null)),
-      h('div', { class: 'body' }, S.tab === '작업실' ? workshop() : S.tab === '설정' ? settings() : trash())));
+      h('div', { class: 'body' }, S.tab === '작업실' ? workshop() : S.tab === '단계' && p.workflow ? stagesView() : S.tab === '설정' ? settings() : trash()),
+      lectureCard()));
 }
 
 // 그 작업이 도는 자리 — 목록에 없으면 null(그 줄은 눌리지 않는다).
@@ -352,6 +354,144 @@ setInterval(() => {
     if (n) n.textContent = jobLine(j);
   }
 }, 1000);
+
+// ---------------------------------------------------------------- 단계형 작업 흐름(docs/WORKFLOW.md)
+//
+// 자유 문서 작업 «위에» 얹은 진행표다. 단계의 결과는 보통 문서이고, 문서 창 · 이력 · 참조 · 확정본이 그대로 된다.
+// 강제 순서가 아니다 — 앞 단계가 승인 전이면 알리기만 한다. 승인 ≠ 확정본(확정본은 승인할 때 고른 경우에만).
+
+const STAGE_MARK = { not_started: '○', draft: '◐', approved: '●', skipped: '⤼' };
+const STAGE_SAY = { not_started: '시작 전', draft: '초안 — 검토하세요', approved: '승인됨', skipped: '건너뜀' };
+
+// 이 단계(회차)의 결과 문서를 지금 짓고 있는 작업
+const stageJob = (docId) => (S.project.jobs || []).find((j) => j.kind === 'stage' && j.targetId === docId && (j.status === 'running' || j.status === 'paused'));
+
+function openStage(key, episode) {
+  const st = S.project.workflow.stages.find((x) => x.key === key);
+  const ep = episode ? (st.episodes || []).find((e) => e.episode === episode) : null;
+  const doc = (S.project.docs || []).find((d) => d.id === ((ep || st).docId));
+  // 참조는 문서에 이미 걸린 것이 있으면 그것을, 없으면 앞 단계에서 추천한 것을 체크된 채로 보인다(사람이 확인한다)
+  const refIds = doc && (doc.refIds || []).length ? doc.refIds.slice() : ((ep || st).refs || []).slice();
+  S.open = { type: 'stage', key, episode: episode || 0, refIds, final: false };
+  clearTyped('st-once', 'st-ep');
+  render();
+}
+
+// 한 줄의 말 — 짓는 중이면 «생성 중», 문서가 비어 있으면 «비어 있음»(초안이라고 하지 않는다)
+function stageSay(st) {
+  if (st.output === 'input') return st.status === 'approved' ? '완료' : '규격 · 자료가 필요합니다';
+  if (st.docId && stageJob(st.docId)) return '생성 중';
+  const d = st.docId ? (S.project.docs || []).find((x) => x.id === st.docId) : null;
+  if (st.status === 'draft' && d && !String(d.body || '').trim()) return '비어 있음 — 생성하세요';
+  return STAGE_SAY[st.status] || '';
+}
+
+function stagesView() {
+  const w = S.project.workflow;
+  const row = (st) => h('div', { class: 'row' + (st.off ? '' : ''), onclick: () => openStage(st.key) },
+    h('span', { class: 'mark', text: STAGE_MARK[st.status] || '○' }),
+    h('div', { class: 'name', text: st.n + '  ' + st.title + (st.off ? ' (꺼짐)' : '') }),
+    st.upstreamChanged ? h('span', { class: 'mark', text: '⚠ 앞 단계가 바뀜' }) : null,
+    (st.episodes || []).length ? h('span', { class: 'mark', text: st.episodes.length + '화' }) : null,
+    h('div', { class: 'when', text: stageSay(st) }));
+  return h('div', null,
+    h('div', { class: 'sec' },
+      h('div', { class: 'sec-head' },
+        h('div', { class: 'name', text: w.title || '단계' }),
+        h('div', { class: 'when', text: '본문 단계' }),
+        h('button', { class: 'tg' + (w.bodyOn ? ' on' : ''), onmousedown: () => api('project.spec', { bodyStage: !w.bodyOn }) })),
+      w.stages.map(row)),
+    h('div', { class: 'when', text: '○ 시작 전 · ◐ 초안 · ● 승인 · ⤼ 건너뜀 — 순서는 강제가 아닙니다. 승인은 «이 단계의 산출물로 인정», 확정본은 «참조에서 최우선 사실»로 서로 다릅니다.' }));
+}
+
+function stagePanel(close) {
+  const w = S.project.workflow;
+  const st = w.stages.find((x) => x.key === S.open.key);
+  if (!st) return h('div', { class: 'panel narrow' }, h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '없는 단계' }), h('button', { class: 'x', text: '×', onclick: close })));
+  const per = st.output === 'perEpisode';
+  const ep = per ? (S.open.episode || Number(typedVal('st-ep', '')) || 0) : 0;
+  const cur = per && ep ? (st.episodes || []).find((e) => e.episode === ep) : (per ? null : st);
+  const status = cur ? cur.status : 'not_started';
+  const docId = cur ? cur.docId : '';
+  const doc = (S.project.docs || []).find((d) => d.id === docId);
+  const job = docId ? stageJob(docId) : null;
+  const byId = refIndex();
+  const readOnly = !!S.project.readOnly;
+  const go = async () => {
+    const episode = per ? (S.open.episode || Number(($('st-ep') || {}).value) || 0) : 0;
+    const r = await api('stage.start', { key: st.key, episode, refIds: S.open.refIds, requestOnce: ($('st-once') || {}).value || '' });
+    if (!r.ok) { S.open.err = r.error; render(); return; }
+    S.open.err = ''; S.open.episode = episode; clearTyped('st-once');
+    render();
+  };
+  const approve = async () => {
+    const r = await api('stage.approve', { key: st.key, episode: ep, final: !!S.open.final });
+    S.open.err = r.ok ? '' : r.error; render();
+  };
+  return h('div', { class: 'panel narrow' },
+    h('div', { class: 'panel-head' },
+      h('div', { class: 'name', text: st.n + '  ' + st.title + (per && ep ? ' — ' + ep + '화' : '') }),
+      h('button', { class: 'x', text: '×', onclick: close })),
+    h('div', { class: 'panel-body' },
+      st.task ? h('div', null, h('div', { class: 'lab', text: '이 단계에서 하는 일' }), h('div', { text: st.task.replace(/\{n\}/g, ep ? String(ep) : 'N') })) : null,
+      st.card ? h('div', { class: 'when', text: st.card.what }) : null,
+      st.prevPending && status === 'not_started' ? h('div', { class: 'notice', text: '앞 단계가 아직 승인 전입니다 — 그래도 시작할 수 있습니다' }) : null,
+      cur && cur.upstreamChanged ? h('div', { class: 'notice', text: '⚠ 승인한 뒤 앞 단계 문서가 바뀌었습니다 — 다시 보거나 다시 생성해 보세요(자동으로 바뀌지 않습니다)' }) : null,
+      per && !S.open.episode ? h('div', null, h('div', { class: 'lab', text: '몇 화' }), textbox('st-ep', '예: 1')) : null,
+      per && (st.episodes || []).length ? h('div', { class: 'line' }, st.episodes.map((e) => h('button', {
+        class: 'chip', text: e.episode + '화 ' + (STAGE_MARK[e.status] || ''), onclick: () => openStage(st.key, e.episode),
+      }))) : null,
+      st.output === 'input' ? h('div', { class: 'when', text: '작품을 만들 때 넣은 규격과 자료입니다 — 설정 탭에서 고칩니다.' }) : null,
+      st.output === 'final' ? h('div', { class: 'when', text: '다 쓴 원고를 모순 검사 · 합평으로 점검하고 내려받습니다. 점검을 마쳤으면 승인하세요.' }) : null,
+      st.output !== 'input' && st.output !== 'final' ? [
+        refLine('참조(앞 단계에서 추천 — 빼거나 더할 수 있습니다)', S.open.refIds, byId, (ids) => { S.open.refIds = ids; render(); }, docId),
+        h('div', null, h('div', { class: 'lab', text: '이번 요청사항(이번 한 번만 — 저장되지 않습니다)' }), area('st-once', '이번 생성에만 덧붙일 말')),
+      ] : null,
+      S.open.err ? h('div', { class: 'notice', text: S.open.err }) : null,
+      job ? h('div', { class: 'when', text: '생성 중 — ' + jobLine(job) }) : null,
+      readOnly ? null : h('div', { class: 'line' },
+        st.output !== 'input' && st.output !== 'final' && !job
+          ? h('button', { class: 'btn', text: doc && String(doc.body || '').trim() ? '다시 생성(새 판)' : '생성', onclick: go }) : null,
+        doc ? h('button', { class: 'btn-line', text: '문서 열기', onclick: () => { S.open = { type: 'doc', id: doc.id }; render(); } }) : null,
+        st.output !== 'input' && st.output !== 'perEpisode' && status !== 'approved'
+          ? h('button', { class: 'btn-text', text: status === 'skipped' ? '건너뛰기 취소' : '건너뛰기', onclick: () => api('stage.skip', { key: st.key, on: status !== 'skipped' }) }) : null),
+      // 승인 — 확정본 켜기는 고를 때만(기본 꺼짐)
+      !readOnly && (status === 'draft' || (st.output === 'final' && status !== 'approved')) && !job ? h('div', { class: 'line' },
+        h('button', { class: 'btn-red', text: '승인하고 다음 단계로', onclick: approve }),
+        doc ? h('div', { class: 'line', style: 'gap:6px;cursor:pointer', onmousedown: () => { S.open.final = !S.open.final; render(); } },
+          h('button', { class: 'ck' + (S.open.final ? ' on' : '') }), h('span', { text: '이 문서를 확정본으로도 켜기' })) : null) : null,
+      !readOnly && status === 'approved' ? h('button', { class: 'btn-text', text: '승인 풀기(다시 고치기)', onclick: () => api('stage.reopen', { key: st.key, episode: ep }) }) : null));
+}
+
+// 작업 중 강의 카드 — 단계 생성이 도는 동안 «무엇인가 · 볼 점 · 질문»을, 끝나면 «볼 점» 체크리스트를 보인다.
+// 켜져 있을 때만(기관 설정 · 개인 설정 — 서버가 card 를 실어 보낼 때만). 점수가 아니고 저장하지 않는다.
+function lectureCard() {
+  const w = S.project && S.project.workflow;
+  if (!w || !w.cards) return null;
+  S.cardSeen = S.cardSeen || {};
+  const jobs = (S.project.jobs || []).filter((j) => j.kind === 'stage' && j.params && !S.cardSeen[j.id]);
+  const j = jobs.find((x) => x.status === 'running' || x.status === 'paused') || jobs.filter((x) => x.status === 'done').pop();
+  if (!j) return null;
+  const st = w.stages.find((x) => x.key === j.params.stageKey);
+  if (!st || !st.card) return null;
+  const running = j.status === 'running' || j.status === 'paused';
+  S.cardCheck = S.cardCheck || {};
+  return h('div', { class: 'lecture' },
+    h('div', { class: 'line' },
+      h('div', { class: 'name', style: 'flex:1;font-weight:700', text: running ? st.title + ' — 만드는 중' : '방금 배운 기준으로 읽기' }),
+      h('button', { class: 'x', text: '×', onclick: () => { S.cardSeen[j.id] = true; render(); } })),
+    running ? [
+      h('div', { class: 'when', id: 'jstep-card-' + j.id, text: jobLine(j) }),
+      h('div', { text: st.card.what }),
+      h('div', { class: 'lab', text: '결과를 읽을 때 볼 점' }),
+      st.card.look.map((x) => h('div', { text: '· ' + x })),
+      st.card.ask ? [h('div', { class: 'lab', text: '생각해 볼 질문' }), h('div', { text: st.card.ask })] : null,
+    ] : [
+      st.card.look.map((x, i) => h('div', { class: 'line', style: 'gap:6px;cursor:pointer', onmousedown: () => { const k = j.id + ':' + i; S.cardCheck[k] = !S.cardCheck[k]; render(); } },
+        h('button', { class: 'ck' + (S.cardCheck[j.id + ':' + i] ? ' on' : '') }), h('span', { text: x }))),
+      h('div', { class: 'line' }, h('button', { class: 'btn-line', text: '결과 문서 열기', onclick: () => { S.cardSeen[j.id] = true; S.open = { type: 'doc', id: j.targetId }; render(); } })),
+    ]);
+}
 
 // ---------------------------------------------------------------- 작업실
 
@@ -761,7 +901,7 @@ function trash() {
 const LAYER_KEYS = ['d-title', 'd-body', 'd-req', 't-say', 'nd-name', 'pp-req',
   'n-name', 'n-form', 'n-outline', 'n-length', 'n-standard', 'n-request', 'n-mat',
   'pr-name', 'pr-role', 'pr-task', 'pr-craft',
-  'ag-name', 'ag-role', 'ag-craft'];
+  'ag-name', 'ag-role', 'ag-craft', 'st-once', 'st-ep'];
 
 function closeLayer(force) {
   // 새로 만드는 창은 닫으면 치던 글이 사라진다 — 그때는 그냥 닫지 않고 묻는다(사용자 지시).
@@ -803,6 +943,7 @@ function layerOne() {
     : t === 'thread' ? threadPanel(close)
       : t === 'newproject' ? newProjectPanel(close)
         : t === 'newdoc' ? newDocPanel(close)
+          : t === 'stage' ? stagePanel(close)
             : t === 'prompt' ? promptPanel(close)
               : t === 'prepare' ? preparePanel(close)
                 : agentPanel(close);
