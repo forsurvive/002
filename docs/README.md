@@ -22,4 +22,4 @@
 |---|---|
 | Sprint 0 — 분석 · 기준선 | 완료: 원본 이력 37커밋 보존, 시험 676/0, 이 문서들, 루트 `CLAUDE.md` |
 | Sprint 1 — Replit 에서 지금 판 실행 | 코드 준비 완료(`tools/hosting.mjs`, `.replit`, 시험 725/0). **Replit 가져오기·게시는 사용자 계정 필요** |
-| Sprint 2 — Core 분리 | 진행 중: ① `model`·`assemble`·id 를 `core/` 로 옮김 · ② `planCall()` 추출(프롬프트 옮기기 전후 동일 확인, 시험 744/0) → ③ 생성 실행 → ④ 작업 종류 표 |
+| Sprint 2 — Core 분리 | 진행 중: ① `model`·`assemble`·id 를 `core/` 로 옮김 · ② `planCall()` 추출(프롬프트 옮기기 전후 동일 확인) · ③ 생성 실행을 `core/generation` 으로(저장·호출을 넣어 받음, 시험 750/0) → ④ 작업 종류 표 |

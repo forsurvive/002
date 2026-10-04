@@ -2016,6 +2016,26 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('자리 모델 · 작품 모델 차례', planCall(pp, {}, { pr, slotModel: 'opus' }).modelSource === 'slot' && planCall(pp, {}, { pr }).modelSource === 'project');
   const pc = planCall(pp, { refIds: [fb.id], targetIds: [fa.id, fc.id], finalFirst: true }, { pr });
   eq('모순 검사는 확정본이 기준 자리에 선다', pc.inputs.map((x) => x.role + ':' + x.name).join(','), 'reference:인물,final:세계,target:원고');
+
+  // 생성 실행은 저장과 호출을 넣어 받는다 — 개인판의 state·CLI 없이 Core 만으로 돈다(온라인 worker 가 같은 길을 쓴다).
+  const gen = await import('../core/generation/run.mjs');
+  const mem = store.blankProject('p_mem', '메모리');
+  const md = model.docCreate(mem, { kind: 'review', title: '합평회', body: '' });
+  const mo = model.docCreate(mem, { title: '원고', body: '원고 본문' });
+  const ma = model.agentCreate(mem, { name: '갑', model: 'opus' });
+  const mb = model.agentCreate(mem, { name: '을', model: 'opus' });
+  model.docWrite(mem, md.id, { targetIds: [mo.id], agentIds: [ma.id, mb.id], request: '인물만' });
+  const memStore = { get: (pid) => (pid === mem.id ? mem : null), update: (pid, fn) => { const r = fn(mem); return r === undefined ? { ok: true } : r; } };
+  const calls = [];
+  const fakeCall = async (args) => { calls.push(args.code + (args.agentIds && args.agentIds.length ? ':' + args.agentIds.length : '')); return { ok: true, text: args.code + ' 결과' }; };
+  const got = await gen.runUpdate({ store: memStore, call: fakeCall }, mem.id, md.id, null);
+  ok('Core 만으로 합평 패널이 돈다', got.ok === true, JSON.stringify(got));
+  eq('사람마다 한 번 + 모으기 한 번', calls.join(','), 'F-REVIEW:1,F-REVIEW:1,F-MERGE');
+  eq('결과는 모은 글 하나', model.findDoc(mem, md.id).body, 'F-MERGE 결과');
+  const failCall = async () => ({ ok: false, error: '막힘', reason: 'auth' });
+  const before = model.findDoc(mem, mo.id).body;
+  const failed = await gen.runUpdate({ store: memStore, call: failCall }, mem.id, mo.id, null);
+  ok('**호출이 실패하면 문서를 건드리지 않는다**', failed.ok === false && model.findDoc(mem, mo.id).body === before);
 }
 
 // ---------------------------------------------------------------- 호스팅 실행 — 포트 · 주소 · 허용 호스트 · 출입 열쇠
