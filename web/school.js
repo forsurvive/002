@@ -4,7 +4,7 @@
 // 모든 판정은 서버(online/edu.mjs · tenancy)가 한다. 이 화면은 서버가 허락한 것을 보여 줄 뿐이다.
 // 학생에게 비용 · 횟수 · 키를 보이지 않는다. 초대 코드는 만든 그 자리에서 한 번만 보인다.
 
-const S = { me: null, loggedIn: false, orgs: {}, progress: {}, shown: {}, say: '', open: {} };
+const S = { me: null, loggedIn: false, orgs: {}, progress: {}, shown: {}, say: '', open: {}, usage: {} };
 
 function h(tag, attrs, ...kids) {
   const n = document.createElement(tag);
@@ -151,6 +151,22 @@ function myClasses() {
     progressBox(c))));
 }
 
+// ---------------------------------------------------------------- 사용량(비용을 내는 쪽만 — 서버가 학생 · 강사에게는 내주지 않는다)
+
+async function showUsage(key, orgId) {
+  const r = await edu('usage.summary', orgId ? { orgId } : {});
+  if (!r.ok) return tell(r.error);
+  S.usage[key] = r.usage;
+  render();
+}
+const usageRows = (key) => (S.usage[key] ? h('div', { style: 'margin-top:8px' }, S.usage[key].length
+  ? S.usage[key].map((u) => h('div', { class: 'row', style: 'cursor:default' },
+    h('div', { class: 'name', text: u.month + ' · ' + u.model_id }),
+    h('span', { class: 'mark', text: '호출 ' + u.calls + (u.failed ? ' (실패 ' + u.failed + ')' : '') }),
+    h('div', { class: 'when', text: '입력 ' + u.input_tokens.toLocaleString() + ' · 출력 ' + u.output_tokens.toLocaleString() + ' 토큰 · 추정 $' + u.cost_usd.toFixed(2) })))
+  : h('div', { class: 'when', text: '아직 쓴 것이 없습니다' }),
+h('div', { class: 'when', style: 'margin-top:6px', text: '금액은 모델 가격표로 낸 추정입니다 — 정확한 청구는 AI 회사의 청구서를 보세요' })) : null);
+
 // ---------------------------------------------------------------- 기관 관리
 
 function orgBox(id) {
@@ -188,6 +204,9 @@ function orgBox(id) {
     h('div', { class: 'when', text: keys.filter((k) => k.status === 'active').map((k) => k.provider + ' ' + k.keyHint).join(' · ') || '아직 없습니다' }),
     h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
       field('Anthropic API 키', 'ok-' + id, 'password', { autocomplete: 'off', spellcheck: 'false' }), h('button', { class: 'btn-line', text: '저장', onclick: saveKey })),
+    h('div', { class: 'lab', style: 'margin-top:16px', text: '사용량(기관 키)' }),
+    h('button', { class: 'btn-line', text: '사용량 보기', onclick: () => showUsage('o-' + id, id) }),
+    usageRows('o-' + id),
     h('div', { class: 'line', style: 'margin-top:16px' },
       h('div', { class: 'lab', style: 'margin:0', text: '기관 관리자가 학생 작품을 읽을 수 있게' }),
       h('button', { class: 'tg' + (readable ? ' on' : ''), onclick: async () => { await edu('org.settings', { orgId: id, adminCanReadProjects: !readable }); await load(); } })));

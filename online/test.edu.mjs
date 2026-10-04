@@ -135,6 +135,16 @@ export async function run({ pool, ok, eq }) {
     ok('기관 관리자는 «작품 열람» 정책을 켠다', (await edu('edu-oa', 'org.settings', { orgId: org.id, adminCanReadProjects: true })).settings.admin_can_read_projects === true);
     const acts = new Set((await pool.query('SELECT action FROM audit_logs WHERE organization_id = $1', [org.id])).rows.map((r) => r.action));
     ok('감사 로그(기관 · 라이선스 · 수업 · 초대 · 수락 · 키 · 설정)', ['org.create', 'license.issue', 'class.create', 'invite.create', 'invite.accept', 'credential.set', 'org.settings', 'class.archive'].every((a) => acts.has(a)), [...acts].join(','));
+    // ---------------- 사용량 — 비용을 내는 쪽만
+    await pool.query(`INSERT INTO generation_runs (project_id, organization_id, status, provider, model_id, input_tokens, output_tokens, cost_usd, credential_owner_type)
+      VALUES ($1, $2, 'succeeded', 'anthropic', 'model-x', 1000, 200, 0.0123, 'organization'), ($1, $2, 'failed', 'anthropic', 'model-x', 10, 0, 0, 'organization')`, [proj.pid, org.id]);
+    const us = await edu('edu-oa', 'usage.summary', { orgId: org.id });
+    const u0 = us.usage && us.usage[0];
+    ok('**기관 관리자는 기관 사용량(추정)을 본다**', us.ok && us.estimated && u0 && u0.calls === 2 && u0.input_tokens === 1010 && u0.cost_usd === 0.0123 && u0.failed === 1, JSON.stringify(us));
+    eq('**학생은 기관 사용량을 못 본다**', (await edu('edu-s1', 'usage.summary', { orgId: org.id })).status, 404);
+    eq('**강사도 못 본다**', (await edu('edu-in', 'usage.summary', { orgId: org.id })).status, 404);
+    eq('학생의 «내 사용량»에 기관 키로 돈 것은 없다', (await edu('edu-s1', 'usage.summary')).usage.length, 0);
+
     eq('모르는 문은 404', (await edu('edu-root', 'org.delete', { orgId: org.id })).status, 404);
   } finally {
     await new Promise((r) => srv.close(r));

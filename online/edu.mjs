@@ -189,6 +189,28 @@ export function createEdu({ pool, credentials = null }) {
       return ok();
     },
 
+    // ---------------- 사용량 — 비용을 내는 쪽만 본다(기관 키 → 기관 관리자 · 플랫폼 관리자, 개인 키 → 그 사람). 학생에게는 없다.
+    // 금액은 카탈로그 가격으로 낸 «추정»이다(provider 청구서가 정본). 달 · 모델별로 묶는다.
+    async 'usage.summary'(user, b) {
+      let where; let args;
+      if (b.orgId) {
+        if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
+        where = `r.organization_id = $1 AND r.credential_owner_type = 'organization'`; args = [b.orgId];
+      } else {
+        // 내 키로 돈 것(개인 프로젝트) — 기관 학생이라도 기관 키로 돈 것은 여기 들지 않는다
+        where = `r.credential_owner_type = 'user' AND p.owner_user_id = $1 AND p.organization_id IS NULL`; args = [user.id];
+      }
+      const rows = (await pool.query(
+        `SELECT to_char(date_trunc('month', r.started_at), 'YYYY-MM') AS month, r.provider, r.model_id, count(*)::int AS calls,
+                sum(r.input_tokens)::bigint AS input_tokens, sum(r.output_tokens)::bigint AS output_tokens,
+                sum(r.cache_read_tokens)::bigint AS cache_read_tokens, round(coalesce(sum(r.cost_usd), 0)::numeric, 4)::text AS cost_usd,
+                sum(CASE WHEN r.status = 'succeeded' THEN 0 ELSE 1 END)::int AS failed
+           FROM generation_runs r JOIN projects p ON p.id = r.project_id
+          WHERE ${where} AND r.provider <> ''
+          GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2, 3`, args)).rows;
+      return ok({ usage: rows.map((r) => ({ ...r, input_tokens: Number(r.input_tokens), output_tokens: Number(r.output_tokens), cache_read_tokens: Number(r.cache_read_tokens), cost_usd: Number(r.cost_usd) })), estimated: true });
+    },
+
     // ---------------- 기관 키(기관 관리자 — 쓰기 전용)
     async 'org.key.set'(user, b, ip) {
       if (!credentials) return no(503, 'AI 키를 저장할 수 없습니다', 'unavailable');
