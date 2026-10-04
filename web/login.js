@@ -59,7 +59,8 @@ const loginForm = () => h('form', { onsubmit: enter },
   h('div', { class: 'lab', style: 'margin-top:14px', text: '비밀번호' }),
   h('input', { id: 'lg-pw', type: 'password', autocomplete: 'current-password' }),
   h('div', { id: 'say', class: 'notice', style: 'min-height:22px;margin:10px 0' }),
-  h('button', { class: 'btn-red', type: 'submit', text: '들어가기' }));
+  h('button', { class: 'btn-red', type: 'submit', text: '들어가기' }),
+  h('div', { class: 'when', style: 'margin-top:18px' }, h('a', { href: '/school.html', text: '초대 코드로 처음 들어오기' })));
 
 const setupForm = (ai) => h('form', { onsubmit: setup },
   h('div', { class: 'when', text: '처음 설정 — 쓸 계정을 만듭니다. 이 화면은 한 번만 나옵니다.' }),

@@ -76,8 +76,8 @@ export function createEdu({ pool, credentials = null }) {
     },
     async 'org.list'(user) {
       const rows = user.isPlatformAdmin
-        ? (await pool.query('SELECT id, name, slug, status, created_at FROM organizations ORDER BY name')).rows
-        : (await pool.query(`SELECT DISTINCT o.id, o.name, o.slug, o.status, o.created_at FROM organizations o JOIN organization_members m ON m.organization_id = o.id
+        ? (await pool.query('SELECT id, name, slug, status, settings, created_at FROM organizations ORDER BY name')).rows
+        : (await pool.query(`SELECT DISTINCT o.id, o.name, o.slug, o.status, o.settings, o.created_at FROM organizations o JOIN organization_members m ON m.organization_id = o.id
             WHERE m.user_id = $1 AND m.status = 'active' AND m.role = 'organization_admin' ORDER BY o.name`, [user.id])).rows;
       return ok({ organizations: rows });
     },

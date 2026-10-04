@@ -258,6 +258,7 @@ function projectList() {
         brandMark('margin-bottom:6px'),
         h('div', { class: 'top-name', style: 'font-size:30px', text: '스토리 엔진' })),
       h('div', { class: 'line', style: 'flex:none' },
+        S.me ? h('button', { class: 'btn-text', text: '기관 · 수업', onclick: () => { location.href = '/school.html'; } }) : null,
         S.me ? h('button', { class: 'btn-text', text: '로그아웃', onclick: logout }) : null,
         h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: startTour }),
         h('button', { class: 'plus', text: '+', onclick: () => { S.draft = []; S.open = { type: 'newproject' }; render(); } }))),
@@ -291,7 +292,9 @@ function app() {
       h('div', { class: 'top' },
         h('div', { class: 'line' },
           h('button', { class: 'back', text: '‹', title: '작품 목록', onclick: goHome }),
-          h('button', { class: 'top-name', text: p.name, onclick: goHome }))),
+          h('button', { class: 'top-name', text: p.name, onclick: goHome }),
+          // 온라인판 — 강사 · 기관 관리자의 열람. 고치는 문은 서버가 막는다(이 표시는 알림일 뿐이다)
+          p.readOnly ? h('span', { class: 'mark', text: '읽기만' }) : null)),
       h('div', { class: 'body' }, S.tab === '작업실' ? workshop() : S.tab === '설정' ? settings() : trash())));
 }
 
@@ -1324,6 +1327,9 @@ document.addEventListener('keydown', (e) => {
   else if (S.confirm) { const f = S.confirm.onClose; S.confirm = null; render(); if (f) f(); }
   else if (S.open) closeLayer();
 });
+
+// 온라인판 «기관 · 수업» 화면에서 학생 작품을 열 때 — /?pid=… 로 들어온다
+try { const q = new URLSearchParams(location.search).get('pid'); if (q) S.pid = q; } catch { /* 주소를 못 읽으면 첫 화면 */ }
 
 pull(true);
 setInterval(() => pull(false), 1500);
