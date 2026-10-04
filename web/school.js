@@ -7,7 +7,7 @@
 // 학생에게 비용 · 횟수 · 키를 보이지 않는다. 초대 코드는 만든 그 자리에서 한 번만 보인다.
 
 const PAGE = document.body.dataset.page === 'manage' ? 'manage' : 'school';
-const S = { me: null, loggedIn: false, orgs: {}, progress: {}, shown: {}, say: '', open: {}, usage: {}, members: {} };
+const S = { me: null, loggedIn: false, orgs: {}, progress: {}, shown: {}, say: '', open: {}, usage: {}, members: {}, wf: {}, wfOpen: {} };
 
 function h(tag, attrs, ...kids) {
   const n = document.createElement(tag);
@@ -119,13 +119,17 @@ function progressBox(c) {
   const p = S.progress[c.id];
   if (!p) return null;
   const SAY = { queued: '대기', running: '진행 중', paused: '멈춤', waiting_for_user: '멈춤', done: '완료', failed: '실패', cancelled: '중지' };
+  const STAGE_SAY = { draft: '초안', approved: '승인', skipped: '건너뜀' };
   return h('div', { style: 'margin-top:10px;width:100%' }, p.students.length
     ? p.students.map((s) => h('div', { class: 'row', style: 'cursor:default' },
       h('div', { class: 'name', text: s.name + (s.projectName ? ' — ' + s.projectName : ' — (아직 작품 없음)') }),
       s.projectId ? h('span', { class: 'mark', text: '문서 ' + s.docs }) : null,
+      s.stage ? h('span', { class: 'mark', text: s.stage.title + ' · ' + (STAGE_SAY[s.stage.status] || s.stage.status) }) : null,
       s.lastJob ? h('span', { class: 'mark', text: SAY[s.lastJob] || s.lastJob }) : null,
       h('div', { class: 'when', text: s.updatedAt ? day(s.updatedAt) : '' }),
-      s.projectId ? h('a', { class: 'btn-text', href: '/?pid=' + encodeURIComponent(s.projectId), text: '읽기' }) : null))
+      s.projectId ? h('a', { class: 'btn-text', href: '/?pid=' + encodeURIComponent(s.projectId), text: '읽기' }) : null,
+      s.stage && s.stage.teachingNote ? h('button', { class: 'btn-text', text: '강의 포인트', onclick: () => { S.open['tn-' + s.userId] = !S.open['tn-' + s.userId]; render(); } }) : null,
+      S.open['tn-' + s.userId] && s.stage ? h('div', { class: 'when', style: 'width:100%;white-space:normal', text: s.stage.title + ' — ' + s.stage.teachingNote }) : null))
     : h('div', { class: 'when', text: '아직 학생이 없습니다' }));
 }
 
@@ -213,6 +217,12 @@ function orgBox(id) {
     h('button', { class: 'btn-line', text: '사용량 보기', onclick: () => showUsage('o-' + id, id) }),
     usageRows('o-' + id),
     h('div', { class: 'line', style: 'margin-top:16px' },
+      h('div', { class: 'lab', style: 'margin:0', text: '학생에게 작업 중 강의 카드 보이기' }),
+      h('button', { class: 'tg' + (!(org.settings && org.settings.student_cards === false) ? ' on' : ''),
+        onclick: async () => { await edu('org.settings', { orgId: id, studentCards: !!(org.settings && org.settings.student_cards === false) }); await load(); } })),
+    h('div', { class: 'lab', style: 'margin-top:16px', text: '단계 · 강의 카드 고쳐 쓰기(이 기관)' }),
+    wfEditor(id),
+    h('div', { class: 'line', style: 'margin-top:16px' },
       h('div', { class: 'lab', style: 'margin:0', text: '기관 관리자가 학생 작품을 읽을 수 있게' }),
       h('button', { class: 'tg' + (readable ? ' on' : ''), onclick: async () => { await edu('org.settings', { orgId: id, adminCanReadProjects: !readable }); await load(); } })));
 }
@@ -281,6 +291,84 @@ function passwordBox() {
       h('button', { class: 'btn-red', text: '바꾸기', onclick: go })));
 }
 
+// ---------------------------------------------------------------- 단계 · 강의 카드 고쳐 쓰기
+// 운영자는 «전체 기본»을, 기관 관리자는 «제 기관»을 고친다. 원문(설정 파일)은 남고, 비우면 원래대로 돌아간다.
+// 고칠 수 있는 칸: 이름 · 할 일 · 추천 참조(앞 단계만) · 끌 수 있음 · 카드(무엇인가 · 볼 점 · 질문) · 강사 메모.
+
+async function loadWf(scopeKey, orgId) {
+  const r = await edu('workflow.view', orgId ? { orgId } : {});
+  if (!r.ok) return tell(r.error);
+  S.wf[scopeKey] = r.workflow;
+  render();
+}
+
+function wfEditor(orgId) {
+  const sk = orgId || 'platform';
+  const w = S.wf[sk];
+  if (!w) return h('button', { class: 'btn-line', text: '단계 목록 열기', onclick: () => loadWf(sk, orgId) });
+  const layerOf = (st) => (orgId ? st.organization : st.platform) || {};
+  return h('div', null, w.stages.map((st) => {
+    const k = sk + ':' + st.key;
+    const mine = layerOf(st);
+    const eff = st.effective;
+    const head = h('div', { class: 'line', style: 'padding:6px 0;border-bottom:1px solid var(--line-soft);cursor:pointer', onclick: () => { S.wfOpen[k] = !S.wfOpen[k]; render(); } },
+      h('div', { class: 'name', style: 'flex:1', text: st.n + '  ' + eff.title }),
+      Object.keys(mine).length ? h('span', { class: 'mark', text: orgId ? '이 기관이 고침' : '고침' }) : null,
+      !orgId ? null : st.platform ? h('span', { class: 'mark', text: '운영자가 고침' }) : null);
+    if (!S.wfOpen[k]) return head;
+    const id = (f) => 'wf-' + sk + '-' + st.key + '-' + f;
+    const before = w.stages.filter((x) => x.n < st.n);
+    const save = async (clear) => {
+      const typed = {
+        title: val(id('title')), task: $(id('task')) ? $(id('task')).value : undefined, teachingNote: $(id('note')).value,
+        optional: $(id('opt')) ? $(id('opt')).checked : undefined,
+        inputs: before.some((x) => $(id('in-' + x.key))) ? before.filter((x) => $(id('in-' + x.key)).checked).map((x) => x.key) : undefined,
+        card: { what: $(id('what')).value, look: $(id('look')).value.split('\n').map((x) => x.trim()).filter(Boolean), ask: $(id('ask')).value },
+      };
+      // 아래 층(원문, 기관이면 원문 + 운영자)과 같은 칸은 보내지 않는다 — 안 고친 칸을 얼려 두지 않게
+      const below = { ...st.original, ...(orgId ? st.platform || {} : {}) };
+      const emptyCard = (c) => !c || (!c.what && !(c.look || []).length && !c.ask);
+      const norm = (k, v) => k === 'card' ? (emptyCard(v) ? 'null' : JSON.stringify({ what: v.what || '', look: v.look || [], ask: v.ask || '' }))
+        : k === 'inputs' ? JSON.stringify([...(v || [])].sort()) : k === 'optional' ? String(!!v) : JSON.stringify(v === '' || v == null ? null : v);
+      const same = (k) => norm(k, typed[k]) === norm(k, below[k]);
+      const data = {};
+      if (!clear) for (const k of Object.keys(typed)) if (typed[k] !== undefined && !same(k)) data[k] = typed[k];
+      const r = await edu('workflow.save', { ...(orgId ? { orgId } : {}), stageKey: st.key, data });
+      if (!r.ok) return tell(r.error);
+      S.say = clear ? '원래대로 되돌렸습니다' : '저장했습니다 — 다음 생성부터 쓰입니다';
+      await loadWf(sk, orgId);
+    };
+    const generates = st.output !== 'input' && st.output !== 'final';
+    const box = (f, label, value, big, hint) => h('div', { style: 'margin-top:10px' },
+      h('div', { class: 'lab', text: label }),
+      big ? h('textarea', { id: id(f), placeholder: hint || '' }) : h('input', { id: id(f), type: 'text', placeholder: hint || '' }));
+    const form = h('div', { style: 'padding:6px 0 14px' },
+      box('title', '단계 이름', '', false, st.original.title),
+      generates ? box('task', '이 단계에서 하는 일(AI 에게 주는 «이번 단계에 할 일»)', '', true) : null,
+      generates && before.length ? h('div', { style: 'margin-top:10px' }, h('div', { class: 'lab', text: '추천 참조(앞 단계 결과를 자동으로 체크해 보여 줌)' }),
+        h('div', { class: 'line' }, before.map((x) => h('label', { class: 'line', style: 'gap:4px' },
+          h('input', { id: id('in-' + x.key), type: 'checkbox' }), h('span', { text: x.effective.title }))))) : null,
+      generates ? h('label', { class: 'line', style: 'gap:6px;margin-top:10px' }, h('input', { id: id('opt'), type: 'checkbox' }), h('span', { text: '학생 · 작가가 이 단계를 끌 수 있음' })) : null,
+      box('what', '강의 카드 — 무엇인가', '', true),
+      box('look', '강의 카드 — 볼 점(한 줄에 하나)', '', true),
+      box('ask', '강의 카드 — 생각해 볼 질문', '', false),
+      box('note', '강사 메모(강사 화면에만)', '', true),
+      h('div', { class: 'line', style: 'margin-top:12px' },
+        h('button', { class: 'btn-red', text: '저장', onclick: () => save(false) }),
+        Object.keys(mine).length ? h('button', { class: 'btn-text', text: '원래대로', onclick: () => save(true) }) : null,
+        h('div', { class: 'when', text: '원문은 그대로 남습니다' })));
+    // 칸에 지금 값(합친 결과)을 채워 둔다 — 그리기가 끝난 뒤
+    setTimeout(() => {
+      const set = (f, v) => { const n = $(id(f)); if (n && !n.dataset.filled) { n.value = v == null ? '' : v; n.dataset.filled = '1'; } };
+      set('title', eff.title); set('task', eff.task); set('note', eff.teachingNote);
+      set('what', eff.card && eff.card.what); set('look', eff.card ? (eff.card.look || []).join('\n') : ''); set('ask', eff.card && eff.card.ask);
+      const opt = $(id('opt')); if (opt && !opt.dataset.filled) { opt.checked = !!eff.optional; opt.dataset.filled = '1'; }
+      for (const x of before) { const c = $(id('in-' + x.key)); if (c && !c.dataset.filled) { c.checked = (eff.inputs || []).includes(x.key); c.dataset.filled = '1'; } }
+    }, 0);
+    return h('div', null, head, form);
+  }));
+}
+
 // ---------------------------------------------------------------- 운영(플랫폼 관리자)
 
 function platformBox() {
@@ -291,7 +379,10 @@ function platformBox() {
     if (!r.ok) return tell(r.error);
     await load();
   };
-  return section('운영 — 기관 · 이용 기간',
+  return section('운영 — 기관 · 이용 기간 · 단계',
+    h('div', { class: 'lab', text: '단계 · 강의 카드 고쳐 쓰기(전체 기본 — 모든 기관 · 개인에게)' }),
+    wfEditor(null),
+    h('div', { class: 'lab', style: 'margin-top:16px', text: '기관' }),
     h('div', { class: 'line', style: 'align-items:flex-end' }, field('기관 이름', 'no-name'), field('주소 이름(영문 소문자 · -)', 'no-slug'),
       h('button', { class: 'btn-line', text: '기관 만들기', onclick: addOrg })),
     Object.values(S.orgs).map(({ org }) => h('div', { class: 'line', style: 'margin-top:10px;align-items:flex-end' },
