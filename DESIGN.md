@@ -27,10 +27,10 @@ tools/auth.mjs        무엇으로 부르는가(그대로 · 구독 · API 키)
 tools/engine.mjs      호출 하나를 짓는 자리(프롬프트 고르기 · 구획 채우기 · 한도 물음)
 tools/state.mjs       메모리가 정본, 파일은 그림자
 tools/store.mjs       파일 저장 — 프로젝트 하나 = 파일 하나
-tools/model.mjs       원소의 순수 동작
+tools/model.mjs       원소의 순수 동작 — 본체는 core/domain/model.mjs(2026-10-04 Core 분리), 여기는 작법서·상한을 꽂고 다시 내보낸다
 tools/prompts.mjs     내장 프롬프트 아홉(자료는 prompts.data.json)
 tools/books.mjs       작법서 그릇 — tools/books/ 의 .txt 를 읽어 문서로 세운다(지금 폴더는 비어 있다)
-tools/assemble.mjs    프롬프트 구획 조립
+tools/assemble.mjs    프롬프트 구획 조립 — 본체는 core/prompt/assemble.mjs
 tools/agents.mjs      비소설 에이전트 즉석 생성(F-KIND·F-AGENT)
 tools/jobs.mjs        작업 실행기(동시 실행·일시중지·삭제)
 tools/server.mjs      HTTP — 문 하나(POST /api) + 정적 파일 + 내려받기

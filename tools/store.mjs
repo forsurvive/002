@@ -5,17 +5,15 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, rmSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { newId, MODELS } from '../core/ids.mjs';
+
+// 이름표·모델 목록은 core/ids.mjs 에 있다 — 지금까지처럼 여기서도 내보낸다.
+export { newId, MODELS };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const ROOT = dirname(HERE);
 export const DATA_DIR = process.env.SE2_DATA_DIR || join(ROOT, 'data');
 const PROJ_DIR = join(DATA_DIR, 'projects');
-
-let seq = 0;
-export function newId(prefix = 'i') {
-  seq += 1;
-  return prefix + '_' + Date.now().toString(36) + seq.toString(36) + Math.floor(Math.random() * 1296).toString(36);
-}
 
 function ensureDirs() {
   mkdirSync(PROJ_DIR, { recursive: true });
@@ -49,9 +47,6 @@ function sleepBriefly(ms) {
   while (Date.now() < until) { /* 기다린다 */ }
 }
 
-// 고를 수 있는 모델 — «기본값»(빈 값)은 두지 않는다.
-// 무엇이 돌지 모르는 칸이 있으면 사람마다 모델을 정해 둔 뜻이 흐려진다(사용자 지시, 2026-09-19).
-export const MODELS = ['opus', 'sonnet', 'fable'];
 
 export function readJson(file, fallback = null) {
   try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return fallback; }

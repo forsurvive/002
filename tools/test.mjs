@@ -1898,8 +1898,14 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   }
 
   // ── 박힌 경로도, 다른 판·옛 폴더의 이름도 없다
+  // Core(core/)로 옮긴 코드도 같은 그물 안에 둔다 — 옮겼다고 규칙이 풀리지 않는다.
+  const coreFiles = (function walk(dir) {
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : /\.(mjs|json)$/.test(e.name) ? [join(dir, e.name)] : []));
+  })(join(ROOT, 'core'));
   const codeFiles = [
     ...readdirSync(HERE).filter((f) => /\.(mjs|json)$/.test(f) && f !== 'test.mjs').map((f) => join(HERE, f)),
+    ...coreFiles,
     ...readdirSync(join(ROOT, 'web')).map((f) => join(ROOT, 'web', f)),
     join(ROOT, '.claude', 'launch.json'), join(ROOT, '.gitignore'), join(ROOT, '.gitattributes'),
   ].filter((f) => existsSync(f));
@@ -1934,6 +1940,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // ── 폴더 밖에 쓰는 것은 호출 한 벌의 임시 파일뿐이고, 그것도 끝나면 지운다
   const running = [
     ...readdirSync(HERE).filter((f) => f.endsWith('.mjs') && f !== 'test.mjs').map((f) => join(HERE, f)),
+    ...coreFiles.filter((f) => f.endsWith('.mjs')),
     ...readdirSync(join(ROOT, 'web')).filter((f) => f.endsWith('.js')).map((f) => join(ROOT, 'web', f)),
   ];
   const outside = running.filter((f) => /\b(tmpdir|homedir)\(\)/.test(src(f))).map((f) => basename(f));
@@ -1964,6 +1971,34 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const design = src(join(ROOT, 'DESIGN.md'));
   ok('DESIGN 이 새 파일 이름을 가리킨다', design.includes(LAUNCHER) && !design.includes('`스토리 엔진.cmd`'));
   ok('DESIGN 에 상점 길이 남아 있지 않다', !design.includes('brain.json') && !design.includes('first.mjs') && !design.includes('cloud.'));
+}
+
+// ---------------------------------------------------------------- Core 는 바깥을 모른다 (온라인화 Phase 1)
+//
+// core/ 의 코드는 파일 · 네트워크 · 자식 프로세스 · 환경 변수 · 개인판 앱(tools/)을 부르지 않는다.
+// 그래야 같은 창작 로직을 개인판(JSON · CLI)과 온라인판(PostgreSQL · API Provider)이 함께 쓴다.
+
+{
+  const walk = (dir) => (existsSync(dir) ? readdirSync(dir, { withFileTypes: true })
+    .flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : e.name.endsWith('.mjs') ? [join(dir, e.name)] : [])) : []);
+  const files = walk(join(ROOT, 'core'));
+  ok('Core 가 있다', files.length >= 3, String(files.length));
+  for (const f of files) {
+    const t = src(f);
+    const name = f.slice(ROOT.length + 1).replace(/\\/g, '/');
+    const specs = [...t.matchAll(/(?:import|export)[^'"]*?from\s*['"]([^'"]+)['"]/g), ...t.matchAll(/import\(\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
+    const outside = specs.filter((s) => !s.startsWith('./') && !s.startsWith('../') || s.includes('tools/') || s.startsWith('node:'));
+    ok('Core 는 바깥을 부르지 않는다: ' + name, outside.length === 0, outside.join(' '));
+    ok('Core 는 환경 변수를 읽지 않는다: ' + name, !/process\.env/.test(t));
+  }
+  // 옮긴 자리를 개인판 이름 그대로 쓸 수 있다 — 같은 함수다(두 벌이 아니다)
+  const coreModel = await import('../core/domain/model.mjs');
+  const coreAsm = await import('../core/prompt/assemble.mjs');
+  const coreIds = await import('../core/ids.mjs');
+  ok('tools/model.mjs 는 Core 의 그것이다', model.docWrite === coreModel.docWrite && model.threadPath === coreModel.threadPath);
+  ok('tools/assemble.mjs 는 Core 의 그것이다', asm.buildUser === coreAsm.buildUser);
+  ok('이름표는 한 벌이다', store.newId === coreIds.newId && store.MODELS === coreIds.MODELS);
+  ok('작법서 본문은 개인판이 꽂아 준 길로 푼다', model.bodyOf({ src: '없는 책' }) === '' && model.bodyOf({ body: '본문' }) === '본문');
 }
 
 // ---------------------------------------------------------------- 호스팅 실행 — 포트 · 주소 · 허용 호스트 · 출입 열쇠
