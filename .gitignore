@@ -3,3 +3,11 @@ data/
 *.tmp
 tools/node/
 tools/claude/
+
+# 비밀값 · 실데이터는 저장소에 싣지 않는다(API 키 · 세션 비밀 · DB 덤프 · 학생 자료)
+.env
+.env.*
+*.pem
+*.dump
+*.sql.gz
+backups/

@@ -1,0 +1,21 @@
+# 기존 시험(개인판 기준선 + 새로 더한 것)을 push · PR 마다 돌린다.
+# 시험은 스스로 모의 호출(SE2_MOCK=1)과 임시 자료 상자를 쓴다 — 망·구독·비밀값이 필요 없다.
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: node tools/test.mjs

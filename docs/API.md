@@ -1,0 +1,125 @@
+# API — 현재 명세와 온라인판 v1 제안
+
+> §1 은 **기준선의 실제 동작**(코드에서 읽음, `tools/server.mjs`). §2 는 온라인판 제안 — 구현하면서 고친다.
+
+## 1. 현재 API (개인판, 127.0.0.1:8801)
+
+### 1-1. 길
+
+| 메서드 · 경로 | 하는 일 | 응답 |
+|---|---|---|
+| `POST /api` | 본문 `{ op, pid?, … }` 를 op 표로 넘긴다 | `200 { ok:true, … }` / `200 { ok:false, error }` · op 없음 `400` · 모르는 op `404` |
+| `GET /api/state` | 프로젝트 목록 | `{ ok, projects:[{ id, name, updatedAt, createdAt }] }` |
+| `GET /api/state?pid=` | 프로젝트 전체 상태(아래 1-3) + 목록 | `{ ok, project, projects }` · 없으면 `{ ok:false, error:'없음' }` |
+| `GET /api/download?pid=&kind=doc\|cat\|thread&id=` | 마크다운 첨부(`text/markdown`, `content-disposition` UTF-8 이름) | 본문 · 없으면 `404` |
+| `GET /…` | `web/` 정적 파일(`/` = index.html) | |
+| `GET /healthz` | (1차 구현에서 더함) 살아 있는지 | `200 ok` — 출입 열쇠·호스트 검사를 거치지 않는다 |
+
+문지기(모든 길 앞, [SECURITY.md](SECURITY.md) §2): Host 허용 목록 · `POST /api` 는 `application/json` 만(`415`) · Origin 은 같은 자리만(`403`).
+1차 구현부터 호스팅 실행(`SE2_HOST` 가 루프백이 아님)에서는 **스테이징 출입 열쇠**(HTTP Basic)가 그 앞에 선다 — [REPLIT_DEPLOYMENT.md](REPLIT_DEPLOYMENT.md) §3.
+
+### 1-2. op 표 (42개)
+
+모든 op 는 `pid` 를 본문에 싣는다(프로젝트를 고르지 않는 op 제외). 대부분 `state.update` 를 지나며 실패해도 `{ ok:true }` 가 돌아오는 경우가 있다(없는 id 를 고치면 조용히 무시).
+
+| op | 본문(필수 **굵게**) | 하는 일 | 응답 |
+|---|---|---|---|
+| `project.list` | — | 목록 | `{ ok, projects }` |
+| `project.create` | **name**, **spec.form**, **materials[{name,text}]**, spec.outline, spec.length, standard, request | 생성 · 자료를 «자료» 카테고리 문서로 · 작법서 문서 · **에이전트 준비 작업 시작** | `{ ok, pid }` / `필수 항목 누락 — 이름 · 형식 · 자료` |
+| `project.spec` | **pid**, name, spec, standard, request, model, noCount | 설정 저장 | `{ ok }` |
+| `project.prepare` | **pid**, request(이번만) | 에이전트 준비 다시(작업) | `{ ok }` / 이미 도는 중 / 이미 준비됨 |
+| `project.delete` | **pid** | 그 프로젝트 작업 정지 + 파일 삭제 | `{ ok }` |
+| `prompt.read` | **pid**, **code** | 자리 프롬프트(3층 합친 값) | `{ ok, one:{ code,name,role,task,craft,model,edited,made } }` |
+| `prompt.write` | **pid**, **code**, name, role, task, craft | 작가 고침 층 저장 | `{ ok }` |
+| `prompt.reset` | **pid**, **code** | 고침 층 걷기 | `{ ok }` |
+| `prompt.model` | **pid**, **code**, model(`''`=작품 따름) | 자리 모델 | `{ ok }` |
+| `peek` | **pid**, **id** | 문서·에이전트 본문 펼쳐 보기 | `{ ok, one:{ id,name,text } }` |
+| `material.add` | **pid**, **text**, name | 자료 문서 추가(폰) | `{ ok }` |
+| `material.delete` | **pid**, **ids[]** | 자료 문서 휴지통(폰) | `{ ok }` |
+| `agent.create` | **pid**, name, role, craft, model | 에이전트(crew) 짓기 | `{ ok, id }` |
+| `agent.write` | **pid**, **id**, name, role, craft, model | 고치기 | `{ ok }` |
+| `agent.delete` | **pid**, **ids[]** | 지우기(문서·스레드에서도 떼기) | `{ ok }` |
+| `doc.create` | **pid**, kind(`doc`/`check`/`review`), title, body, categoryId | 빈 문서(호출 없음) | `{ ok, id }` |
+| `doc.write` | **pid**, **id**, title, body, request, refIds, targetIds, agentIds, categoryId | 고치기(제목·본문이 바뀌면 직전 판을 이력에) | `{ ok }` |
+| `doc.final` | **pid**, **ids[]**, **on** | 확정본 켜고 끄기 | `{ ok }` |
+| `doc.delete` | **pid**, **ids[]** | 휴지통 | `{ ok }` |
+| `doc.discard` | **pid**, **id** | 갓 만든 빈 검사·합평 거두기(서버가 비었는지 잰다) | `{ ok }` |
+| `doc.restoreVersion` | **pid**, **id**, **index** | 그 판으로(지금 판은 이력에) | `{ ok }` |
+| `doc.update` | **pid**, **id**, model(이번만) | **갱신 작업 시작**(문서·검사·합평) | `{ ok, jobId }` / 이미 도는 중 |
+| `cat.create` | **pid**, name | 카테고리 | `{ ok, id }` |
+| `cat.delete` | **pid**, **ids[]** | 그릇만 휴지통(문서는 «새로 추가된 문서»로) | `{ ok }` |
+| `thread.create` | **pid**, title, refIds | 논의 스레드 | `{ ok, id }` |
+| `thread.refs` / `thread.agents` | **pid**, **id**, refIds / agentIds | 참조·사람 걸기 | `{ ok }` |
+| `thread.send` | **pid**, **id**, **text**, model | 말 얹기 + **답 작업** | `{ ok, jobId }` / 빈 말 |
+| `thread.edit` | **pid**, **id**, **messageId**, **text**, model | 지난 말 고치기 = 새 가지 + **답 작업** | `{ ok, jobId }` |
+| `thread.title` | **pid**, **id**, title | 이름 | `{ ok }` |
+| `thread.head` | **pid**, **id**, **messageId** | 가지 옮기기 | `{ ok }` |
+| `thread.doc` | **pid**, **id**, request, model | **문서로 정리 작업**(지금 가지) | `{ ok, jobId }` |
+| `thread.delete` / `thread.discard` | **pid**, ids[] / id | 휴지통 / 갓 만든 빈 스레드 거두기 | `{ ok }` |
+| `trash.restore` / `trash.purge` | **pid**, **ids[]** | 복원 / 영구 삭제 | `{ ok }` |
+| `job.pause` / `job.resume` | **pid**, **id** | 다음 호출 앞에서 서기 / 잇기 | `{ ok }` |
+| `job.remove` | **pid**, **id** | 멈추고 목록에서 치움(만든 문서는 남음) | `{ ok }` |
+| `job.answer` | **pid**, **id**, **choice**(`wait`/`api`/`stop`) | 한도 물음에 답 | `{ ok }` |
+| `auth.read` | — | `{ ok, auth:{ mode, hasKey, modes } }` — 키 원문은 내려가지 않음 | |
+| `auth.write` | mode, apiKey(`''`=지움, 없으면 그대로) | 무엇으로 부를지 | `{ ok, auth }` |
+
+화면(`web/app.js`)이 직접 부르는 op 는 36개이고, `project.list`·`material.*`·`auth.read`·`job.pause/resume`(동적 이름) 은 폰 동반 프로그램 또는 동적 호출이 쓴다.
+**폰 동반 프로그램이 이 표에 기대고 있으므로 개인판에서는 op 이름과 응답 꼴을 바꾸지 않는다.**
+
+### 1-3. `GET /api/state?pid=` 의 `project`
+
+```text
+{ id, name, spec, standard, request,
+  categories: [{ id, name, virtual, docIds }],            // «새로 추가된 문서»(__inbox__)는 가상
+  crew: [{ id, name, role, craft, model }],
+  docs: [{ id, kind, title, body, src, chars, isFinal, categoryId, request, refIds, targetIds, agentIds,
+           versions: [{ i, at, title, body }], updatedAt }],   // ← 모든 판의 본문까지 매번
+  threads: [{ id, title, refIds, agentIds, messages, headId, path }],
+  trash: [{ id, at, kind, from, title }],
+  jobs: [job], model, models: ['opus','sonnet','fable'], noCount,
+  prompts: [{ code, name, edited, made, model, control }], agentKind,
+  auth: { mode, hasKey, modes }, limit: <마지막 rate_limit 정보|null>, prepared }
+```
+
+## 2. 온라인판 v1 제안
+
+### 2-1. 방침
+
+- **같은 봉투를 쓴다**: `POST /api { op, … }` + `GET /api/state`. 편집기 화면(`web/app.js`)과 그 배선 시험을 그대로 살리기 위해서다.
+  편집 op(§1-2)는 이름과 의미를 지키고, 온라인 전용 op 를 더한다.
+- 인증은 **세션 쿠키**(`HttpOnly; Secure; SameSite=Lax`). 상태를 바꾸는 요청은 지금의 문지기(JSON 만 · 같은 출처 Origin)를 그대로 CSRF 방어로 쓴다.
+- 오류는 `{ ok:false, error, code }` — `code` 는 기계가 읽는 값(`unauthenticated` `forbidden` `not_found` `conflict` `license_inactive` `credential_missing` `validation` `rate_limited`).
+  HTTP 상태도 맞춘다(401/403/404/409/422/429). **다른 테넌트의 id 는 «없음(404)»으로 답한다**(존재 여부를 흘리지 않음).
+- AI 를 부르는 op 는 모두 **작업 등록**만 한다 → `202 { ok, jobId }`. 결과는 상태 조회로 본다.
+- 학생 응답에는 비용·횟수·credential·모델 id 를 싣지 않는다(역할별 응답 모양을 서버가 정한다).
+
+### 2-2. 새 op (초안)
+
+| 묶음 | op | 누가 | 메모 |
+|---|---|---|---|
+| 인증 | `auth.signup` `auth.login` `auth.logout` `auth.me` `auth.password` | 누구나/본인 | 개인 가입은 정책 결정 후(초대제로 시작 가능). 로그인 실패는 같은 문구, 속도 제한 |
+| 초대 | `invite.create` `invite.accept` | 기관 관리자·강사 / 학생 | 코드 원문은 만들 때 한 번만 보여 준다 |
+| 기관 | `org.create` `org.update` `org.list` `org.members` `org.member.add/remove/role` | 플랫폼 관리자 / 기관 관리자 | 감사 로그 |
+| 라이선스 | `license.issue` `license.update` `license.revoke` `license.read` | 플랫폼 관리자 / 기관 관리자(읽기) | 감사 로그 |
+| 수업 | `class.create` `class.update` `class.list` `class.members` `class.enroll` `class.progress` | 기관 관리자·강사 | `class.progress` = 학생별 현재 단계·최근 작업 상태 |
+| Credential | `credential.list` `credential.set` `credential.test` `credential.revoke` | 개인(본인) / 기관 관리자(기관) / 플랫폼 관리자 | `set` 은 키를 받기만 하고 **돌려주지 않는다** — `{ provider, status, keyHint, lastVerifiedAt }` |
+| 모델 | `model.catalog` `model.catalog.set` | 모두(표시명만) / 플랫폼 관리자 | 학생에게는 표시명·tier 만 |
+| 작업 | `job.list` `job.cancel` `job.retry` `job.answer` `job.pause` `job.resume` `job.remove` | 프로젝트 쓰기 권한 | `job.remove` = 취소 + 목록에서 숨김 |
+| 생성 기록 | `run.list` `run.read` | 프로젝트 쓰기 권한(학생은 비용 칸 없음) | «이 결과는 무엇을 보고 만들었나» — 참조 스냅샷 |
+| 워크플로우 | `workflow.templates` `stage.list` `stage.start` `stage.approve` `stage.reopen` `stage.skip` | 프로젝트 쓰기 권한 | `stage.start` = 추천 참조 확인 후 `doc.update` 와 같은 작업 등록 |
+| 사용량 | `usage.summary` `usage.byClass` `usage.byModel` | 기관 관리자 / 플랫폼 관리자 / 개인(본인) | 학생 불가 |
+| 내보내기 | `project.export` `project.import` | 소유자 | `story-project` 묶음(Phase 9) |
+| 관리 | `admin.jobs` `admin.errors` `admin.users` | 플랫폼 관리자 | |
+
+편집 op 의 온라인 차이:
+- `doc.update` 에 `requestOnce`(이번 실행에만) · `tier`/`provider`(정책이 허락할 때) · `idempotencyKey` 를 더한다.
+- `doc.write` 에 `rowVersion` 을 더한다(동시 편집 충돌이면 `409 conflict`).
+- `auth.read`/`auth.write`(개인판 CLI 갈래)는 온라인에서 쓰지 않는다 → `credential.*` 가 대신한다.
+
+### 2-3. 상태 조회를 가볍게
+
+지금의 `GET /api/state?pid=` 는 모든 판의 본문을 1.5초마다 싣는다. 온라인에서는:
+- 판 목록은 메타데이터만(`{ id, seq, at, title, chars, source }`), 판 본문은 `GET /api/version?pid=&id=` 로 펼칠 때만.
+- `ETag`(프로젝트 `updated_at`+작업 상태 해시) → 바뀌지 않았으면 `304`.
+- 작업만 보는 가벼운 길 `GET /api/jobs?pid=` (명세 §45 의 `GET /api/jobs/:id` 에 해당).
+- 화면이 쓰는 모양(`stateOf`)은 유지해 `web/app.js` 를 크게 고치지 않는다.
