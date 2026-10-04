@@ -27,6 +27,7 @@ import { agentsReady, STUDY_TITLE } from '../core/generation/agents.mjs';
 import { AGENT_SLOTS } from '../tools/prompts.mjs';
 import { createJobQueue } from './jobs.mjs';
 import { createTenancy, SAY } from './tenancy.mjs';
+import { createEdu } from './edu.mjs';
 import { createWorker } from './worker.mjs';
 import { createOnlineCall } from './call.mjs';
 import { buildAi } from './ai.mjs';
@@ -133,6 +134,7 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null } = 
 export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null } = {}) {
   const store = createProjectStore(pool);
   const tenancy = createTenancy(pool);
+  const edu = createEdu({ pool, credentials });
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
 
   // 화면은 제 자리의 파일만 부른다 — 스크립트는 외부 파일만, 꾸밈은 style 속성을 쓰므로 인라인 꾸밈만 허락
@@ -255,6 +257,17 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         if (user) return send(res, 302, '', 'text/plain; charset=utf-8', { location: '/' });
         return staticFile(res, 'login.html');
       }
+      // ---------------- 교육기관판의 일(기관 · 라이선스 · 수업 · 초대 · 수업 현황 · 기관 키) — online/edu.mjs
+      // 초대 받기만 로그인 없이도 된다(새 계정을 만들며 들어온다). 나머지 권한은 edu 가 한 문씩 본다.
+      if (req.method === 'POST' && url.pathname === '/api/edu') {
+        const r = await edu.handle(user, body, ipOf(req));
+        if (r.newUser) {
+          const li = await auth.login(pool, { loginId: body.loginId, password: body.password, ip: ipOf(req), userAgent: req.headers['user-agent'] || '' });
+          if (li.ok) return json(res, r.status, r.body, { 'set-cookie': auth.sessionCookie(li.token, { secure }) });
+        }
+        return json(res, r.status, r.body);
+      }
+
       if (!user) {
         if (url.pathname.startsWith('/api')) return json(res, 401, bad('로그인이 필요합니다', 'login'));
         if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {

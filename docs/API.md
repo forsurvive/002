@@ -131,6 +131,26 @@
 
 로그인 전 `/api*` 는 401 `{ code:'login' }` → 화면(`web/app.js`)이 `/login` 으로 보낸다. 가입 문은 없다 — 계정은 운영자가 `node online/admin.mjs create-user <아이디>` 로 만든다(SECURITY §7).
 
+### 2-3a. 교육기관판 — `POST /api/edu { op, … }` (online/edu.mjs)
+
+| op | 누가 | 하는 일 |
+|---|---|---|
+| `me.memberships` | 로그인한 사람 | 내 기관(역할) · 수업(역할) |
+| `org.create` `{name, slug}` | 플랫폼 관리자 | 기관 만들기 |
+| `org.list` | 플랫폼 관리자(전체) · 기관 관리자(제 기관) | |
+| `org.settings` `{orgId, adminCanReadProjects}` | 기관 관리자 | 기관 관리자의 작품 열람 정책(기본 꺼짐) |
+| `license.issue` `{orgId, plan, days, seatLimit}` · `license.status` `{licenseId, status}` | 플랫폼 관리자 | 사용권 발급 · 정지/해지 |
+| `license.read` `{orgId}` | 기관 관리자 | 라이선스 · 쓰는 학생 자리 |
+| `class.create` · `class.list` · `class.archive` `{…, reopen}` | 기관 관리자(목록은 멤버도) | 수업 |
+| `class.progress` `{classId}` | 맡은 강사 · 기관 관리자 | 학생마다 프로젝트 · 문서 수 · 최근 작업 상태(비용 칸 없음) |
+| `invite.create` `{orgId, classId?, role, days, maxUses}` | 기관 관리자(모든 역할) · 강사(맡은 수업 학생만) | 코드 원문은 이번 응답에만(`ABCD-EFGH-JKLM`) |
+| `invite.revoke` `{inviteId}` | 만든 쪽 | |
+| `invite.accept` `{code, loginId?, password?, displayName?}` | **로그인 없이도** | 새 계정을 만들며(또는 지금 계정에) 기관 · 수업에 더한다 · 학생 자리 상한 · 틀린 코드 고삐(429) |
+| `org.key.set` `{orgId, provider, apiKey}` · `org.key.list` | 기관 관리자 | 기관 키(쓰기 전용 — 끝 네 자리만 보임) |
+
+편집기 문(`POST /api`)의 `project.create` 에 `classId` 를 주면 그 수업의 프로젝트가 된다(멤버 · 열린 수업 · 유효 라이선스일 때만, 아니면 403/404 — 개인 프로젝트로 새지 않는다).
+열람 권한(강사 · 기관 관리자)으로 상태를 받으면 `project.readOnly = true`, 고치는 문은 403 `read_only`.
+
 ### 2-4. 상태 조회를 가볍게
 
 > **온라인 서버에 들어간 것(2026-10-04)**: `GET /api/state` 에 지문(`ETag` — 프로젝트 `updated_at` · 내 프로젝트 목록 · 작업 줄을 질의 하나로)과 `Cache-Control: private, no-cache`. 같으면 **프로젝트를 짓지 않고 304**. 브라우저가 스스로 `If-None-Match` 를 붙이므로 화면(`web/app.js`)은 고치지 않았다. 남은 것: 판 본문을 펼칠 때만 받기.
