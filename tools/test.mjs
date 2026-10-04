@@ -2460,6 +2460,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('.replit 은 바깥 주소에 붙여 서버를 띄운다', (replit.match(/SE2_HOST=0\.0\.0\.0 node online\/start\.mjs/g) || []).length >= 2);
   const startSrc = src(join(ROOT, 'online', 'start.mjs'));
   ok('데이터베이스가 없으면 개인판 서버로 간다(같은 문지기 · 같은 열쇠)', /if \(!env\.DATABASE_URL\)[\s\S]{0,400}'tools', 'server\.mjs'[\s\S]{0,200}personal\.boot\(\)/.test(startSrc));
+  const serverMain = src(join(HERE, 'server.mjs'));
+  ok('**바깥에 열었는데 데이터베이스가 있으면 로그인 없는 개인판을 세우지 않는다(온라인판으로)**',
+    /const toOnline = !!\(HOSTING\.exposed && process\.env\.DATABASE_URL\)/.test(serverMain) && /online\/start\.mjs/.test(serverMain) && !/^import .*online\//m.test(serverMain));
   ok('갈래 고르기는 pg 를 미리 부르지 않는다(개인판은 의존성 0)', !/^import .*['"]pg['"]/m.test(startSrc) && !/^import .*server\.mjs/m.test(startSrc));
   ok('**.replit 에 열쇠를 적지 않는다**', !/SE2_ACCESS_KEY\s*=/.test(replit) && !/sk-ant-|sk-[A-Za-z0-9]{20}|AIza/.test(replit));
   ok('.replit 에 포트를 박지 않는다(플랫폼의 PORT 를 따른다)', !/SE2_PORT=/.test(replit));

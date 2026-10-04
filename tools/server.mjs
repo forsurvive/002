@@ -178,7 +178,14 @@ export function boot(port = PORT) {
   });
 }
 
-if (process.argv[1] && process.argv[1].endsWith('server.mjs')) {
+// 바깥에 열었는데(호스팅) 데이터베이스가 있으면 — 로그인 없는 개인판을 인터넷에 세우지 않는다. 온라인판(로그인)으로 간다.
+// 어떤 실행 명령으로 띄워도 같다(플랫폼에 남은 옛 실행 설정이 tools/server.mjs 를 불러도). 내 PC(127.0.0.1)의 개인판은 그대로다.
+const toOnline = !!(HOSTING.exposed && process.env.DATABASE_URL);
+if (process.argv[1] && process.argv[1].endsWith('server.mjs') && toOnline) {
+  console.log('  [NOTE] A database is set - starting the online edition (login required) instead of the personal edition');
+  const { start } = await import(new URL('../online/start.mjs', import.meta.url).href);
+  await start(process.env);
+} else if (process.argv[1] && process.argv[1].endsWith('server.mjs')) {
   try { await boot(PORT); } catch { process.exit(1); }
   const addr = 'http://127.0.0.1:' + PORT;
   if (!HOSTING.exposed) console.log('  Story Engine : ' + addr);
