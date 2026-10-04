@@ -127,6 +127,7 @@ export async function run({ pool, ok, eq }) {
     eq('멈춘 동안 더 부르지 않는다', seen.length - before, 1);
     await op('job.resume', { pid, id: j5 });
     ok('이어 하면 끝까지', (await until(pid, j5, (j) => j.status === 'done', 8000)).status === 'done');
+    eq('**이어 해도 이미 들은 평은 다시 부르지 않는다(체크포인트)**', seen.length - before, 3);
     ok('합평 글이 남는다', /^평 /.test((await state(pid)).docs.find((d) => d.id === rv).body));
 
     // ---------------- worker 가 죽어도 작업은 잃지 않는다 — 다른 worker 가 lease 뒤에 잇는다

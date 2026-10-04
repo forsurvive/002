@@ -2060,6 +2060,18 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     'talk', { threadId: tAsk.id, text: null, askedId: pre.id }, { pid: mem.id, step() {}, addDoc() {} });
   ok('저장된 말에 답한다(말은 한 번)', said.ok && seen[0] === '미리 둔 물음' && tAsk.messages.length === 2 && tAsk.messages[1].parentId === pre.id && tAsk.messages[1].role === 'assistant');
   ok('없는 말을 가리키면 실패', (await kinds.runKind({ store: memStore, call: async () => ({ ok: true, text: 'x' }) }, 'talk', { threadId: tAsk.id, text: null, askedId: 'g_none' }, { pid: mem.id, step() {}, addDoc() {} })).ok === false);
+  // 합평 패널 체크포인트 — 이미 들은 사람은 다시 부르지 않고, 한 사람이 끝날 때마다 남긴다(온라인 worker 가 잇는 자리)
+  const pa = model.agentCreate(mem, { name: '갑' }); const pb = model.agentCreate(mem, { name: '을' });
+  const rvDoc = model.docCreate(mem, { kind: 'review', title: '합평', targetIds: [mo.id], agentIds: [pa.id, pb.id] });
+  const codes = []; const saves = [];
+  const panelRun = await kinds.runKind({ store: memStore, call: async (a) => { codes.push(a.code + ':' + (a.agentIds[0] || '')); return { ok: true, text: a.code === 'F-MERGE' ? '모은 평' : '을의 평' }; } },
+    'update', { docId: rvDoc.id }, { pid: mem.id, step() {}, addDoc() {}, resume: { panel: { docId: rvDoc.id, heard: [{ agentId: pa.id, text: '갑의 평' }] } }, save: async (x) => { saves.push(x); } });
+  ok('**들은 사람은 다시 부르지 않는다**', panelRun.ok && codes.join(',') === 'F-REVIEW:' + pb.id + ',F-MERGE:', codes.join(','));
+  ok('한 사람이 끝날 때마다 남긴다(앞서 들은 것까지)', saves.length === 1 && saves[0].panel.heard.map((x) => x.text).join('/') === '갑의 평/을의 평');
+  eq('모은 글이 본문으로', model.findDoc(mem, rvDoc.id).body, '모은 평');
+  const codes2 = [];
+  await kinds.runKind({ store: memStore, call: async (a) => { codes2.push(a.code); return { ok: true, text: '평' }; } }, 'update', { docId: rvDoc.id }, { pid: mem.id, step() {}, addDoc() {} });
+  eq('체크포인트가 없으면 지금과 같다(사람마다 + 모으기)', codes2.join(','), 'F-REVIEW,F-REVIEW,F-MERGE');
   const pj = (await post('project.create', { name: '작업은 데이터', spec: { form: '단편' }, materials: [{ name: '자료', text: '자료' }] })).pid;
   await settle(pj);
   const dj = (await post('doc.create', { pid: pj, title: '문서' })).id;

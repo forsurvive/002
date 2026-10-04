@@ -124,6 +124,12 @@ export function createJobQueue(pool) {
           WHERE id = $1 AND locked_by = $2 AND status = 'running' AND NOT coalesce(result->'docIds', '[]'::jsonb) ? $3`, [jobId, workerId, String(docId)]);
     },
 
+    // 체크포인트 — 여러 호출로 된 작업이 한 호출씩 끝날 때마다(합평 패널). 재시도 · 이어 하기 · 회수가 여기서 잇는다.
+    async checkpoint(jobId, workerId, data) {
+      const r = await pool.query(`UPDATE jobs SET checkpoint = $3 WHERE id = $1 AND locked_by = $2 AND status = 'running'`, [jobId, workerId, data]);
+      return r.rowCount > 0;
+    },
+
     // 끝내기 — done · failed · cancelled. 울타리가 맞을 때만(맞았으면 true)
     async finish(jobId, workerId, { status, errorCode = '', errorSafe = '' }) {
       const r = await pool.query(

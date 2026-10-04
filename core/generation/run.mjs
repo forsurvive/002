@@ -42,19 +42,31 @@ export async function runUpdate({ store, call }, pid, docId, ctx, { modelPick = 
 }
 
 // 합평회 — 걸린 사람마다 한 호출씩 제 합평을 내고, 마지막 한 호출이 그것들을 하나로 모은다.
+// 체크포인트: 바깥이 ctx.save 를 주면 한 사람의 합평이 끝날 때마다 남기고, ctx.resume 에 남은 것이 있으면 그 사람은 다시 부르지 않는다
+// (온라인 worker 가 일시중지 · 재시도 · 회수 뒤에 잇는 자리. 개인판은 둘 다 없어 지금과 같다).
 async function runPanelReview({ store, call }, pid, d, agentIds, common, ctx) {
   const project = await store.get(pid);
   const crew = model.agentsByIds(project, agentIds);
   if (crew.length < 2) return call({ ...common, code: 'F-REVIEW', agentIds }, ctx);
 
+  const prev = ctx && ctx.resume && ctx.resume.panel && ctx.resume.panel.docId === d.id ? ctx.resume.panel.heard || [] : [];
+  const heard = [];   // { agentId, text } — 체크포인트로 남기는 꼴
   const said = [];
   for (const one of crew) {
+    const had = prev.find((x) => x.agentId === one.id);
+    if (had) {
+      heard.push(had);
+      said.push({ id: '', name: one.name + '의 합평', text: had.text });
+      continue;
+    }
     if (ctx && ctx.gate) await ctx.gate();
     if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
     if (ctx) ctx.step(d.title + ' — ' + one.name);
     const r = await call({ ...common, code: 'F-REVIEW', agentIds: [one.id] }, ctx);
     if (!r.ok) return r;
+    heard.push({ agentId: one.id, text: r.text });
     said.push({ id: '', name: one.name + '의 합평', text: r.text });
+    if (ctx && ctx.save) await ctx.save({ panel: { docId: d.id, heard } });
   }
 
   if (ctx && ctx.gate) await ctx.gate();

@@ -61,6 +61,9 @@ export function createWorker({ queue, store, call, prepare = null }, {
     };
     const ctx = {
       pid: row.project_id, jobId: row.id, userId, threadId: params.threadId || '', signal: controller.signal,
+      // 체크포인트 — 지난 시도가 남긴 것(resume)과 이번에 남기기(save). 울타리 밖이면 남기지 않는다.
+      resume: row.checkpoint || null,
+      save: async (data) => { await queue.checkpoint(row.id, id, data); },
       // Core 는 이 둘을 기다리지 않는다 — 끝내기 전에 모두 닿게 모아 둔다(끝낸 뒤에 오면 울타리에 막혀 산출 문서를 잃는다)
       step: (text) => { pending.push(queue.step(row.id, id, text).catch(() => {})); },
       addDoc: (docId) => { pending.push(queue.addDoc(row.id, id, docId).catch(() => {})); },
