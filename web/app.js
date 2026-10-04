@@ -258,7 +258,9 @@ function projectList() {
         brandMark('margin-bottom:6px'),
         h('div', { class: 'top-name', style: 'font-size:30px', text: '스토리 엔진' })),
       h('div', { class: 'line', style: 'flex:none' },
-        S.me ? h('button', { class: 'btn-text', text: '기관 · 수업', onclick: () => { location.href = '/school.html'; } }) : null,
+        // 온라인판 — 관리는 운영자 · 기관 관리자에게만 보인다(막는 것은 서버다). 수업 · 초대 코드는 누구나.
+        S.me && S.me.manage ? h('button', { class: 'btn-text', text: '관리', onclick: () => { location.href = '/manage.html'; } }) : null,
+        S.me ? h('button', { class: 'btn-text', text: '수업 · 초대 코드', onclick: () => { location.href = '/school.html'; } }) : null,
         S.me ? h('button', { class: 'btn-text', text: '로그아웃', onclick: logout }) : null,
         h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: startTour }),
         h('button', { class: 'plus', text: '+', onclick: () => { S.draft = []; S.open = { type: 'newproject' }; render(); } }))),

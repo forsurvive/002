@@ -147,6 +147,12 @@
 | `invite.revoke` `{inviteId}` | 만든 쪽 | |
 | `invite.accept` `{code, loginId?, password?, displayName?}` | **로그인 없이도** | 새 계정을 만들며(또는 지금 계정에) 기관 · 수업에 더한다 · 학생 자리 상한 · 틀린 코드 고삐(429) |
 | `org.key.set` `{orgId, provider, apiKey}` · `org.key.list` | 기관 관리자 | 기관 키(쓰기 전용 — 끝 네 자리만 보임) |
+| `org.members` `{orgId}` | 기관 관리자 | 사람 목록 — 한 사람 한 계정(아이디 · 이름 · 역할 · 수업). 초대 코드는 들어오는 열쇠일 뿐 계정이 아니다 |
+| `member.reset_password` `{orgId, userId}` | 기관 관리자(제 기관 학생 · 강사) | 임시 비밀번호를 한 번만 보여 주고 그 사람의 세션을 끊는다 |
+| `member.remove` `{orgId, userId}` | 기관 관리자 | 기관 · 수업에서 내보낸다(계정 · 작품은 남고 그 사람은 제 작품을 읽기만) |
+| `usage.summary` `{orgId?}` | 기관 관리자(기관 키) · 본인(개인 키) | 달 · 모델별 호출 · 토큰 · 추정 금액. 학생 · 강사는 없음 |
+
+화면: `/manage.html` «관리»(운영자 · 기관 관리자에게만 첫 화면 단추가 보인다 — 막는 것은 서버) · `/school.html` «수업 · 초대 코드»(초대 코드로 들어오기 · 내 수업 · 내 비밀번호 바꾸기). `POST /api/auth/password {current, next}` 는 내 비밀번호 바꾸기.
 
 편집기 문(`POST /api`)의 `project.create` 에 `classId` 를 주면 그 수업의 프로젝트가 된다(멤버 · 열린 수업 · 유효 라이선스일 때만, 아니면 403/404 — 개인 프로젝트로 새지 않는다).
 열람 권한(강사 · 기관 관리자)으로 상태를 받으면 `project.readOnly = true`, 고치는 문은 403 `read_only`.

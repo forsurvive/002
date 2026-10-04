@@ -179,7 +179,9 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
     if (pid && !(await canRead(user, pid))) return '';
     const { rows } = await pool.query(
       `SELECT (SELECT updated_at::text FROM projects WHERE id = $1::uuid) AS p,
-              (SELECT count(*)::text || ':' || coalesce(max(updated_at)::text, '') FROM projects WHERE owner_user_id = $2 AND deleted_at IS NULL) AS mine,
+              (SELECT count(*)::text || ':' || coalesce(max(updated_at)::text, '') FROM projects WHERE owner_user_id = $2 AND deleted_at IS NULL)
+                || '|' || (SELECT count(*)::text FROM class_members WHERE user_id = $2)
+                || '|' || (SELECT count(*)::text FROM organization_members WHERE user_id = $2 AND status = 'active') AS mine,
               (SELECT coalesce(string_agg(id::text || status || step || coalesce(step_at::text, '') || coalesce(ended_at::text, '')
                         || coalesce(dismissed_at::text, '') || coalesce(ask::text, '') || error_message_safe || coalesce(result::text, ''), ',' ORDER BY id), '')
                  FROM jobs WHERE project_id = $1::uuid) AS jobs`, [pid || null, user.id]);
@@ -252,6 +254,14 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
 
       const user = await auth.sessionUser(pool, token);
       const me = user ? { loginId: user.loginId, displayName: user.displayName } : null;
+      // 화면이 어느 단추를 세울지 — 관리(운영자 · 기관 관리자) · 내 수업. 단추는 편의일 뿐, 판정은 edu · tenancy 가 문마다 다시 한다.
+      const withRoles = async () => {
+        if (!me) return me;
+        const r = (await pool.query(
+          `SELECT bool_or(role = 'organization_admin') AS org_admin, count(*)::int AS n FROM organization_members WHERE user_id = $1 AND status = 'active'`, [user.id])).rows[0];
+        const classes = (await pool.query('SELECT count(*)::int AS n FROM class_members WHERE user_id = $1', [user.id])).rows[0].n;
+        return { ...me, manage: !!(user.isPlatformAdmin || r.org_admin), platformAdmin: !!user.isPlatformAdmin, classes, member: r.n > 0 };
+      };
 
       if (req.method === 'GET' && (url.pathname === '/login' || url.pathname === '/login.html')) {
         if (user) return send(res, 302, '', 'text/plain; charset=utf-8', { location: '/' });
@@ -275,7 +285,14 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         }
       }
 
-      if (req.method === 'GET' && url.pathname === '/api/me') return json(res, 200, ok({ me }));
+      if (req.method === 'GET' && url.pathname === '/api/me') return json(res, 200, ok({ me: await withRoles() }));
+      // 내 비밀번호 바꾸기 — 지금 비밀번호를 알아야 한다. 바꾸면 다른 세션은 모두 끊기고, 이 브라우저는 새로 들어온다.
+      if (req.method === 'POST' && url.pathname === '/api/auth/password') {
+        const r = await auth.changePassword(pool, user.id, { current: body.current, next: body.next });
+        if (!r.ok) return json(res, r.code === 'validation' ? 422 : 403, bad(r.error, r.code));
+        const li = await auth.login(pool, { loginId: user.loginId, password: body.next, ip: ipOf(req), userAgent: req.headers['user-agent'] || '' });
+        return json(res, 200, ok(), li.ok ? { 'set-cookie': auth.sessionCookie(li.token, { secure }) } : {});
+      }
 
       // ---------------- 문 하나 — 개인판과 같은 op 와 같은 응답 꼴
       if (req.method === 'POST' && url.pathname === '/api') {
@@ -313,7 +330,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         if (etag && req.headers['if-none-match'] === etag) return send(res, 304, '', 'application/json; charset=utf-8', cache);
         const { stateOf } = createOps(depsFor(store, queue, worker, user, { tenancy }));
         const projects = await store.listFor(user.id);
-        if (!pid) return json(res, 200, { ok: true, projects, me }, cache);
+        if (!pid) return json(res, 200, { ok: true, projects, me: await withRoles() }, cache);
         const acc = await tenancy.access(user, pid);
         const st = acc.read ? await stateOf(pid) : null;
         if (st && !acc.write) st.readOnly = true;   // 강사 · 기관 관리자의 열람 — 화면이 고치기 단추를 숨길 근거(막는 것은 서버다)

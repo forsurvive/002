@@ -211,6 +211,47 @@ export function createEdu({ pool, credentials = null }) {
       return ok({ usage: rows.map((r) => ({ ...r, input_tokens: Number(r.input_tokens), output_tokens: Number(r.output_tokens), cache_read_tokens: Number(r.cache_read_tokens), cost_usd: Number(r.cost_usd) })), estimated: true });
     },
 
+    // ---------------- 사람(기관 관리자) — 학생 · 강사는 저마다 제 계정이다(초대 코드는 들어오는 열쇠일 뿐 계정이 아니다)
+    async 'org.members'(user, b) {
+      if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
+      const rows = (await pool.query(
+        `SELECT u.id, u.login_id, u.display_name, u.last_login_at, array_agg(DISTINCT m.role) AS roles,
+                coalesce((SELECT array_agg(c.name ORDER BY c.name) FROM class_members cm JOIN classes c ON c.id = cm.class_id
+                           WHERE cm.user_id = u.id AND cm.organization_id = $1), '{}') AS classes
+           FROM organization_members m JOIN users u ON u.id = m.user_id
+          WHERE m.organization_id = $1 AND m.status = 'active'
+          GROUP BY u.id ORDER BY u.display_name, u.login_id`, [b.orgId])).rows;
+      return ok({ members: rows.map((r) => ({ userId: r.id, loginId: r.login_id, name: r.display_name, roles: r.roles, classes: r.classes,
+        lastLoginAt: r.last_login_at ? new Date(r.last_login_at).getTime() : 0 })) });
+    },
+    // 비밀번호를 잊은 사람 — 임시 비밀번호를 한 번만 보여 주고, 그 사람의 세션은 모두 끊는다.
+    // 기관 관리자는 제 기관의 학생 · 강사만(다른 기관 관리자 · 플랫폼 관리자 · 자기 자신은 안 된다 — 자기 것은 «비밀번호 바꾸기»로).
+    async 'member.reset_password'(user, b, ip) {
+      if (!isUuid(b.orgId) || !isUuid(b.userId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
+      if (b.userId === user.id) return no(422, '자기 비밀번호는 «비밀번호 바꾸기»에서 바꿉니다', 'validation');
+      const roles = await rolesIn(b.userId, b.orgId);
+      const target = await one('SELECT id, is_platform_admin FROM users WHERE id = $1', [b.userId]);
+      if (!target || !roles.size) return NOT_FOUND;
+      if (target.is_platform_admin || (roles.has('organization_admin') && !user.isPlatformAdmin)) return FORBIDDEN;
+      const temp = newInviteCode().toLowerCase();   // 12자 · 사람이 받아 적기 쉬운 꼴
+      await pool.query('UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1', [b.userId, await auth.hashPassword(temp)]);
+      await pool.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [b.userId]);
+      await log(user, b.orgId, 'member.reset_password', 'user', b.userId, {}, ip);
+      return ok({ tempPassword: temp });   // 이번 한 번만
+    },
+    // 기관에서 내보내기 — 계정과 작품은 지우지 않는다(작품은 그 사람이 계속 읽는다). 기관 · 수업 멤버십만 거둔다.
+    async 'member.remove'(user, b, ip) {
+      if (!isUuid(b.orgId) || !isUuid(b.userId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
+      if (b.userId === user.id) return no(422, '자기 자신은 내보낼 수 없습니다', 'validation');
+      const roles = await rolesIn(b.userId, b.orgId);
+      if (!roles.size) return NOT_FOUND;
+      if (roles.has('organization_admin') && !user.isPlatformAdmin) return FORBIDDEN;
+      await pool.query(`UPDATE organization_members SET status = 'removed' WHERE organization_id = $1 AND user_id = $2`, [b.orgId, b.userId]);
+      await pool.query('DELETE FROM class_members WHERE organization_id = $1 AND user_id = $2', [b.orgId, b.userId]);
+      await log(user, b.orgId, 'member.remove', 'user', b.userId, { roles: [...roles] }, ip);
+      return ok();
+    },
+
     // ---------------- 기관 키(기관 관리자 — 쓰기 전용)
     async 'org.key.set'(user, b, ip) {
       if (!credentials) return no(503, 'AI 키를 저장할 수 없습니다', 'unavailable');

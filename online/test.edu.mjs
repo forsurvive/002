@@ -145,6 +145,39 @@ export async function run({ pool, ok, eq }) {
     eq('**강사도 못 본다**', (await edu('edu-in', 'usage.summary', { orgId: org.id })).status, 404);
     eq('학생의 «내 사용량»에 기관 키로 돈 것은 없다', (await edu('edu-s1', 'usage.summary')).usage.length, 0);
 
+    // ---------------- 한 사람 한 계정 — 같은 초대 코드로 들어와도 계정은 따로다
+    const ids = (await pool.query("SELECT id, login_id, password_hash FROM users WHERE login_id IN ('edu-s1', 'edu-s2')")).rows;
+    ok('**같은 코드로 들어온 두 학생은 다른 계정(다른 비밀번호)**', ids.length === 2 && ids[0].id !== ids[1].id && ids[0].password_hash !== ids[1].password_hash);
+    const p2 = await api('edu-s2', 'project.create', { classId: c1.id, name: '둘의 과제', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }] });
+    const peek = await fetch(base + '/api/state?pid=' + proj.pid, { headers: { cookie: jar['edu-s2'] } }).then((r) => r.json());
+    ok('**같은 수업 학생끼리도 서로의 작품을 못 본다**', p2.ok && peek.ok === false);
+
+    // ---------------- 관리 단추 · 사람 목록 · 비밀번호 재설정 · 내보내기
+    const meOf = async (who) => (await (await fetch(base + '/api/me', { headers: { cookie: jar[who] } })).json()).me;
+    ok('**운영자 · 기관 관리자에게만 «관리»**', (await meOf('edu-root')).manage === true && (await meOf('edu-oa')).manage === true
+      && (await meOf('edu-in')).manage === false && (await meOf('edu-s1')).manage === false);
+    ok('학생은 수업이 있다고 안다', (await meOf('edu-s1')).classes === 1);
+    const ml = await edu('edu-oa', 'org.members', { orgId: org.id });
+    const s1row = ml.members && ml.members.find((m) => m.loginId === 'edu-s1');
+    ok('기관 관리자는 사람 목록을 본다(아이디 · 이름 · 역할 · 수업)', ml.ok && s1row && s1row.name === '학생 하나' && s1row.roles.includes('student') && s1row.classes.includes('웹소설 1반'));
+    ok('사람 목록에 비밀번호 · 해시가 없다', !/password|scrypt/.test(JSON.stringify(ml)));
+    eq('**학생 · 강사는 사람 목록을 못 본다**', (await edu('edu-in', 'org.members', { orgId: org.id })).status, 404);
+    eq('**강사는 비밀번호를 재설정하지 못한다**', (await edu('edu-in', 'member.reset_password', { orgId: org.id, userId: s1row.userId })).status, 404);
+    const rp = await edu('edu-oa', 'member.reset_password', { orgId: org.id, userId: s1row.userId });
+    ok('기관 관리자가 학생 비밀번호를 재설정한다(임시 비밀번호는 한 번만)', rp.ok && typeof rp.tempPassword === 'string' && rp.tempPassword.length >= 12);
+    eq('**재설정하면 그 학생의 세션은 끊긴다**', (await fetch(base + '/api/me', { headers: { cookie: jar['edu-s1'] } })).status, 401);
+    await login('edu-s1', rp.tempPassword);
+    ok('임시 비밀번호로 들어온다', (await meOf('edu-s1')).loginId === 'edu-s1');
+    const pw = await fetch(base + '/api/auth/password', { method: 'POST', headers: { 'content-type': 'application/json', cookie: jar['edu-s1'] }, body: JSON.stringify({ current: rp.tempPassword, next: 'brand-new-s1-pass' }) });
+    ok('**학생이 제 비밀번호를 바꾼다(이 브라우저는 새로 들어온다)**', pw.status === 200 && /se_session=/.test(pw.headers.get('set-cookie') || ''));
+    jar['edu-s1'] = (pw.headers.get('set-cookie') || '').split(';')[0];
+    ok('바꾼 비밀번호로만 들어온다', (await meOf('edu-s1')).loginId === 'edu-s1');
+    eq('틀린 지금 비밀번호로는 못 바꾼다', (await fetch(base + '/api/auth/password', { method: 'POST', headers: { 'content-type': 'application/json', cookie: jar['edu-s1'] }, body: JSON.stringify({ current: 'wrong-current', next: 'whatever-long-1' }) })).status, 403);
+    eq('**자기 비밀번호는 재설정이 아니라 «바꾸기»로**', (await edu('edu-oa', 'member.reset_password', { orgId: org.id, userId: (await pool.query("SELECT id FROM users WHERE login_id = 'edu-oa'")).rows[0].id })).status, 422);
+    const out = await edu('edu-oa', 'member.remove', { orgId: org.id, userId: s1row.userId });
+    ok('내보내면 수업에서 빠진다(계정 · 작품은 남는다)', out.ok && (await meOf('edu-s1')).classes === 0 && (await fetch(base + '/api/state?pid=' + proj.pid, { headers: { cookie: jar['edu-s1'] } }).then((r) => r.json())).project.readOnly === true);
+    eq('내보낸 사람은 수업 현황에서도 빠진다', (await edu('edu-in', 'class.progress', { classId: c1.id })).students.filter((x) => x.name === '학생 하나').length, 0);
+
     eq('모르는 문은 404', (await edu('edu-root', 'org.delete', { orgId: org.id })).status, 404);
   } finally {
     await new Promise((r) => srv.close(r));
