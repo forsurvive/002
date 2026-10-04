@@ -2051,6 +2051,14 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const viaKind = [];
   await kinds.runKind({ store: memStore, call: async (a) => { viaKind.push(a.code); return { ok: true, text: '정리' }; } }, 'update', { docId: mo.id }, { pid: mem.id, step() {}, addDoc() {} });
   eq('표를 지나 같은 실행에 닿는다', viaKind.join(','), 'F-UPDATE');
+  // 이미 저장된 말에 답하기(온라인판 — 말을 작업 앞에 저장한다) — 말이 두 번 얹히지 않고 그 말 밑에 답이 붙는다
+  const tAsk = model.threadCreate(mem, { title: '먼저 저장' });
+  const pre = model.threadAddMessage(mem, tAsk.id, 'user', '미리 둔 물음');
+  const seen = [];
+  const said = await kinds.runKind({ store: memStore, call: async (a) => { seen.push(a.talk.map((x) => x.text).join('/')); return { ok: true, text: '답' }; } },
+    'talk', { threadId: tAsk.id, text: null, askedId: pre.id }, { pid: mem.id, step() {}, addDoc() {} });
+  ok('저장된 말에 답한다(말은 한 번)', said.ok && seen[0] === '미리 둔 물음' && tAsk.messages.length === 2 && tAsk.messages[1].parentId === pre.id && tAsk.messages[1].role === 'assistant');
+  ok('없는 말을 가리키면 실패', (await kinds.runKind({ store: memStore, call: async () => ({ ok: true, text: 'x' }) }, 'talk', { threadId: tAsk.id, text: null, askedId: 'g_none' }, { pid: mem.id, step() {}, addDoc() {} })).ok === false);
   const pj = (await post('project.create', { name: '작업은 데이터', spec: { form: '단편' }, materials: [{ name: '자료', text: '자료' }] })).pid;
   await settle(pj);
   const dj = (await post('doc.create', { pid: pj, title: '문서' })).id;

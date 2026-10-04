@@ -15,7 +15,8 @@ export const JOB_KINDS = {
   agents: (deps, ctx, p) => deps.prepare(ctx.pid, ctx, pick(p.request)),
   update: (deps, ctx, p) => runUpdate(deps, ctx.pid, p.docId, ctx, { modelPick: pick(p.modelPick) }),
   // text 가 null 이면 말은 이미 얹혀 있다(지난 말을 고쳐 가지를 낸 자리)
-  talk: (deps, ctx, p) => runTalk(deps, ctx.pid, p.threadId, p.text == null ? null : String(p.text), ctx, { modelPick: pick(p.modelPick) }),
+  // askedId 가 있으면 이미 저장된 그 말에 답한다(온라인판)
+  talk: (deps, ctx, p) => runTalk(deps, ctx.pid, p.threadId, p.text == null ? null : String(p.text), ctx, { modelPick: pick(p.modelPick), askedId: pick(p.askedId) }),
   threaddoc: (deps, ctx, p) => runThreadDoc(deps, ctx.pid, p.threadId, pick(p.request), ctx, { modelPick: pick(p.modelPick) }),
 };
 

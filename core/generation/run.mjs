@@ -66,9 +66,15 @@ async function runPanelReview({ store, call }, pid, d, agentIds, common, ctx) {
 
 // 논의 한 마디 — 작가의 말을 얹고, 답을 받아 얹는다.
 // text 가 null 이면 말은 이미 얹힌 것이다(과거 메시지를 고쳐 가지가 갈라진 자리).
-export async function runTalk({ store, call }, pid, threadId, text, ctx, { modelPick = '' } = {}) {
+// askedId 를 주면 그 말에 답한다 — 온라인판은 작가의 말을 작업 «앞»에 저장하므로(재시도 · 이어 하기에 말이 두 번 얹히지 않게) 그 id 를 넘긴다.
+export async function runTalk({ store, call }, pid, threadId, text, ctx, { modelPick = '', askedId: asked = '' } = {}) {
   let askedId = null;
-  if (text != null) {
+  if (text == null && asked) {
+    const p0 = await store.get(pid);
+    const t0 = p0 && model.findThread(p0, threadId);
+    if (!t0 || !t0.messages.some((m) => m.id === asked)) return { ok: false, error: '스레드를 찾을 수 없습니다' };
+    askedId = asked;
+  } else if (text != null) {
     await store.update(pid, (p) => {
       const m = model.threadAddMessage(p, threadId, 'user', text);
       if (m) askedId = m.id;
