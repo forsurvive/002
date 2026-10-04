@@ -79,7 +79,7 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
 ### 3-2. 온라인판에서 더해질 것(Phase 3~)
 
 `DATABASE_URL`(Replit 이 넣어 줌) · `SESSION_SECRET` · `CREDENTIALS_KEY_V1`(credential 암호화 마스터 키, 32바이트 base64) · `NODE_ENV`(`staging`/`production`) ·
-`WORKER_CONCURRENCY` · (플랫폼이 AI 를 대 줄 때만) `ANTHROPIC_API_KEY`·`OPENAI_API_KEY`·`GEMINI_API_KEY`.
+`SE_TRUST_PROXY=1`(플랫폼 앞단 뒤) · `SE_MIGRATE_ON_BOOT`(기본 켬) · `DB_POOL_MAX`(기본 5) · `WORKER_CONCURRENCY` · (플랫폼이 AI 를 대 줄 때만) `ANTHROPIC_API_KEY`·`OPENAI_API_KEY`·`GEMINI_API_KEY`.
 **기관/개인의 API 키는 환경 변수에 두지 않는다** — DB 에 암호화(명세 AH-7).
 
 ## 4. Sprint 1 — 사용자가 할 일(계정 필요)
@@ -96,6 +96,20 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
    **Production app secrets** 에 `SE2_ACCESS_KEY`(작업 공간과 다른 값 권장) · `SE2_MOCK=1` → Publish.
    상태 검사는 첫 화면(`/`)을 두드린다 — 열쇠 없는 상태 검사에는 원고 없는 안내 페이지가 200 으로 답한다.
 6. `https://<이름>.replit.app` 을 열어 3~4 를 한 번 더.
+
+## 4-1. 온라인 서버를 작업 공간에서 띄워 보기(Sprint 6~8 — 계정 필요)
+
+코드는 준비되어 있다(`online/server.mjs`, 시험 `online/test.mjs`). AI 작업은 아직 닫혀 있다(편집 · 판 · 참조 · 확정본 · 논의 · 휴지통만).
+
+1. 작업 공간 왼쪽 도구에서 **Database(PostgreSQL)** 를 만든다 → Secrets 에 `DATABASE_URL` 이 저절로 들어온다(값을 채팅이나 코드에 옮기지 않는다).
+2. Shell: `npm ci` (온라인판 의존성 `pg` 하나).
+3. Shell: `node online/admin.mjs create-user <아이디> --name <표시 이름>` → 비밀번호를 묻는다(화면에 찍히지 않음, 10자 이상).
+4. Shell: `SE2_HOST=0.0.0.0 SE_TRUST_PROXY=1 node online/server.mjs` → 콘솔에 `Story Engine (online) : listening on 0.0.0.0:…`.
+   처음 띄울 때 마이그레이션이 앞으로만 적용된다(`SE_MIGRATE_ON_BOOT=0` 이면 건너뜀).
+5. 미리보기의 새 탭에서 `/login` → 3 의 계정으로 들어가 프로젝트 만들기 · 문서 · 판 복원 · 참조 · 확정본 · 휴지통을 해 본다.
+   두 번째 계정을 만들어 첫 계정의 프로젝트가 보이지 않는지도 본다.
+
+`.replit` 의 Run 은 아직 개인판(호스팅 꼴)이다 — 게시를 온라인 서버로 바꾸는 것은 AI 작업(Sprint 9)과 production DB 를 갖춘 뒤에 한다.
 
 ## 5. PostgreSQL (Phase 3 계획)
 

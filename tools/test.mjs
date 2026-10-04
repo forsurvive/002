@@ -1774,7 +1774,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 튜토리얼도 같은 그물 안에 둔다 — 화면 코드가 둘로 갈렸다고 규칙이 갈리지 않는다.
   const tour = src(join(ROOT, 'web', 'tour.js'));
   const tourDemo = src(join(ROOT, 'web', 'tour.demo.js'));
-  const screens = app + '\n' + tour + '\n' + tourDemo;
+  // 온라인판의 로그인 화면도 같은 그물 안에 둔다(같은 style.css · 같은 팔레트)
+  const login = existsSync(join(ROOT, 'web', 'login.js')) ? src(join(ROOT, 'web', 'login.js')) : '';
+  const screens = app + '\n' + tour + '\n' + tourDemo + '\n' + login;
   const strayApp = (screens.match(/#[0-9a-f]{3,8}/gi) || []);
   ok('화면 코드에 색을 박지 않는다', strayApp.length === 0, strayApp.join(' '));
   // 화면이 붙이는 반 이름이 style.css 에 실제로 있어야 한다 — 어긋나면 꾸밈이 통째로 죽는다(폰에서 실제로 났다).

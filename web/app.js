@@ -23,6 +23,7 @@ const S = {
   tour: null,
   srcText: null,   // 지금 펼쳐 둔 작법서의 글 { id, text } — 갱신마다 오지 않으므로 열 때 한 번 받는다
   last: '',
+  me: null,        // 온라인판에서 로그인한 사람 { loginId, displayName } — 개인판은 늘 null
 };
 
 const KIND_MARK = { check: '모순 검사', review: '합평회' };
@@ -146,8 +147,17 @@ async function api(op, body = {}) {
     body: JSON.stringify({ op, pid: S.pid, ...body }),
   });
   const out = await r.json().catch(() => ({ ok: false, error: '응답 없음' }));
+  if (out.code === 'login') return toLogin(out);
   await pull(true);
   return out;
+}
+
+// 온라인판에서 세션이 끝났으면 로그인 화면으로 — 개인판은 이 답을 내지 않는다
+function toLogin(out) { location.href = '/login'; return out; }
+
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => null);
+  location.href = '/login';
 }
 
 function download(kind, id) {
@@ -163,6 +173,8 @@ async function pull(force) {
   const url = S.pid ? '/api/state?pid=' + encodeURIComponent(S.pid) : '/api/state';
   let d;
   try { d = await (await fetch(url)).json(); } catch { return; }
+  if (d.code === 'login') return toLogin(d);
+  S.me = d.me || null;   // 온라인판에서만 온다(로그인한 사람)
   if (d.projects) S.projects = d.projects;
   if (S.pid && d.ok === false) { S.pid = null; S.project = null; }
   else if (d.project) S.project = d.project;
@@ -232,6 +244,7 @@ function projectList() {
         brandMark('margin-bottom:6px'),
         h('div', { class: 'top-name', style: 'font-size:30px', text: '스토리 엔진' })),
       h('div', { class: 'line', style: 'flex:none' },
+        S.me ? h('button', { class: 'btn-text', text: '로그아웃', onclick: logout }) : null,
         h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: startTour }),
         h('button', { class: 'plus', text: '+', onclick: () => { S.draft = []; S.open = { type: 'newproject' }; render(); } }))),
     h('div', { class: 'cards' }, S.projects.map((p) => h('div', {
@@ -489,7 +502,8 @@ function settings() {
       modelRow(p.models, p.model, (m) => api('project.spec', { model: m }))),
     // 무엇으로 돈이 나가는가 — 구독인지 API 키인지. 사람이 고른다(사용자 지시, 2026-09-22).
     // 「구독으로 돕니다」라고 말하면서 물려받은 환경 변수 때문에 말없이 종량 과금되면 안 된다.
-    h('div', null,
+    // 고를 갈래가 없으면(온라인판 — 키는 서버만 다룬다) 이 칸을 세우지 않는다.
+    !(p.auth && (p.auth.modes || []).length) ? null : h('div', null,
       h('div', { class: 'lab', text: '무엇으로' }),
       authRow(p.auth),
       h('div', { class: 'line', style: 'margin-top:8px' },

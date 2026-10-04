@@ -8,7 +8,8 @@
   "scripts": {
     "test": "node tools/test.mjs",
     "test:online": "node online/test.mjs",
-    "migrate": "node online/migrate.mjs"
+    "migrate": "node online/migrate.mjs",
+    "online": "node online/server.mjs"
   },
   "dependencies": {
     "pg": "^8.23.1"
