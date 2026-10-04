@@ -63,7 +63,8 @@ stateDiagram-v2
 `jobs` 열은 [ERD.md](ERD.md) §3-4. 핵심만:
 
 ```sql
--- worker 가 하나를 집는다 — 같은 행을 두 worker 가 잡지 않는다
+-- worker 가 하나를 집는다 — 같은 행을 두 worker 가 잡지 않는다(개념 SQL — 실제 문장은 Sprint 9 에서 굳힌다)
+-- org_saturated: running 작업 수가 organizations.max_concurrent_jobs 에 닿은 기관(앞선 CTE 로 셈한다)
 WITH next AS (
   SELECT id FROM jobs
    WHERE status = 'queued' AND run_after <= now()
