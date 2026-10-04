@@ -1,6 +1,8 @@
 // 운영자 도구 — 서버 안에서 계정을 만들고, 계정의 AI 키를 넣는다(가입 문은 닫혀 있다 — docs/SECURITY.md §7-0).
 //   DATABASE_URL=… node online/admin.mjs create-user <아이디> [--name 표시이름] [--admin]
 //   DATABASE_URL=… CREDENTIALS_KEY_V1=… node online/admin.mjs set-key <아이디> <anthropic|openai|google>
+//   DATABASE_URL=… node online/admin.mjs list-users                 (아이디 · 운영자 표시 — 비밀번호는 어디에도 없으니 보여 줄 수 없다)
+//   DATABASE_URL=… node online/admin.mjs reset-password <아이디>     (새 비밀번호를 표준 입력으로 — 운영자가 자기 비밀번호를 잊었을 때)
 // 비밀번호와 키는 명령줄에 쓰지 않는다(셸 기록 · 프로세스 목록에 남는다) — 표준 입력으로 받는다. 키는 봉해서만 저장되고 다시 보여 주지 않는다.
 //   대화형이면 화면에 찍지 않고 묻고, 파이프면 첫 줄을 읽는다. 콘솔은 ASCII 만.
 
@@ -31,8 +33,10 @@ const value = (name) => { const i = rest.indexOf(name); return i >= 0 ? rest[i +
 const USAGE = [
   '  usage: node online/admin.mjs create-user <login-id> [--name <display name>] [--admin]',
   '         node online/admin.mjs set-key <login-id> <anthropic|openai|google>   (key from stdin)',
+  '         node online/admin.mjs list-users',
+  '         node online/admin.mjs reset-password <login-id>   (new password from stdin)',
 ];
-if (!['create-user', 'set-key'].includes(cmd) || !rest[0] || rest[0].startsWith('--') || (cmd === 'set-key' && !PROVIDER_IDS.includes(rest[1]))) {
+if (!['create-user', 'set-key', 'list-users', 'reset-password'].includes(cmd) || (cmd !== 'list-users' && (!rest[0] || rest[0].startsWith('--'))) || (cmd === 'set-key' && !PROVIDER_IDS.includes(rest[1]))) {
   for (const l of USAGE) console.log(l);
   process.exit(cmd ? 1 : 0);
 }
@@ -41,7 +45,26 @@ if (!process.env.DATABASE_URL) { console.log('  [STOP] DATABASE_URL is not set')
 const pool = createPool(process.env.DATABASE_URL);
 try {
   await migrate(pool);
-  if (cmd === 'create-user') {
+  if (cmd === 'list-users') {
+    // 콘솔은 ASCII 만 — 아이디(영문)와 역할만 찍는다(이름은 한글일 수 있어 싣지 않는다)
+    const { rows } = await pool.query('SELECT login_id, is_platform_admin, status, created_at FROM users ORDER BY created_at');
+    if (!rows.length) console.log('  (no accounts yet - open the app to finish the first-run setup)');
+    for (const r of rows) console.log('  ' + r.login_id.padEnd(24) + (r.is_platform_admin ? 'OPERATOR' : 'user') + (r.status !== 'active' ? ' (' + r.status + ')' : ''));
+  } else if (cmd === 'reset-password') {
+    const u = (await pool.query('SELECT id FROM users WHERE login_id = $1', [String(rest[0]).toLowerCase()])).rows[0];
+    if (!u) { console.log('  [STOP] no such user'); process.exitCode = 1; }
+    else {
+      const next = await readSecret('  new password (10+ chars): ');
+      if (String(next).length < 10) { console.log('  [STOP] password must be 10+ characters'); process.exitCode = 1; }
+      else {
+        const { hashPassword } = await import('./auth.mjs');
+        await pool.query('UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1', [u.id, await hashPassword(next)]);
+        await pool.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [u.id]);
+        await audit(pool, { action: 'admin.password_reset', targetType: 'user', targetId: u.id });
+        console.log('  password changed: ' + String(rest[0]).toLowerCase() + ' (other sessions signed out)');
+      }
+    }
+  } else if (cmd === 'create-user') {
     const password = await readSecret('  password (10+ chars): ');
     const r = await createUser(pool, { loginId: rest[0], password, displayName: value('--name'), isPlatformAdmin: flag('--admin') });
     if (!r.ok) { console.log('  [STOP] ' + (r.code || 'failed') + (r.code === 'validation' ? ' - login id: a-z 0-9 . _ - (3-64), password: 10+ chars' : '')); process.exitCode = 1; }

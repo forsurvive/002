@@ -66,6 +66,20 @@ export async function run({ pool, ok, eq }) {
     await new Promise((res) => srv.close(res));
   }
 
+  // ---------------- 운영자 도구 — 계정 목록 · 비밀번호 재설정(운영자가 자기 비밀번호를 잊었을 때)
+  {
+    const { spawnSync } = await import('node:child_process');
+    const admin = join(ROOT, 'online', 'admin.mjs');
+    const env = { ...process.env, DATABASE_URL: process.env.DATABASE_URL_TEST };
+    const ls = spawnSync(process.execPath, [admin, 'list-users'], { env, encoding: 'utf8' });
+    ok('계정 목록 — 운영자 표시 · ASCII 만 · 비밀번호 없음', ls.status === 0 && /owner\s+OPERATOR/.test(ls.stdout) && /^[\x00-\x7f]*$/.test(ls.stdout) && !/scrypt/.test(ls.stdout), ls.stdout + ls.stderr);
+    const rp = spawnSync(process.execPath, [admin, 'reset-password', 'owner'], { env, encoding: 'utf8', input: 'reset-by-shell-1\n' });
+    ok('셸에서 운영자 비밀번호를 다시 정한다', rp.status === 0 && /password changed: owner/.test(rp.stdout), rp.stdout + rp.stderr);
+    const { login } = await import('./auth.mjs');
+    ok('새 비밀번호로 들어온다', (await login(pool, { loginId: 'owner', password: 'reset-by-shell-1', ip: '7.7.7.7' })).ok);
+    eq('짧은 비밀번호는 거절', spawnSync(process.execPath, [admin, 'reset-password', 'owner'], { env, encoding: 'utf8', input: 'short\n' }).status, 1);
+  }
+
   // ---------------- 한 번에 띄우기 — 마스터 키는 Secrets 가 먼저, 없으면 저장소 밖 파일
   {
     const file = join(ROOT, '.tmp', 'test-master-' + randomBytes(3).toString('hex') + '.key');
