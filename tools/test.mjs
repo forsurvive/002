@@ -1898,11 +1898,11 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   }
 
   // ── 박힌 경로도, 다른 판·옛 폴더의 이름도 없다
-  // Core(core/)로 옮긴 코드도 같은 그물 안에 둔다 — 옮겼다고 규칙이 풀리지 않는다.
+  // Core(core/)와 Provider(ai/)로 옮긴 코드도 같은 그물 안에 둔다 — 옮겼다고 규칙이 풀리지 않는다.
   const coreFiles = (function walk(dir) {
     if (!existsSync(dir)) return [];
     return readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : /\.(mjs|json)$/.test(e.name) ? [join(dir, e.name)] : []));
-  })(join(ROOT, 'core'));
+  })(join(ROOT, 'core')).concat(readdirSync(join(ROOT, 'ai')).filter((f) => f.endsWith('.mjs')).map((f) => join(ROOT, 'ai', f)));
   const codeFiles = [
     ...readdirSync(HERE).filter((f) => /\.(mjs|json)$/.test(f) && f !== 'test.mjs').map((f) => join(HERE, f)),
     ...coreFiles,
@@ -2058,6 +2058,31 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('그 작업은 끝까지 돈다', rec.status, 'done');
   ok('준비 작업도 데이터로 남는다', (after.jobs || []).some((j) => j.kind === 'agents' && j.params && j.params.request === ''));
   eq('돌릴 길이 없는 작업은 받지 않는다', (await import('./jobs.mjs')).start(pj, { kind: 'update' }).ok, false);
+
+  // AI Provider 계약 — 모든 호출이 한 자리(engine.callModel → Provider)를 지난다. 개인판은 CLI 어댑터.
+  const prov = await import('../ai/provider.mjs');
+  const { localCliProvider } = await import('../ai/local-cli.mjs');
+  const engP = await import('./engine.mjs');
+  ok('CLI 어댑터는 계약을 지킨다', prov.isProvider(localCliProvider) && localCliProvider.id === 'local-cli');
+  const lr = await localCliProvider.generate({ model: 'opus', systemPrompt: '체계', userPrompt: '한 줄', metadata: { code: 'F-UPDATE' } });
+  ok('성공 결과의 모양', lr.ok === true && typeof lr.text === 'string' && lr.usage && 'inputTokens' in lr.usage && lr.reason === '');
+  const le = await localCliProvider.generate({ model: 'opus', systemPrompt: '', userPrompt: '' });
+  ok('실패도 throw 하지 않고 갈래로 돌아온다', le.ok === false && le.reason === 'empty' && le.text === '');
+  eq('usage 를 한 꼴로 — CLI', JSON.stringify(prov.usageOf({ input: 10, output: 5, cacheRead: 3, cacheWrite: 2 })),
+    JSON.stringify({ inputTokens: 10, outputTokens: 5, cacheReadTokens: 3, cacheWriteTokens: 2, reasoningTokens: 0, totalTokens: 17 }));
+  ok('usage 를 한 꼴로 — Anthropic · OpenAI · Gemini 칸 이름', prov.usageOf({ input_tokens: 7, output_tokens: 2, cache_read_input_tokens: 1 }).cacheReadTokens === 1
+    && prov.usageOf({ input_tokens: 7, input_tokens_details: { cached_tokens: 4 }, output_tokens_details: { reasoning_tokens: 3 } }).reasoningTokens === 3
+    && prov.usageOf({ promptTokenCount: 9, candidatesTokenCount: 4, thoughtsTokenCount: 2 }).outputTokens === 4);
+  ok('가격은 설정에서 — 추정 비용', Math.abs(prov.estimateCost({ inputTokens: 1e6, outputTokens: 1e6 }, { inputPerMTok: 3, outputPerMTok: 15 }) - 18) < 1e-9
+    && prov.estimateCost({ inputTokens: 5 }, null) === null);
+  ok('모르는 갈래는 other 로', prov.failure('이상한', 'x').reason === 'other');
+  // 다른 Provider 를 꽂으면 같은 계획이 그쪽으로 간다(온라인 worker · 시험)
+  const seenP = [];
+  engP.useGenerator({ id: 'fake', generate: async (inp) => { seenP.push(inp.metadata.code + '@' + inp.model); return prov.success({ text: '가짜 답', usage: { input_tokens: 3 } }); } });
+  const viaP = await engP.callOnce({ pid: pj, code: 'F-UPDATE', request: '써 다오', modelPick: 'sonnet' });
+  engP.useGenerator(null);
+  ok('꽂은 Provider 로 부른다', viaP.ok && viaP.text === '가짜 답' && seenP.join(',') === 'F-UPDATE@sonnet' && viaP.usage.inputTokens === 3, JSON.stringify(viaP).slice(0, 160));
+  ok('비우면 CLI 로 돌아온다', (await engP.callOnce({ pid: pj, code: 'F-UPDATE', request: '써 다오' })).text.startsWith('(모의)'));
 }
 
 // ---------------------------------------------------------------- 호스팅 실행 — 포트 · 주소 · 허용 호스트 · 출입 열쇠

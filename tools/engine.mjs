@@ -5,7 +5,8 @@ import { BUILTIN, haveBrain } from './prompts.mjs';
 import { cleanResponse } from './assemble.mjs';
 import { planCall } from '../core/reference/plan.mjs';
 import * as gen from '../core/generation/run.mjs';
-import { runClaudeCall } from './call.mjs';
+import { localCliProvider } from '../ai/local-cli.mjs';
+import { isProvider } from '../ai/provider.mjs';
 import * as auth from './auth.mjs';
 import * as state from './state.mjs';
 
@@ -46,6 +47,16 @@ export function promptView(project, code) {
 // 참조 조립(무엇을 어느 구획에 싣나)은 core/reference/plan.mjs 로 옮겼다 — 지금까지의 이름도 그대로 내보낸다.
 export { docsByIds, finalDocs, materialItems } from '../core/reference/plan.mjs';
 
+// 부르는 자리 — Provider 계약(ai/provider.mjs)을 지키는 것 하나. 개인판은 CLI(구독/API 키)를 쓴다.
+// 온라인판 · 시험은 다른 Provider 를 꽂을 수 있다. 모든 호출(갱신 · 논의 · 합평 · 준비)이 이 한 자리를 지난다.
+let generator = localCliProvider;
+export function useGenerator(p) { generator = isProvider(p) ? p : localCliProvider; }
+
+// 한 번 부르기 — code 는 그 자리의 이름(모의 응답과 기록이 쓴다).
+export function callModel({ systemPrompt, prompt, code = '', signal = null, model = '' }) {
+  return generator.generate({ model, systemPrompt, userPrompt: prompt, signal, metadata: { code } });
+}
+
 // 일하는 법(tools/prompts.data.json)을 읽지 못했으면 부르지 않는다.
 // 그 파일 없이 부르면 구독만 태우고 빈 자리로 쓴 글이 나온다 — 폴더를 옮기다 빠뜨린 때가 그렇다.
 // **부르는 문마다 이 하나를 본다** — callOnce 도, 그 문을 지나지 않고 곧장 부르는 에이전트 준비도.
@@ -77,14 +88,14 @@ export async function callOnce({
     noCount, finalFirst, keepSeat, extraTargets, modelPick,
   }, { pr: promptFor(project, code), slotModel: slotModel(project, code) });
 
-  const r = await runClaudeCall({ systemPrompt: plan.systemPrompt, prompt: plan.userPrompt, mockKey: code, signal, model: plan.model });
+  const r = await callModel({ systemPrompt: plan.systemPrompt, prompt: plan.userPrompt, code, signal, model: plan.model });
   // 사유(reason)와 한도(limit)를 떨어뜨리지 않는다 — 작업이 이것으로 «멈출까 실패할까»를 가른다.
   if (!r.ok) return { ok: false, error: r.error, reason: r.reason, limit: r.limit };
   const text = cleanResponse(r.text);
   if (!text) return { ok: false, error: '빈 응답', reason: 'empty', limit: r.limit };
   // planned — 무엇을 보고 만들었나(본문은 빼고 이름·길이만). 생성 기록(generation_runs)의 재료다.
   const planned = { model: plan.model, modelSource: plan.modelSource, inputs: plan.inputs.map(({ role, id, name, text: t }) => ({ role, id, name, chars: t.length })) };
-  return { ok: true, text, usage: r.usage, limit: r.limit, authSource: r.authSource, planned };
+  return { ok: true, text, usage: r.usage, costUsd: r.costUsd, limit: r.limit, authSource: r.authSource, planned };
 }
 
 // 다시 부를 값이 있을 때만 다시 부른다.
