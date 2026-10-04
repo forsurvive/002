@@ -2036,6 +2036,28 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const before = model.findDoc(mem, mo.id).body;
   const failed = await gen.runUpdate({ store: memStore, call: failCall }, mem.id, mo.id, null);
   ok('**호출이 실패하면 문서를 건드리지 않는다**', failed.ok === false && model.findDoc(mem, mo.id).body === before);
+
+  // 작업 = 종류 + 매개변수(데이터) — 개인판 실행기와 온라인 worker 가 같은 표를 쓴다
+  const kinds = await import('../core/generation/kinds.mjs');
+  const serverSrc = src(join(HERE, 'server.mjs'));
+  const usedKinds = [...new Set([...serverSrc.matchAll(/kind: '([a-z]+)'/g)].map((m) => m[1]))];
+  ok('서버가 등록하는 작업 종류가 모두 표에 있다', usedKinds.length >= 4 && usedKinds.every((k) => kinds.KIND_NAMES.includes(k)), usedKinds.join(','));
+  ok('서버는 작업을 클로저가 아니라 매개변수로 등록한다', !/jobs\.start\([^)]*run:/.test(serverSrc));
+  ok('모르는 종류는 실패로 돌려준다', (await kinds.runKind({}, '없는일', {}, {})).ok === false);
+  const viaKind = [];
+  await kinds.runKind({ store: memStore, call: async (a) => { viaKind.push(a.code); return { ok: true, text: '정리' }; } }, 'update', { docId: mo.id }, { pid: mem.id, step() {}, addDoc() {} });
+  eq('표를 지나 같은 실행에 닿는다', viaKind.join(','), 'F-UPDATE');
+  const pj = (await post('project.create', { name: '작업은 데이터', spec: { form: '단편' }, materials: [{ name: '자료', text: '자료' }] })).pid;
+  await settle(pj);
+  const dj = (await post('doc.create', { pid: pj, title: '문서' })).id;
+  await post('doc.write', { pid: pj, id: dj, request: '써 다오' });
+  const jr = await post('doc.update', { pid: pj, id: dj });
+  const after = await settle(pj);
+  const rec = (after.jobs || []).find((j) => j.id === jr.jobId) || {};
+  ok('작업 레코드에 종류와 매개변수가 남는다', rec.kind === 'update' && rec.params && rec.params.docId === dj, JSON.stringify(rec).slice(0, 200));
+  eq('그 작업은 끝까지 돈다', rec.status, 'done');
+  ok('준비 작업도 데이터로 남는다', (after.jobs || []).some((j) => j.kind === 'agents' && j.params && j.params.request === ''));
+  eq('돌릴 길이 없는 작업은 받지 않는다', (await import('./jobs.mjs')).start(pj, { kind: 'update' }).ok, false);
 }
 
 // ---------------------------------------------------------------- 호스팅 실행 — 포트 · 주소 · 허용 호스트 · 출입 열쇠

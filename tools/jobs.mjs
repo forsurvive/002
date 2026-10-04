@@ -60,13 +60,23 @@ function put(pid, jobId, patch) {
   });
 }
 
+// 종류 + 매개변수로 등록된 작업을 실제로 돌리는 자리 — 서버가 꽂는다(core/generation/kinds.mjs 의 표 + 개인판의 저장·호출).
+let runner = null;
+export function useRunner(fn) { runner = typeof fn === 'function' ? fn : null; }
+
 /**
- * run(ctx) 를 띄우고 곧바로 jobId 를 돌려준다(기다리지 않는다).
+ * 작업을 띄우고 곧바로 jobId 를 돌려준다(기다리지 않는다).
+ * 작업은 «종류 + 매개변수»(params)로 등록한다 — 레코드에 그대로 남아 무엇을 하는 작업인지가 데이터로 보인다.
+ * run(ctx) 를 직접 넘기는 길도 남겨 둔다(시험 · 일회성 일).
  * ctx = { pid, signal, step(name), addDoc(id) }
  */
-export function start(pid, { kind = 'call', title = '작업', targetId = '', run }) {
+export function start(pid, { kind = 'call', title = '작업', targetId = '', params = null, run = null }) {
   const p = state.get(pid);
   if (!p) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
+  if (!run) {
+    if (!params || !runner) return { ok: false, error: '돌릴 길이 없는 작업입니다' };
+    run = (ctx) => runner(kind, params, ctx);
+  }
 
   const id = newId('j');
   const now = Date.now();
@@ -77,6 +87,7 @@ export function start(pid, { kind = 'call', title = '작업', targetId = '', run
     // 화면은 이것이 있으면 작업 줄에 고를 것을 세운다.
     ask: null,
     startedAt: now, endedAt: 0, docIds: [],
+    ...(params ? { params } : {}),
   };
   state.update(pid, (pr) => { pr.jobs.push(job); });
 

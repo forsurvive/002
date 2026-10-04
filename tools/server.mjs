@@ -17,6 +17,7 @@ import { killAllCalls, MODELS, lastLimit } from './call.mjs';
 import * as auth from './auth.mjs';
 import { bookList, BOOK_CATEGORY } from './books.mjs';
 import { EDITABLE_CODES, VIEW_CODES } from './prompts.mjs';
+import { runKind } from '../core/generation/kinds.mjs';
 import { resolveHosting, hostOf, originOk, gateOk, isNavigation, GATE_REALM } from './hosting.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -36,20 +37,23 @@ const pickModel = (v, fallback) => (MODELS.includes(String(v || '')) ? String(v 
 // 둘 중 하나라도 비면 화면이 [에이전트 준비 다시] 를 세운다.
 const prepared = (p) => agentsReady(p) && (!model.materialDocs(p).length || p.docs.some((d) => d.title === STUDY_TITLE));
 
+// 작업은 «종류 + 매개변수»로 등록하고, 실제로 돌리는 것은 Core 의 작업 종류 표(core/generation/kinds.mjs)다.
+// 개인판이 넣는 것: 저장(state) · 호출(callAsking — CLI · 한도 물음) · 에이전트 준비(agents.mjs).
+async function prepareThenStudy(pid, ctx, request = '') {
+  if (!agentsReady(state.get(pid))) {
+    const r = await prepareAgents(pid, ctx, request);
+    if (!r.ok) return r;
+  }
+  return runStudy(pid, ctx, request);   // 이어서 자료를 한 번 읽는다
+}
+const LOCAL_DEPS = { ...engine.LOCAL, prepare: prepareThenStudy };
+jobs.useRunner((kind, params, ctx) => runKind(LOCAL_DEPS, kind, params, ctx));
+
 // 프로젝트를 만든 직후 그 프로젝트 전용 에이전트를 짓는다(소설이면 판정만 남기고 끝난다).
 function startAgentPrep(pid, request = '') {
   const p = state.get(pid);
   if (!p) return;
-  jobs.start(pid, {
-    kind: 'agents', title: '에이전트 준비',
-    run: async (ctx) => {
-      if (!agentsReady(state.get(pid))) {
-        const r = await prepareAgents(pid, ctx, request);
-        if (!r.ok) return r;
-      }
-      return runStudy(pid, ctx, request);   // 이어서 자료를 한 번 읽는다
-    },
-  });
+  jobs.start(pid, { kind: 'agents', title: '에이전트 준비', params: { request } });
 }
 
 const OPS = {
@@ -199,7 +203,7 @@ const OPS = {
     if (jobs.isTargetRunning(b.pid, d.id)) return bad('이미 도는 중입니다');
     // 작가가 «어느 모델로 모을지»를 골라 보냈으면 그것으로 부른다.
     const modelPick = pickModel(b.model, '');
-    return jobs.start(b.pid, { kind: 'update', title: d.title, targetId: d.id, run: (ctx) => engine.runUpdate(b.pid, b.id, ctx, { modelPick }) });
+    return jobs.start(b.pid, { kind: 'update', title: d.title, targetId: d.id, params: { docId: d.id, modelPick } });
   },
 
   // ---------------- 카테고리
@@ -229,7 +233,7 @@ const OPS = {
     const t = p && model.findThread(p, b.id);
     if (!t) return bad('스레드를 찾을 수 없습니다');
     if (!String(b.text || '').trim()) return bad('빈 말');
-    return jobs.start(b.pid, { kind: 'talk', title: t.title, targetId: t.id, run: (ctx) => engine.runTalk(b.pid, b.id, String(b.text), ctx, { modelPick: pickModel(b.model, '') }) });
+    return jobs.start(b.pid, { kind: 'talk', title: t.title, targetId: t.id, params: { threadId: t.id, text: String(b.text), modelPick: pickModel(b.model, '') } });
   },
   'thread.edit': (b) => {
     const p = state.get(b.pid);
@@ -238,7 +242,7 @@ const OPS = {
     let made = null;
     state.update(b.pid, (pr) => { made = model.threadEditMessage(pr, b.id, b.messageId, b.text); });
     if (!made) return bad('메시지를 찾을 수 없습니다');
-    return jobs.start(b.pid, { kind: 'talk', title: t.title, targetId: t.id, run: (ctx) => engine.runTalk(b.pid, b.id, null, ctx, { modelPick: pickModel(b.model, '') }) });
+    return jobs.start(b.pid, { kind: 'talk', title: t.title, targetId: t.id, params: { threadId: t.id, text: null, modelPick: pickModel(b.model, '') } });
   },
   'thread.title': (b) => state.update(b.pid, (p) => {
     const t = model.findThread(p, b.id);
@@ -249,7 +253,7 @@ const OPS = {
     const p = state.get(b.pid);
     const t = p && model.findThread(p, b.id);
     if (!t) return bad('스레드를 찾을 수 없습니다');
-    return jobs.start(b.pid, { kind: 'threaddoc', title: t.title, targetId: t.id, run: (ctx) => engine.runThreadDoc(b.pid, b.id, String(b.request || ''), ctx, { modelPick: pickModel(b.model, '') }) });
+    return jobs.start(b.pid, { kind: 'threaddoc', title: t.title, targetId: t.id, params: { threadId: t.id, request: String(b.request || ''), modelPick: pickModel(b.model, '') } });
   },
   'thread.delete': (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.threadDelete(p, id); }),
   // 갓 만들어 놓고 아무것도 담지 않은 채 창을 닫았을 때 — 없던 일로 돌린다(휴지통에도 두지 않는다).

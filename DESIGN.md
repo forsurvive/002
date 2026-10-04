@@ -96,7 +96,8 @@ thread {
 job {
   id, kind, title, status: 'running'|'done'|'stopped'|'failed',
   step,               // 지금 하는 일의 이름 한 줄 (막대·백분율 없음)
-  error, startedAt, endedAt, docIds: []
+  error, startedAt, endedAt, docIds: [],
+  params              // 무엇을 하는 작업인가 — 종류(kind)와 함께 데이터로 남는다(2026-10-04, core/generation/kinds.mjs 의 표가 돌린다)
 }
 ```
 

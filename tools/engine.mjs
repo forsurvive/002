@@ -134,7 +134,7 @@ export async function callAsking(args, ctx) {
 // ---------------------------------------------------------------- 손 작업
 
 // 실행 본체는 core/generation/run.mjs 에 있다. 개인판은 저장으로 state.mjs 를, 호출로 callAsking(CLI · 한도 물음)을 넣는다.
-const LOCAL = { store: state, call: (args, ctx) => callAsking(args, ctx) };
+export const LOCAL = { store: state, call: (args, ctx) => callAsking(args, ctx) };
 
 export const runUpdate = (pid, docId, ctx, opts) => gen.runUpdate(LOCAL, pid, docId, ctx, opts);
 export const runTalk = (pid, threadId, text, ctx, opts) => gen.runTalk(LOCAL, pid, threadId, text, ctx, opts);
