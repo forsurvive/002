@@ -1979,6 +1979,69 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('DESIGN 에 상점 길이 남아 있지 않다', !design.includes('brain.json') && !design.includes('first.mjs') && !design.includes('cloud.'));
 }
 
+// ---------------------------------------------------------------- 단계형 작업 흐름 (docs/WORKFLOW.md) — 순수 로직
+{
+  const wf = await import('../core/workflow/stages.mjs');
+  const tpl = JSON.parse(src(join(ROOT, 'config', 'workflows', 'story_creation.json')));
+  const v0 = wf.validateTemplate(tpl);
+  ok('기본 템플릿이 쓸 수 있는 꼴이다(16단계)', v0.ok && tpl.stages.length === 16, v0.problems.join(' / '));
+  ok('단계마다 강의 카드 · 강사 메모가 있다', tpl.stages.every((x) => x.card && x.card.what && x.card.look.length && x.card.ask && x.teachingNote));
+  ok('공식 흐름 차례 그대로', tpl.stages.map((x) => x.title).join('|').startsWith('작품 규격 · 자료 입력|자료 분석|세계관|서사 재료 선별 · 정리|작품 기획서|기획서 수정|기획서에 맞춘 세계관 수정|인물 설계(캐릭터 풀)|주요 인물 선정'));
+  ok('틀린 템플릿은 까닭을 적는다', !wf.validateTemplate({ stages: [{ key: 'a', output: 'nope' }, { key: 'a', output: 'document' }] }).ok);
+
+  const p = store.blankProject('p_wf', '단계 시험');
+  p.spec.form = '단편';
+  model.materialAdd(p, '노트', '바닷가 마을');
+  let v = wf.view(p, tpl);
+  eq('규격과 자료가 있으면 1단계는 끝', v[0].status, 'approved');
+  eq('2단계는 시작 전', v[1].status, 'not_started');
+  ok('자료 분석은 자료를 추천한다', v[1].refs.length === 1 && model.findDoc(p, v[1].refs[0]).material);
+  // 시작 — 결과 문서를 «단계» 카테고리에 만든다
+  const st = wf.startStage(p, tpl, 'world', { refIds: [] });
+  ok('단계를 시작하면 결과 문서가 선다', st.ok && model.findDoc(p, st.docId).title === '세계관' && p.categories.some((c) => c.name === '단계'));
+  v = wf.view(p, tpl);
+  const world = v.find((x) => x.key === 'world');
+  ok('**강제 순서가 아니다 — 앞 단계 미승인이면 알리기만**', world.status === 'draft' && world.prevPending === true);
+  // 자료 분석이 이미 있으면 그 문서를 쓴다(준비 작업이 먼저 만든 것)
+  const pre = model.docCreate(p, { title: '자료 분석', body: '분석' });
+  eq('같은 이름의 문서가 있으면 그것을 이 단계의 문서로', wf.startStage(p, tpl, 'study').docId, pre.id);
+  ok('세계관의 추천 참조 = 자료 분석', wf.recommendRefs(p, tpl, 'world').join() === pre.id);
+  // 승인 ≠ 확정본
+  eq('글이 없으면 승인하지 못한다', wf.approveStage(p, tpl, 'plan').ok, false);
+  wf.approveStage(p, tpl, 'study', { now: 1000 });
+  ok('**승인해도 확정본은 켜지지 않는다(기본)**', wf.view(p, tpl)[1].status === 'approved' && !model.findDoc(p, pre.id).isFinal);
+  wf.approveStage(p, tpl, 'world', { final: true, now: 1000 });
+  ok('고르면 확정본도 켠다', model.findDoc(p, st.docId).isFinal === true);
+  // 앞 단계가 바뀌면 표만
+  model.findDoc(p, pre.id).updatedAt = 2000;
+  ok('**승인 뒤 앞 단계가 바뀌면 «앞 단계가 바뀜» 표만 단다**', wf.view(p, tpl).find((x) => x.key === 'world').upstreamChanged === true && wf.view(p, tpl).find((x) => x.key === 'world').status === 'approved');
+  // 수정 단계는 같은 문서의 새 판
+  eq('고칠 문서가 없으면 수정 단계를 시작하지 못한다', wf.startStage(p, tpl, 'plan_rev').ok, false);
+  const plan = wf.startStage(p, tpl, 'plan');
+  const rev = wf.startStage(p, tpl, 'plan_rev');
+  ok('**수정 단계는 그 문서를 그대로 고친다(새 문서를 만들지 않는다)**', rev.ok && rev.docId === plan.docId);
+  ok('수정 단계의 추천 참조에서 자기 자신은 빠진다', !wf.recommendRefs(p, tpl, 'plan_rev').includes(plan.docId));
+  // 회차 단계
+  eq('회차 단계는 몇 화인지 골라야', wf.startStage(p, tpl, 'scenes').ok, false);
+  const sc3 = wf.startStage(p, tpl, 'scenes', { episode: 3 });
+  const b3 = wf.startStage(p, tpl, 'body', { episode: 3 });
+  ok('회차마다 따로(«3화 장면» · «3화»)', model.findDoc(p, sc3.docId).title === '3화 장면' && model.findDoc(p, b3.docId).title === '3화');
+  ok('본문 3화는 3화 장면을 추천한다', wf.recommendRefs(p, tpl, 'body', 3).includes(sc3.docId));
+  const vb = wf.view(p, tpl, { bodyOn: false }).find((x) => x.key === 'body');
+  ok('본문 단계는 끌 수 있다', vb.off === true && vb.episodes.length === 1);
+  eq('건너뛰기', (wf.skipStage(p, tpl, 'material'), wf.view(p, tpl).find((x) => x.key === 'material').status), 'skipped');
+  eq('다시 열기', (wf.reopenStage(p, tpl, 'world'), wf.view(p, tpl).find((x) => x.key === 'world').status), 'draft');
+  eq('할 일의 {n} 을 채운다', wf.stageTask(wf.stageOf(tpl, 'body'), 7).includes('7화 장면 계획'), true);
+
+  // 고쳐 쓰기 — 파일 < 운영자 < 기관, 고칠 수 없는 칸은 그대로
+  const bad = wf.cleanOverride(tpl, 'world', { title: '세계 만들기', inputs: ['plan', 'study', 'nope'], output: 'final', key: 'x', card: { what: '새 설명', look: ['하나'], ask: '?' } });
+  ok('**뒤 단계 · 없는 단계는 추천 참조로 걸 수 없다**', bad.inputs.join() === 'study' && !('output' in bad) && !('key' in bad));
+  const tt = wf.applyOverrides(tpl, [{ world: bad }, { world: { task: '기관의 할 일' } }]);
+  const w2 = wf.stageOf(tt, 'world');
+  ok('**덮어쓴 칸만 바뀌고 원문은 남는다**', w2.title === '세계 만들기' && w2.task === '기관의 할 일' && w2.card.what === '새 설명' && w2.output === 'document' && wf.stageOf(tpl, 'world').title === '세계관');
+  ok('고쳐 쓴 템플릿도 쓸 수 있는 꼴', wf.validateTemplate(tt).ok);
+}
+
 // ---------------------------------------------------------------- Core 는 바깥을 모른다 (온라인화 Phase 1)
 //
 // core/ 의 코드는 파일 · 네트워크 · 자식 프로세스 · 환경 변수 · 개인판 앱(tools/)을 부르지 않는다.
