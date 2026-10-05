@@ -396,6 +396,20 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
     return { inv, miss };
   }
 
+  // 아이디 쓸 수 있나 — 계정을 만들기 전에 미리 본다(만들 때도 DB 의 유일 조건이 다시 막는다).
+  // 아무나 아이디 목록을 더듬지 못하게: 맞는 초대 코드를 쥔 사람(가입 중)이나 기관 · 최상위 관리자만 묻는다. 틀린 코드는 맞히기 횟수에 센다.
+  async function loginAvailable(user, b, ip) {
+    const admin = user && (user.isPlatformAdmin || (await one(`SELECT 1 FROM organization_members WHERE user_id = $1 AND role = 'organization_admin' AND status = 'active' LIMIT 1`, [user.id])));
+    if (!admin) {
+      const f = await findInvite(user, b, ip);
+      if (!f.inv) return f;
+    }
+    const login = String(b.loginId || '').trim().toLowerCase();
+    if (!auth.LOGIN_RE.test(login)) return ok({ available: false, reason: 'format', say: '아이디는 영문 소문자 · 숫자 · . _ - 로 3~64자' });
+    const taken = !!(await one('SELECT 1 FROM users WHERE login_id = $1', [login]));
+    return ok({ available: !taken, reason: taken ? 'taken' : '', say: taken ? '이미 사용 중인 아이디입니다' : '사용할 수 있는 아이디입니다' });
+  }
+
   // 첫 화면에서 코드만 먼저 확인한다(쓰지 않는다) — 맞으면 계정 만들기 칸을 연다
   async function checkInvite(user, b, ip) {
     const f = await findInvite(user, b, ip);
@@ -437,11 +451,12 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
 
   return {
     OPS,
-    OP_NAMES: [...Object.keys(OPS), 'invite.accept', 'invite.check'],
+    OP_NAMES: [...Object.keys(OPS), 'invite.accept', 'invite.check', 'login.available'],
     async handle(user, body, ip = '') {
       const op = String((body && body.op) || '');
       if (op === 'invite.accept') return acceptInvite(user, body, ip);
       if (op === 'invite.check') return checkInvite(user, body, ip);
+      if (op === 'login.available') return loginAvailable(user, body, ip);
       if (!user) return no(401, '로그인이 필요합니다', 'login');
       const fn = OPS[op];
       if (!fn) return no(404, '그런 문이 없습니다: ' + op);

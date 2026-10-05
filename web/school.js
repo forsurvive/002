@@ -259,6 +259,29 @@ async function showMembers(orgId) {
 }
 const ROLE_SAY = { organization_admin: '기관 관리자', instructor: '강사', student: '학생' };
 
+// 아이디 칸 — 치는 동안 쓸 수 있는지 미리 본다(잠깐 멈추면 묻는다). 만들 때도 서버가 다시 막는다.
+function wireIdCheck(id, extra = () => ({})) {
+  const n = $(id);
+  if (!n || n.dataset.wired) return;
+  n.dataset.wired = '1';
+  const say = h('div', { class: 'when', style: 'margin-top:4px;min-height:18px' });
+  n.after(say);
+  let t = 0;
+  n.addEventListener('input', () => {
+    clearTimeout(t);
+    say.textContent = '';
+    const v = n.value.trim();
+    if (!v) return;
+    t = setTimeout(async () => {
+      const r = await fetch('/api/edu', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'login.available', loginId: v, ...extra() }) }).catch(() => null);
+      const out = r ? await r.json().catch(() => ({})) : {};
+      if (n.value.trim() !== v) return;   // 그 사이 더 쳤다
+      say.textContent = out.ok ? out.say : '';
+      say.className = out.ok && !out.available ? 'notice' : 'when';
+    }, 400);
+  });
+}
+
 // 강사(· 기관 관리자) 계정 직접 만들기 — 임시 비밀번호는 만든 자리에서 한 번만 보인다
 function makeMemberBox(orgId) {
   const k = 'mk-' + orgId;
@@ -266,6 +289,7 @@ function makeMemberBox(orgId) {
   const st = S.open[k];
   if (!st) return h('button', { class: 'btn-line', text: '강사 계정 만들기', onclick: () => { S.open[k] = { role: 'instructor', classId: '' }; render(); } });
   const pick = (patch) => { Object.assign(st, patch); render(); };
+  setTimeout(() => wireIdCheck(k + '-id'), 0);   // 그리기가 끝난 뒤
   const go = async () => {
     const r = await edu('member.create', { orgId, role: st.role, classId: st.classId || null, loginId: val(k + '-id'), displayName: val(k + '-name') });
     if (!r.ok) return tell(r.error);

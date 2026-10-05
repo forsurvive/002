@@ -164,11 +164,35 @@ const setupForm = (ai, code) => h('form', { onsubmit: setup },
   sayLine(),
   h('button', { class: 'btn-red', type: 'submit', text: '만들고 들어가기' }));
 
+// 아이디 칸 — 치는 동안 쓸 수 있는지 미리 본다(잠깐 멈추면 묻는다). 만들 때도 서버가 다시 막는다.
+function wireIdCheck(id, extra = () => ({})) {
+  const n = $(id);
+  if (!n || n.dataset.wired) return;
+  n.dataset.wired = '1';
+  const say = h('div', { class: 'when', style: 'margin-top:4px;min-height:18px' });
+  n.after(say);
+  let t = 0;
+  n.addEventListener('input', () => {
+    clearTimeout(t);
+    say.textContent = '';
+    const v = n.value.trim();
+    if (!v) return;
+    t = setTimeout(async () => {
+      const r = await fetch('/api/edu', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'login.available', loginId: v, ...extra() }) }).catch(() => null);
+      const out = r ? await r.json().catch(() => ({})) : {};
+      if (n.value.trim() !== v) return;   // 그 사이 더 쳤다
+      say.textContent = out.ok ? out.say : '';
+      say.className = out.ok && !out.available ? 'notice' : 'when';
+    }, 400);
+  });
+}
+
 function draw(form) {
   const root = $('root');
   root.textContent = '';
   root.appendChild(h('div', { class: 'body', style: 'max-width:380px;margin:0 auto;padding-top:12vh;padding-bottom:40px' },
     h('div', { class: 'top-name', style: 'font-size:30px;margin-bottom:24px', text: '스토리 엔진' }), form));
+  if (S.invite) wireIdCheck('nu-id', () => ({ code: S.invite.code }));
 }
 
 (async () => {

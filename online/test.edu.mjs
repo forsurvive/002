@@ -185,6 +185,19 @@ export async function run({ pool, ok, eq }) {
     await edu('edu-oa', 'org.settings', { orgId: org.id, allowCopy: true });
     ok('복사도 감사 로그에', (await pool.query("SELECT 1 FROM audit_logs WHERE action = 'project.copy_personal' AND organization_id = $1", [org.id])).rowCount === 1);
 
+    // ---------------- 아이디 중복 확인 — 맞는 초대 코드를 쥔 사람 · 관리자만
+    // 학생 자리(2)가 다 찼다 — 강사 초대 코드로 본다(학생 코드면 자리부터 알려 준다)
+    const codeNow = (await edu('edu-oa', 'invite.create', { orgId: org.id, classId: c1.id, role: 'instructor' })).invite.code;
+    const la = await edu(null, 'login.available', { code: codeNow, loginId: 'EDU-S1' });
+    ok('**가입 중(코드 있음): 쓰고 있는 아이디는 «이미 사용 중»(대소문자 무시)**', la.ok && la.available === false && la.reason === 'taken');
+    ok('새 아이디는 «사용할 수 있음»', (await edu(null, 'login.available', { code: codeNow, loginId: 'brand-new-id' })).available === true);
+    ok('꼴이 틀린 아이디는 꼴을 알려 준다', (await edu(null, 'login.available', { code: codeNow, loginId: 'A!' })).reason === 'format');
+    eq('**코드 없이 아무나 아이디를 더듬지 못한다**', (await edu(null, 'login.available', { loginId: 'edu-s1' })).status, 404);
+    eq('학생(관리자 아님)도 코드 없이는 못 묻는다', (await edu('edu-s1', 'login.available', { loginId: 'edu-s2' })).status, 404);
+    ok('관리자는 코드 없이 묻는다(강사 계정 만들기)', (await edu('edu-oa', 'login.available', { loginId: 'edu-s2' })).available === false
+      && (await edu('edu-root', 'login.available', { loginId: 'someone-new' })).available === true);
+    ok('확인만으로 코드 자리를 쓰지 않는다', (await pool.query('SELECT used_count FROM invites ORDER BY created_at DESC LIMIT 1')).rows[0].used_count === 0);
+
     // ---------------- 계정 직접 만들기 — 강사(· 기관 관리자). 임시 비밀번호는 한 번만
     const mi = await edu('edu-root', 'member.create', { orgId: org.id, role: 'instructor', classId: c1.id, loginId: 'edu-made-in', displayName: '만든 강사' });
     ok('**최상위 관리자가 강사 계정을 직접 만든다(임시 비밀번호 한 번)**', mi.ok && mi.loginId === 'edu-made-in' && typeof mi.tempPassword === 'string' && mi.tempPassword.length >= 12);
