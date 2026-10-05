@@ -255,6 +255,20 @@ window.addEventListener('error', (e) => { if (!S.drawn) bootSay('화면을 그�
 // 다시 그려도 보던 자리와 치던 자리를 지킨다 — 1.5초마다 도는 갱신이 화면을 흔들지 않도록.
 const SCROLLERS = ['.main', '#layer1 .panel-body', '#layer2 .panel-body', '#d-body', '#d-out'];
 
+// 읽기만 하는 작품(강사 · 열람이 허락된 기관 관리자) — 고치는 손잡이를 모두 걷고 칸은 읽기 전용으로.
+// 막는 것은 서버다(쓰기 문은 403) — 이것은 누를 수 없는 단추를 보이지 않게 하는 안내일 뿐이다.
+const RO_HIDE = /^(\+|삭제|생성|갱신|추가|저장|만들기|복원|비우기|영구 삭제|승인|승인하고 다음 단계로|건너뛰기|건너뛰기 취소|다시 생성\(새 판\)|문서에서 고치기|고치기|되돌리기|파일 선택|일시중지|이어 하기|에이전트 준비 다시|프로젝트 삭제|작품 파일 가져오기|이 판으로 되돌리기|자료 분석)$/;
+function lockReadOnly() {
+  for (const root of [$('root'), $('layer1'), $('layer2')]) {
+    if (!root) continue;
+    root.querySelectorAll('textarea, input').forEach((n) => { if (n.type !== 'checkbox' && n.type !== 'file') n.readOnly = true; });
+    root.querySelectorAll('button').forEach((b) => {
+      const t = (b.textContent || '').trim();
+      if (b.classList.contains('plus') || b.classList.contains('tg') || b.classList.contains('ck') || RO_HIDE.test(t)) b.style.display = 'none';
+    });
+  }
+}
+
 function render() {
   const focus = document.activeElement;
   const keep = focus && focus.id ? { id: focus.id, value: focus.value, s: focus.selectionStart, e: focus.selectionEnd } : null;
@@ -276,6 +290,7 @@ function render() {
   $('layer2').replaceChildren(...(S.pick ? [pickLayer()] : S.confirm ? [confirmLayer()] : []));
   $('layer3').replaceChildren(...(S.tour ? [tourLayer()] : []));
   S.redrawing = false;
+  if (S.pid && S.project && S.project.readOnly) lockReadOnly();
   if (same1 && $('layer1').firstChild) $('layer1').firstChild.classList.add('still');
   if (same2 && $('layer2').firstChild) $('layer2').firstChild.classList.add('still');
   S.mounted1 = k1;

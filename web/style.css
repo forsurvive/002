@@ -400,6 +400,7 @@ details summary:hover { opacity: .7; }
 .send textarea { min-height: 62px; }
 
 .notice { font-size: 14px; font-weight: 500; color: var(--red); }
+.notice.good { color: var(--blue); }   /* 잘 된 일 — 막힌 일 · 오류만 빨강 */
 .mat {
   display: flex; align-items: center; gap: 12px; padding: 11px 2px;
   border-bottom: 1px solid var(--line-soft); font-size: 15px;

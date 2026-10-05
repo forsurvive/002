@@ -22,6 +22,7 @@ const PROMPTS = { builtin: BUILTIN, slots: AGENT_SLOTS, duty: SLOT_DUTY, promptF
 const SAY = {
   credential: 'AI 연결이 필요합니다', auth: 'AI 키가 맞지 않습니다', credit: 'AI 사용 잔액이 없습니다', model: '쓸 수 있는 모델이 없습니다',
   invalid: '요청을 처리할 수 없습니다', safety: '안전 정책으로 답하지 않았습니다', empty: '빈 응답', timeout: '응답이 너무 오래 걸렸습니다', other: '실패',
+  org: '기관의 AI 연결에 문제가 있습니다 — 선생님(기관)께 알려 주세요',
 };
 
 /**
@@ -111,8 +112,10 @@ export function createWorker({ queue, store, call, prepare = null, allowed = nul
     if (res && res.ok !== false) return queue.finish(row.id, id, { status: 'done' });
 
     const reason = String((res && res.reason) || 'other');
-    const say = String((res && res.error) || SAY[reason] || SAY.other).slice(0, 200);
-    if (reason === 'credential') return queue.park(row.id, id, { status: 'waiting_for_user', ask: { reason, say: SAY.credential } });
+    // 수업 작품(기관 키)의 키 · 잔액 · 모델 문제는 학생이 고칠 수 없다 — 누구에게 알릴지만 말한다(키 · 잔액 이야기를 학생에게 하지 않는다)
+    const orgSide = !!row.organization_id && ['auth', 'credit', 'credential', 'model'].includes(reason);
+    const say = orgSide ? SAY.org : String((res && res.error) || SAY[reason] || SAY.other).slice(0, 200);
+    if (reason === 'credential') return queue.park(row.id, id, { status: 'waiting_for_user', ask: { reason, say: orgSide ? SAY.org : SAY.credential } });
     const again = retryPlan(reason, row.attempt, (res.retryAfterMs || 0) / 1000);
     if (again && row.attempt < row.max_attempts) return queue.retryLater(row.id, id, { delayMs: again.delayMs, errorCode: reason, errorSafe: say });
     return queue.finish(row.id, id, { status: 'failed', errorCode: reason, errorSafe: say });

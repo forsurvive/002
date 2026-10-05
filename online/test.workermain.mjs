@@ -42,6 +42,25 @@ export async function run({ pool, ok, eq }) {
   }
   eq('멈춘 뒤에는 도는 것이 없다', w ? w.worker.busy : 0, 0);
 
+  // ---------------- 수업 작품(기관 키)의 키 문제는 학생에게 «선생님께 알려 주세요»로(키 · 잔액 이야기를 하지 않는다)
+  {
+    const queue = createJobQueue(pool);
+    const org = (await pool.query(`INSERT INTO organizations (name, slug) VALUES ('키 문제 기관', 'key-trouble-org') RETURNING id`)).rows[0].id;
+    const opid = await store.create({ name: '수업 작품' }, { ownerUserId: u.id, organizationId: org });
+    let od; await store.update(opid, (p) => { od = M.docCreate(p, { title: '1화', request: '써 다오' }).id; });
+    const call = async () => ({ ok: false, reason: 'auth', error: 'AI 연결 정보를 확인해야 합니다' });
+    const wk = createWorker({ queue, store, call }, { concurrency: 1, heartbeatMs: 50 });
+    const j = await queue.enqueue({ pid: opid, requestedBy: u.id, kind: 'update', title: '1화', targetId: od, params: { docId: od } });
+    await wk.start();
+    let row = null;
+    for (const end = Date.now() + 5000; Date.now() < end; await sleep(100)) {
+      row = (await pool.query('SELECT status, error_message_safe FROM jobs WHERE id = $1', [j.jobId])).rows[0];
+      if (row.status === 'failed') break;
+    }
+    await wk.stop({ graceMs: 200 });
+    ok('**수업 작품의 키 오류는 «선생님(기관)께 알려 주세요»**', row.status === 'failed' && /선생님/.test(row.error_message_safe) && !/키|잔액/.test(row.error_message_safe), JSON.stringify(row));
+  }
+
   // ---------------- 콘솔 가리기(둘째 울타리)
   {
     const k1 = 'sk-ant-api03-' + 'a'.repeat(30); const k2 = 'sk-proj-' + 'b'.repeat(30); const k3 = 'AIza' + 'c'.repeat(35);

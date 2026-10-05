@@ -329,7 +329,11 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     // 수업 현황 — 강사(맡은 수업) · 기관 관리자. 학생마다 프로젝트 · 최근 작업 상태. 비용 · 횟수 칸은 없다.
     async 'class.progress'(user, b) {
       const c = isUuid(b.classId) ? await one('SELECT id, organization_id, name FROM classes WHERE id = $1', [b.classId]) : null;
-      if (!c || !((await teaches(user.id, c.id)) || (await isAdmin(user, c.organization_id)))) return NOT_FOUND;
+      const teacher = !!c && await teaches(user.id, c.id);
+      if (!c || !(teacher || (await isAdmin(user, c.organization_id)))) return NOT_FOUND;
+      // 작품을 열어 읽을 수 있는가 — 맡은 강사는 늘, 기관 관리자는 열람이 켜져 있을 때만(판정은 tenancy 가 다시 한다)
+      const canRead = teacher || (!!(await one(`SELECT 1 FROM organizations WHERE id = $1 AND settings->>'admin_can_read_projects' = 'true'`, [c.organization_id]))
+        && (await rolesIn(user.id, c.organization_id)).has('organization_admin'));
       const rows = (await pool.query(
         `SELECT u.id AS user_id, u.display_name, u.login_id, p.id AS project_id, p.name AS project_name, p.updated_at, p.stages,
                 (SELECT j.status FROM jobs j WHERE j.project_id = p.id ORDER BY j.created_at DESC LIMIT 1) AS last_job,
@@ -349,7 +353,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
         }
         return best ? { key: best.slot, title: best.s.title + (best.slot.includes('#') ? ' (' + best.slot.split('#')[1] + '화)' : ''), status: best.st.status, teachingNote: best.s.teachingNote || '' } : null;
       };
-      return ok({ class: { id: c.id, name: c.name }, students: rows.map((r) => ({
+      return ok({ class: { id: c.id, name: c.name }, canRead, students: rows.map((r) => ({
         userId: r.user_id, name: r.display_name || r.login_id, projectId: r.project_id, projectName: r.project_name,
         updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0, docs: r.docs || 0, lastJob: r.last_job || '',
         stage: nowStage(r.stages),

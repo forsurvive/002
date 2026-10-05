@@ -440,7 +440,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const acc = await tenancy.access(user, pid);
         const st = acc.read ? await stateOf(pid) : null;
         if (st && !acc.write) st.readOnly = true;   // 강사 · 기관 관리자의 열람 — 화면이 고치기 단추를 숨길 근거(막는 것은 서버다)
-        if (!st) return json(res, 200, { ok: false, error: '없음', projects, me });
+        if (!st) return json(res, 200, { ok: false, error: '없음', projects, me: await withRoles() });
         // 이 작품의 AI 회사 — 작품이 정한 것 · 비용 주체의 기본 · 키가 있는 회사들(화면의 «AI 회사» 칸)
         const ar = (await pool.query(
           `SELECT p.model_policy->>'provider' AS provider, p.organization_id, coalesce(o.settings->>'ai_provider', '') AS org_provider, coalesce(u.settings->>'ai_provider', '') AS user_provider,
@@ -460,7 +460,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
             WHERE d.project_id = $1 AND d.deleted_at IS NULL AND r.finish_reason = 'length'`, [pid])).rows.map((r) => r.legacy_id));
         if (cut.size) for (const d of st.docs || []) if (cut.has(d.id)) d.truncated = true;
         if (ar) st.ai = { provider: ar.provider || '', classWork: !!ar.organization_id, ownerDefault: ar.organization_id ? ar.org_provider : ar.user_provider, keys: ar.keys || [] };
-        return json(res, 200, { ok: true, project: st, projects, me }, cache);
+        return json(res, 200, { ok: true, project: st, projects, me: await withRoles() }, cache);
       }
 
       // 작품 가져오기 — 몸통이 커서 따로 연 문(위에서 로그인한 사람만 크게 받았다). 하는 일은 op 'project.import' 와 같다.

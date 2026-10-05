@@ -39,7 +39,9 @@ async function edu(op, body = {}) {
   if (out.code === 'gate') location.reload();   // 출입 열쇠는 페이지를 다시 열 때 묻는다
   return out;
 }
-const tell = (text) => { S.say = text || ''; render(); };
+// 알림 — 잘 된 일은 파랑(good), 막힌 일 · 오류는 빨강(2026-10-05 사용자 지시)
+const tell = (text, good = false) => { S.say = text || ''; S.sayGood = good; render(); };
+const done = (text) => tell(text, true);
 
 // ---------------------------------------------------------------- 불러오기
 
@@ -76,7 +78,7 @@ const codeBox = (key) => (S.shown[key] ? h('div', { class: 'line', style: 'margi
   h('div', { class: 'when', text: '«초대 코드 목록»에서도 다시 볼 수 있습니다' })) : null);
 // 복사 — 안 되는 브라우저(보안 연결이 아닌 곳 등)에서는 조용히 넘어간다(코드는 화면에 그대로 있다)
 const copyBtn = (code) => h('button', { class: 'btn-text', text: '복사', onclick: async () => {
-  try { await navigator.clipboard.writeText(code); tell('복사했습니다'); } catch { tell('복사하지 못했습니다 — 화면의 코드를 적어 주세요'); }
+  try { await navigator.clipboard.writeText(code); done('복사했습니다'); } catch { tell('복사하지 못했습니다 — 화면의 코드를 적어 주세요'); }
 } });
 
 // 아직 쓸 수 있는 초대 코드 — 열고 닫는다. 코드도 함께 보인다(서버가 봉해 둔 것을 열어 준다 — 옛 코드는 빈칸). 새어 나갔으면 취소한다.
@@ -129,7 +131,7 @@ function joinBox() {
     if (!code) return tell('초대 코드를 넣어 주세요');
     const r = await edu('invite.accept', { code });
     if (!r.ok) return tell(r.error);
-    S.say = '들어왔습니다 — «내 수업»에 보입니다';
+    S.sayGood = true; S.say = '들어왔습니다 — «내 수업»에 보입니다';
     await load();
   };
   return section('새 수업 코드 넣기',
@@ -152,7 +154,7 @@ function progressBox(c) {
       s.stage ? h('span', { class: 'mark', text: s.stage.title + ' · ' + (STAGE_SAY[s.stage.status] || s.stage.status) }) : null,
       s.lastJob ? h('span', { class: 'mark', text: SAY[s.lastJob] || s.lastJob }) : null,
       h('div', { class: 'when', text: s.updatedAt ? day(s.updatedAt) : '' }),
-      s.projectId ? h('a', { class: 'btn-text', href: '/?pid=' + encodeURIComponent(s.projectId), text: '읽기' }) : null,
+      s.projectId && p.canRead ? h('a', { class: 'btn-text', href: '/?pid=' + encodeURIComponent(s.projectId), text: '읽기' }) : null,
       s.stage && s.stage.teachingNote ? h('button', { class: 'btn-text', text: '강의 포인트', onclick: () => { S.open['tn-' + s.userId] = !S.open['tn-' + s.userId]; render(); } }) : null,
       S.open['tn-' + s.userId] && s.stage ? h('div', { class: 'when', style: 'width:100%;white-space:normal', text: s.stage.title + ' — ' + s.stage.teachingNote }) : null))
     : h('div', { class: 'when', text: '아직 학생이 없습니다' }));
@@ -193,7 +195,7 @@ async function copyWork(w) {
   if (!confirm('«' + w.name + '» 을 내 개인 작품으로 복사합니다.\n원본은 수업에 그대로 남고, 복사본에서 쓰는 AI 는 내 AI 키로 돕니다(비용은 본인).')) return;
   const r = await edu('project.copy_personal', { pid: w.id });
   if (!r.ok) return tell(r.error);
-  tell('복사했습니다 — 작업실의 «' + w.name + ' (개인)»');
+  done('복사했습니다 — 작업실의 «' + w.name + ' (개인)»');
 }
 
 // AI 회사 — 키를 넣을 때 고른다. 여럿 넣어 두면 Claude → ChatGPT → Gemini 차례로 쓴다(서버 ai/router.mjs).
@@ -232,16 +234,16 @@ function keyRows(list, op, extra, reload) {
   const live = (list || []).filter((x) => x.status === 'active' || x.status === 'invalid');
   if (!live.length) return h('div', { class: 'when', text: '아직 없습니다' });
   const test = async (x) => {
-    tell('확인하는 중…');
+    done('확인하는 중…');
     const r = await edu(op + '.test', { ...extra, provider: x.provider });
-    tell(r.ok ? (AI_CO[x.provider] + ' — ' + r.say) : r.error);
+    tell(r.ok ? (AI_CO[x.provider] + ' — ' + r.say) : r.error, !!(r.ok && r.verified));
     await reload();
   };
   const revoke = async (x) => {
     if (!confirm(AI_CO[x.provider] + ' 키를 지울까요? 이 키로 돌던 AI 작업은 «연결 필요»로 멈춥니다.')) return;
     const r = await edu(op + '.revoke', { ...extra, provider: x.provider });
     if (!r.ok) return tell(r.error);
-    tell('지웠습니다');
+    done('지웠습니다');
     await reload();
   };
   return live.map((x) => h('div', { class: 'row', style: 'cursor:default' },
@@ -261,7 +263,7 @@ function myKeyBox() {
     if (!r.ok) return tell(r.error);
     if (S.me && r.aiProvider != null) S.me.aiProvider = r.aiProvider;
     S.myKeys = (await edu('me.key.list')).credentials || [];
-    tell('저장했습니다');
+    done('저장했습니다');
   };
   return section('내 AI 키',
     keyRows(S.myKeys, 'me.key', {}, load),
@@ -407,26 +409,26 @@ function operatorRow(id) {
     const r = await edu('license.issue', { orgId: id, days, seatLimit: Number(val('ls-' + id)) || null, allowedProviders: lim.p, allowedTiers: lim.t });
     if (!r.ok) return tell(r.error);
     S.open[k] = false;
-    S.say = org.name + ' — 이용 기간을 열었습니다(~ ' + day(r.license.ends_at) + ' · 학생 ' + (r.license.seat_limit || '제한 없음') + '자리)';
+    S.sayGood = true; S.say = org.name + ' — 이용 기간을 열었습니다(~ ' + day(r.license.ends_at) + ' · 학생 ' + (r.license.seat_limit || '제한 없음') + '자리)';
     await load();
   };
   const saveLimits = async () => {
     const r = await edu('license.limits', { licenseId: live.id, allowedProviders: lim.p, allowedTiers: lim.t });
     if (!r.ok) return tell(r.error);
-    S.open[k] = false; S.say = '쓸 수 있는 범위를 바꿨습니다'; await load();
+    S.open[k] = false; S.sayGood = true; S.say = '쓸 수 있는 범위를 바꿨습니다'; await load();
   };
   const orgStatus = async () => {
     const to = org.status === 'active' ? 'suspended' : 'active';
     if (to === 'suspended' && !confirm(org.name + ' — 기관 이용을 멈출까요? 새 작품 · AI 작업이 서지 않습니다(작품은 그대로).')) return;
     const r = await edu('org.status', { orgId: id, status: to });
     if (!r.ok) return tell(r.error);
-    S.say = org.name + (to === 'active' ? ' — 다시 열었습니다' : ' — 멈췄습니다'); await load();
+    S.sayGood = true; S.say = org.name + (to === 'active' ? ' — 다시 열었습니다' : ' — 멈췄습니다'); await load();
   };
   const licStatus = async (l, to) => {
     if (to === 'suspended' && !confirm('이용 기간을 멈출까요? 새 작품 · AI 작업이 서지 않습니다.')) return;
     const r = await edu('license.status', { licenseId: l.id, status: to });
     if (!r.ok) return tell(r.error);
-    S.say = org.name + ' 이용 기간 — ' + (to === 'active' ? '다시 열었습니다' : '멈췄습니다'); await load();
+    S.sayGood = true; S.say = org.name + ' 이용 기간 — ' + (to === 'active' ? '다시 열었습니다' : '멈췄습니다'); await load();
   };
   const chip = (xs, x, name) => h('button', { class: xs.includes(x) ? 'btn' : 'btn-line', text: name, onclick: () => flip(xs, x) });
   return h('div', { style: 'margin-top:12px;padding-top:10px;border-top:1px solid var(--line-soft)' },
@@ -452,19 +454,19 @@ function classesTab(id) {
   const addClass = async () => {
     const r = await edu('class.create', { orgId: id, name: val('nc-' + id), startsAt: val('ncs-' + id), endsAt: val('nce-' + id) });
     if (!r.ok) return tell(r.error);
-    S.open[nk] = false; S.say = '«' + r.class.name + '» 수업을 만들었습니다 — [학생 초대 코드]로 학생을 부르세요'; await load();
+    S.open[nk] = false; S.sayGood = true; S.say = '«' + r.class.name + '» 수업을 만들었습니다 — [학생 초대 코드]로 학생을 부르세요'; await load();
   };
   const saveDates = async (c) => {
     const r = await edu('class.dates', { classId: c.id, startsAt: val('cds-' + c.id), endsAt: val('cde-' + c.id) });
     if (!r.ok) return tell(r.error);
-    S.dates[c.id] = false; S.say = '수업 기간을 바꿨습니다'; await load();
+    S.dates[c.id] = false; S.sayGood = true; S.say = '수업 기간을 바꿨습니다'; await load();
   };
   const archive = async (c) => {
     const closing = c.status === 'active';
     if (closing && !confirm('«' + c.name + '» 수업을 닫을까요?\n닫으면 이 수업에 새 작품을 만들거나 초대 코드로 새로 들어올 수 없습니다.\n이미 든 학생과 작품은 그대로 남고, «다시 열기»로 되돌릴 수 있습니다.')) return;
     const r = await edu('class.archive', { classId: c.id, reopen: !closing });
     if (!r.ok) return tell(r.error);
-    S.say = '«' + c.name + '» ' + (closing ? '수업을 닫았습니다' : '수업을 다시 열었습니다'); await load();
+    S.sayGood = true; S.say = '«' + c.name + '» ' + (closing ? '수업을 닫았습니다' : '수업을 다시 열었습니다'); await load();
   };
   const sorted = [...classes].sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1));
   return h('div', null,
@@ -521,7 +523,7 @@ function aiTab(id) {
     if ($(kk)) $(kk).value = '';
     if (!r.ok) return tell(r.error);
     S.open['addkey-' + id] = false;
-    S.say = AI_CO[provOf(kk)] + ' 키를 저장했습니다(다시 보이지 않습니다) — [연결 확인]으로 확인해 보세요';
+    S.sayGood = true; S.say = AI_CO[provOf(kk)] + ' 키를 저장했습니다(다시 보이지 않습니다) — [연결 확인]으로 확인해 보세요';
     await load();
   };
   const tiers = START_TIERS.filter((t) => !(live && live.allowed_model_tiers) || live.allowed_model_tiers.includes(t));
@@ -529,7 +531,7 @@ function aiTab(id) {
     h('div', { class: 'lab', text: '이 기관 작품에 쓰는 AI' }),
     keyed.length ? h('div', { class: 'line' }, keyed.map((p) => h('button', {
       class: (prov || keyed[0]) === p ? 'btn' : 'btn-line', text: AI_CO[p],
-      onclick: async () => { const r = await edu('org.settings', { orgId: id, aiProvider: p }); if (!r.ok) return tell(r.error); S.say = AI_CO[p] + '를 씁니다'; await load(); },
+      onclick: async () => { const r = await edu('org.settings', { orgId: id, aiProvider: p }); if (!r.ok) return tell(r.error); S.sayGood = true; S.say = AI_CO[p] + '를 씁니다'; await load(); },
     }))) : h('div', { class: 'notice', text: '아직 AI 키가 없습니다 — 아래에서 키를 넣으면 그 회사가 기본이 됩니다' }),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '키(학생 작업이 이 키로 돕니다 · 다시 보이지 않습니다)' }),
     keyRows(keys, 'org.key', { orgId: id }, load),
@@ -543,7 +545,7 @@ function aiTab(id) {
     h('div', { class: 'lab', style: 'margin-top:16px', text: '새 수업 작품의 시작 등급(학생이 작품마다 바꿀 수 있습니다)' }),
     h('div', { class: 'line' }, tiers.map((t) => h('button', {
       class: tier === t ? 'btn' : 'btn-line', text: TIER_CO[t] + (t === 'balanced' ? ' (기본)' : ''),
-      onclick: async () => { const r = await edu('org.settings', { orgId: id, aiTier: t }); if (!r.ok) return tell(r.error); S.say = TIER_CO[t] + '로 시작합니다'; await load(); },
+      onclick: async () => { const r = await edu('org.settings', { orgId: id, aiTier: t }); if (!r.ok) return tell(r.error); S.sayGood = true; S.say = TIER_CO[t] + '로 시작합니다'; await load(); },
     }))),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '사용량(이 기관 키)' }),
     S.usage['o-' + id] ? h('button', { class: 'btn-line', text: '사용량 닫기', onclick: () => { delete S.usage['o-' + id]; render(); } })
@@ -679,7 +681,7 @@ function passwordBox() {
       .then((x) => x.json()).catch(() => ({ ok: false, error: '연결되지 않습니다' }));
     if (!r.ok) return tell(r.error);
     S.open[k] = false;
-    tell('비밀번호를 바꿨습니다');
+    done('비밀번호를 바꿨습니다');
   };
   return section('내 비밀번호 바꾸기',
     h('div', { class: 'line', style: 'align-items:flex-end' },
@@ -737,7 +739,7 @@ function wfEditor(orgId) {
       if (!clear) for (const k of Object.keys(typed)) if (typed[k] !== undefined && !same(k)) data[k] = typed[k];
       const r = await edu('workflow.save', { ...(orgId ? { orgId } : {}), stageKey: st.key, data });
       if (!r.ok) return tell(r.error);
-      S.say = (clear ? '원래대로 되돌렸습니다' : '저장했습니다 — 다음 생성부터 쓰입니다') + ' (' + st.n + '  ' + (clear ? st.original.title : (data.title || st.effective.title)) + ')';
+      S.sayGood = true; S.say = (clear ? '원래대로 되돌렸습니다' : '저장했습니다 — 다음 생성부터 쓰입니다') + ' (' + st.n + '  ' + (clear ? st.original.title : (data.title || st.effective.title)) + ')';
       S.wfOpen[k] = false;   // 저장하면 그 단계는 접는다
       await loadWf(sk, orgId);
     };
@@ -790,7 +792,7 @@ function opsView() {
     if (status === 'disabled' && !confirm(loginId + ' — 계정을 멈출까요? 곧바로 로그아웃되고 다시 열 때까지 들어올 수 없습니다.')) return;
     const r = await edu('user.status', { loginId, status });
     if (!r.ok) return tell(r.error);
-    S.say = r.loginId + (status === 'disabled' ? ' — 멈췄습니다' : ' — 다시 열었습니다'); $('us-id').value = ''; render();
+    S.sayGood = true; S.say = r.loginId + (status === 'disabled' ? ' — 멈췄습니다' : ' — 다시 열었습니다'); $('us-id').value = ''; render();
   };
   const orgList = Object.values(S.orgs);
   return h('div', null,
@@ -822,12 +824,11 @@ function newOrgView() {
   const go = async () => {
     const r = await edu('org.create', { name: val('no-name'), slug: val('no-slug') });
     if (!r.ok) return tell(r.error);
-    if (S.open.withLic) {
-      const l = await edu('license.issue', { orgId: r.organization.id, days: Number(val('no-days')) || 90, seatLimit: Number(val('no-seats')) || null });
-      if (!l.ok) S.say = '기관은 만들었지만 이용 기간을 열지 못했습니다 — ' + l.error;
-    }
+    const l = S.open.withLic ? await edu('license.issue', { orgId: r.organization.id, days: Number(val('no-days')) || 90, seatLimit: Number(val('no-seats')) || null }) : null;
     S.sel = r.organization.id; S.sub[r.organization.id] = 'AI';
-    if (!S.say) S.say = '«' + r.organization.name + '» 기관을 만들었습니다' + (S.open.withLic ? ' · 이용 기간을 열었습니다' : '') + ' — 다음으로 AI 키를 넣으세요';
+    S.sayGood = !l || l.ok;
+    S.say = l && !l.ok ? '기관은 만들었지만 이용 기간을 열지 못했습니다 — ' + l.error
+      : '«' + r.organization.name + '» 기관을 만들었습니다' + (l ? ' · 이용 기간을 열었습니다' : '') + ' — 다음으로 AI 키를 넣으세요';
     await load();
   };
   return h('div', { class: 'card-box' },
@@ -878,7 +879,7 @@ function render() {
   const head = (title) => h('div', { class: 'line', style: 'margin-bottom:22px;align-items:flex-start' },
     h('div', { style: 'flex:1' }, h('div', { class: 'top-name', style: 'font-size:28px', text: title }), whoLine()),
     S.loggedIn ? h('a', { class: 'btn-line', href: '/', text: '작업실로' }) : h('a', { class: 'btn-line', href: '/login', text: '로그인' }));
-  const notice = S.say ? h('div', { class: 'notice', style: 'margin-bottom:14px', text: S.say }) : null;
+  const notice = S.say ? h('div', { class: 'notice' + (S.sayGood ? ' good' : ''), style: 'margin-bottom:14px', text: S.say }) : null;
   if (PAGE === 'manage') {
     // 관리 화면 — 운영자 · 기관 관리자만. 서버도 문마다 다시 본다(이 갈림은 안내일 뿐이다).
     const can = S.me && (S.me.platformAdmin || Object.keys(S.orgs).length);

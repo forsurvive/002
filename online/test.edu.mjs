@@ -144,6 +144,8 @@ export async function run({ pool, ok, eq }) {
     eq('**학생은 수업 현황을 못 본다**', (await edu('edu-s1', 'class.progress', { classId: c1.id })).status, 404);
     eq('맡지 않은 수업 현황도 못 본다', (await edu('edu-in', 'class.progress', { classId: c2.id })).status, 404);
     ok('기관 관리자는 모든 수업 현황을 본다', (await edu('edu-oa', 'class.progress', { classId: c1.id })).ok);
+    ok('**열람이 꺼져 있으면 기관 관리자 현황에 «읽기»가 없다(canRead) · 맡은 강사는 있다**', (await edu('edu-oa', 'class.progress', { classId: c1.id })).canRead === false
+      && (await edu('edu-in', 'class.progress', { classId: c1.id })).canRead === true);
     ok('수업 목록(학생 수)', (await edu('edu-oa', 'class.list', { orgId: org.id })).classes.find((c) => c.id === c1.id).students === 2);
     await edu('edu-oa', 'class.archive', { classId: c1.id });
     eq('닫은 수업에는 새로 만들 수 없다', (await api('edu-s1', 'project.create', { classId: c1.id, name: 'x', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }] })).status, 403);
@@ -216,6 +218,7 @@ export async function run({ pool, ok, eq }) {
     await edu('edu-s2', 'me.key.set', { provider: 'openai', apiKey: 'sk-good-openai-0002' });
     ok('**작품마다 회사를 고른다(개인 작품 — 키를 넣은 뒤)**', (await edu('edu-s2', 'project.ai.set', { pid: mine2.pid, provider: 'openai' })).ok);
     const st2 = (await (await fetch(base + '/api/state?pid=' + mine2.pid, { headers: { cookie: jar['edu-s2'] } })).json()).project;
+    ok('**작품을 열어도 화면 위쪽 신분이 실린다(me.roles)**', (await (await fetch(base + '/api/state?pid=' + proj.pid, { headers: { cookie: jar['edu-s1'] } })).json()).me.roles.includes('student'));
     ok('작품 화면에 고른 회사 · 내 기본 · 키 있는 회사가 실린다', st2.ai && st2.ai.provider === 'openai' && st2.ai.ownerDefault === 'google' && !st2.ai.classWork, JSON.stringify(st2.ai));
     eq('**남의 작품 회사는 못 바꾼다**', (await edu('edu-s1', 'project.ai.set', { pid: mine2.pid, provider: 'google' })).status, 404);
     eq('**수업 작품 회사는 학생이 못 바꾼다(기관이 정한다)**', (await edu('edu-s1', 'project.ai.set', { pid: proj.pid, provider: 'google' })).status, 403);
