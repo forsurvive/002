@@ -578,7 +578,7 @@ function catSection(c, byId) {
   return h('div', { class: 'sec' },
     h('div', { class: 'sec-head' },
       h('button', { class: 'ck' + (allPicked(sel, c.docIds) ? ' on' : ''), onclick: () => toggleAll(key, c.docIds, !allPicked(sel, c.docIds)) }),
-      h('div', { class: 'name', text: c.name, onclick: () => { S.fold[key] = !folded; render(); } }),
+      h('div', { class: 'name click', text: c.name, onclick: () => { S.fold[key] = !folded; render(); } }),
       c.virtual ? null : h('button', { class: 'btn-text red', text: '삭제', onclick: () => api('cat.delete', { ids: [c.id] }) })),
     // 고르면 다운로드 · 삭제만 선다 — 확정본은 줄마다 있는 토글로 켜고 끈다(사용자 지시, 2026-09-29).
     picked.length ? h('div', { class: 'bulk' },
@@ -610,7 +610,7 @@ function threadSection() {
   return h('div', { class: 'sec' },
     h('div', { class: 'sec-head' },
       h('button', { class: 'ck' + (allPicked(sel, ids) ? ' on' : ''), onclick: () => toggleAll(key, ids, !allPicked(sel, ids)) }),
-      h('div', { class: 'name', text: '논의 스레드', onclick: () => { S.fold[key] = !S.fold[key]; render(); } })),
+      h('div', { class: 'name click', text: '논의 스레드', onclick: () => { S.fold[key] = !S.fold[key]; render(); } })),
     picked.length ? h('div', { class: 'bulk' },
       h('button', { class: 'btn-line', text: '다운로드', onclick: () => picked.forEach((id, i) => setTimeout(() => download('thread', id), i * 120)) }),
       h('button', { class: 'btn-red', text: '삭제', onclick: () => api('thread.delete', { ids: picked }) })) : null,

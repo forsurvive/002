@@ -268,6 +268,28 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
       await log(user, b.orgId, 'member.reset_password', 'user', b.userId, {}, ip);
       return ok({ tempPassword: temp });   // 이번 한 번만
     },
+    // 계정 직접 만들기 — 초대 코드 없이 운영자 · 기관 관리자가 그 기관의 강사(또는 기관 관리자) 계정을 만든다.
+    // 임시 비밀번호를 한 번만 보여 준다(본인이 «내 계정»에서 바꾼다). 기관 관리자 계정은 최상위 관리자만 만든다.
+    // 학생은 초대 코드로(학생 자리 상한을 지키는 길이 하나여야 한다). 이미 있는 아이디면 만들지 않는다 — 있는 사람은 초대 코드로 더한다.
+    async 'member.create'(user, b, ip) {
+      if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
+      const role = String(b.role || 'instructor');
+      if (!['instructor', 'organization_admin'].includes(role)) return no(422, '강사 · 기관 관리자 계정만 직접 만듭니다(학생은 초대 코드로)', 'validation');
+      if (role === 'organization_admin' && !user.isPlatformAdmin) return no(403, '기관 관리자 계정은 최상위 관리자만 만듭니다', 'forbidden');
+      let classId = null;
+      if (b.classId) {
+        const c = isUuid(b.classId) ? await one('SELECT id, organization_id FROM classes WHERE id = $1', [b.classId]) : null;
+        if (!c || c.organization_id !== b.orgId) return NOT_FOUND;
+        if (role === 'instructor') classId = c.id;
+      }
+      const temp = newInviteCode().toLowerCase();
+      const r = await auth.createUser(pool, { loginId: b.loginId, password: temp, displayName: b.displayName || '' });
+      if (!r.ok) return no(r.code === 'conflict' ? 409 : 422, r.code === 'conflict' ? '이미 있는 아이디입니다 — 그 사람은 초대 코드로 더해 주세요' : r.error, r.code);
+      await pool.query('INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1,$2,$3)', [b.orgId, r.user.id, role]);
+      if (classId) await pool.query(`INSERT INTO class_members (class_id, organization_id, user_id, role) VALUES ($1,$2,$3,'instructor')`, [classId, b.orgId, r.user.id]);
+      await log(user, b.orgId, 'member.create', 'user', r.user.id, { role, classId }, ip);
+      return ok({ loginId: r.user.login_id, tempPassword: temp });   // 임시 비밀번호는 이번 한 번만
+    },
     // 기관에서 내보내기 — 계정과 작품은 지우지 않는다(작품은 그 사람이 계속 읽는다). 기관 · 수업 멤버십만 거둔다.
     async 'member.remove'(user, b, ip) {
       if (!isUuid(b.orgId) || !isUuid(b.userId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;

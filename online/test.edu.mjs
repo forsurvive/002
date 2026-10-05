@@ -185,6 +185,20 @@ export async function run({ pool, ok, eq }) {
     await edu('edu-oa', 'org.settings', { orgId: org.id, allowCopy: true });
     ok('복사도 감사 로그에', (await pool.query("SELECT 1 FROM audit_logs WHERE action = 'project.copy_personal' AND organization_id = $1", [org.id])).rowCount === 1);
 
+    // ---------------- 계정 직접 만들기 — 강사(· 기관 관리자). 임시 비밀번호는 한 번만
+    const mi = await edu('edu-root', 'member.create', { orgId: org.id, role: 'instructor', classId: c1.id, loginId: 'edu-made-in', displayName: '만든 강사' });
+    ok('**최상위 관리자가 강사 계정을 직접 만든다(임시 비밀번호 한 번)**', mi.ok && mi.loginId === 'edu-made-in' && typeof mi.tempPassword === 'string' && mi.tempPassword.length >= 12);
+    await login('edu-made-in', mi.tempPassword);
+    ok('**만든 강사는 그 수업을 맡는다(수업 현황을 본다)**', (await edu('edu-made-in', 'class.progress', { classId: c1.id })).ok);
+    ok('기관 관리자도 강사 계정을 만든다', (await edu('edu-oa', 'member.create', { orgId: org.id, role: 'instructor', loginId: 'edu-made-in2', displayName: '둘' })).ok);
+    eq('**기관 관리자는 기관 관리자 계정을 직접 만들지 못한다(최상위만)**', (await edu('edu-oa', 'member.create', { orgId: org.id, role: 'organization_admin', loginId: 'edu-made-oa' })).status, 403);
+    ok('최상위 관리자는 기관 관리자 계정을 만든다', (await edu('edu-root', 'member.create', { orgId: org.id, role: 'organization_admin', loginId: 'edu-made-oa', displayName: '관리' })).ok);
+    eq('**학생 계정은 직접 만들지 않는다(초대 코드로 — 자리 상한)**', (await edu('edu-root', 'member.create', { orgId: org.id, role: 'student', loginId: 'edu-made-st' })).status, 422);
+    eq('**강사 · 학생은 계정을 만들지 못한다**', (await edu('edu-in', 'member.create', { orgId: org.id, role: 'instructor', loginId: 'edu-made-x' })).status, 404);
+    eq('이미 있는 아이디는 만들지 않는다', (await edu('edu-root', 'member.create', { orgId: org.id, role: 'instructor', loginId: 'edu-s1' })).status, 409);
+    ok('계정 만들기도 감사 로그에(비밀번호 없이)', (await pool.query("SELECT details FROM audit_logs WHERE action = 'member.create'")).rows.length === 3
+      && !JSON.stringify((await pool.query("SELECT * FROM audit_logs WHERE action = 'member.create'")).rows).includes(mi.tempPassword));
+
     // ---------------- 한 사람 한 계정 — 같은 초대 코드로 들어와도 계정은 따로다
     const ids = (await pool.query("SELECT id, login_id, password_hash FROM users WHERE login_id IN ('edu-s1', 'edu-s2')")).rows;
     ok('**같은 코드로 들어온 두 학생은 다른 계정(다른 비밀번호)**', ids.length === 2 && ids[0].id !== ids[1].id && ids[0].password_hash !== ids[1].password_hash);

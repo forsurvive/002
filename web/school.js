@@ -66,7 +66,7 @@ const section = (title, ...body) => h('div', { class: 'sec' },
 // 만든 그 자리에서 한 번만 보이는 초대 코드
 const codeBox = (key) => (S.shown[key] ? h('div', { class: 'line', style: 'margin-top:10px' },
   h('div', { class: 'mark', style: 'font-size:15px;padding:6px 10px', text: S.shown[key] }),
-  h('div', { class: 'when', text: '이 코드는 지금만 보입니다 — 적어서 전해 주세요' })) : null);
+  h('div', { class: 'when', text: '지금만 보입니다 — 적어서 전해 주세요' })) : null);
 
 async function makeInvite(key, orgId, classId, role) {
   const r = await edu('invite.create', { orgId, classId, role });
@@ -224,6 +224,8 @@ function orgBox(id) {
     h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
       field('Anthropic API 키', 'ok-' + id, 'password', { autocomplete: 'off', spellcheck: 'false' }), h('button', { class: 'btn-line', text: '저장', onclick: saveKey })),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '사람' }),
+    h('div', { class: 'line', style: 'margin-bottom:8px' }, makeMemberBox(id)),
+    codeBox('mk-' + id),
     membersBox(id),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '사용량(기관 키)' }),
     h('button', { class: 'btn-line', text: '사용량 보기', onclick: () => showUsage('o-' + id, id) }),
@@ -253,6 +255,37 @@ async function showMembers(orgId) {
   render();
 }
 const ROLE_SAY = { organization_admin: '기관 관리자', instructor: '강사', student: '학생' };
+
+// 강사(· 기관 관리자) 계정 직접 만들기 — 임시 비밀번호는 만든 자리에서 한 번만 보인다
+function makeMemberBox(orgId) {
+  const k = 'mk-' + orgId;
+  const o = S.orgs[orgId];
+  const st = S.open[k];
+  if (!st) return h('button', { class: 'btn-line', text: '강사 계정 만들기', onclick: () => { S.open[k] = { role: 'instructor', classId: '' }; render(); } });
+  const pick = (patch) => { Object.assign(st, patch); render(); };
+  const go = async () => {
+    const r = await edu('member.create', { orgId, role: st.role, classId: st.classId || null, loginId: val(k + '-id'), displayName: val(k + '-name') });
+    if (!r.ok) return tell(r.error);
+    S.shown[k] = r.loginId + ' / 임시 비밀번호 ' + r.tempPassword;
+    S.open[k] = null;
+    if (S.members[orgId]) await showMembers(orgId); else render();
+  };
+  return h('div', { style: 'width:100%' },
+    S.me && S.me.platformAdmin ? h('div', { class: 'line' },
+      h('button', { class: st.role === 'instructor' ? 'btn' : 'btn-line', text: '강사', onclick: () => pick({ role: 'instructor' }) }),
+      h('button', { class: st.role === 'organization_admin' ? 'btn' : 'btn-line', text: '기관 관리자', onclick: () => pick({ role: 'organization_admin', classId: '' }) })) : null,
+    st.role === 'instructor' && o.classes.length ? h('div', { style: 'margin-top:8px' },
+      h('div', { class: 'lab', text: '맡길 수업(나중에 정해도 됩니다)' }),
+      h('div', { class: 'line' },
+        h('button', { class: st.classId === '' ? 'btn' : 'btn-line', text: '아직 없음', onclick: () => pick({ classId: '' }) }),
+        o.classes.filter((c) => c.status === 'active').map((c) => h('button', { class: st.classId === c.id ? 'btn' : 'btn-line', text: c.name, onclick: () => pick({ classId: c.id }) })))) : null,
+    h('div', { class: 'line', style: 'align-items:flex-end;margin-top:8px' },
+      field('아이디(영문 소문자 · 숫자, 3자 이상)', k + '-id', 'text', { autocapitalize: 'none', spellcheck: 'false' }),
+      field('이름', k + '-name'),
+      h('button', { class: 'btn-red', text: '만들기', onclick: go }),
+      h('button', { class: 'btn-text', text: '닫기', onclick: () => { S.open[k] = null; render(); } })),
+    h('div', { class: 'when', style: 'margin-top:6px', text: '임시 비밀번호가 한 번만 보입니다 — 본인에게 전하고 «내 계정»에서 바꾸게 해 주세요. 학생은 초대 코드로 들어옵니다.' }));
+}
 
 function membersBox(orgId) {
   const list = S.members[orgId];
@@ -324,7 +357,8 @@ function wfEditor(orgId) {
   const w = S.wf[sk];
   if (!w) return h('button', { class: 'btn-line', text: '단계 목록 열기', onclick: () => loadWf(sk, orgId) });
   const layerOf = (st) => (orgId ? st.organization : st.platform) || {};
-  return h('div', null, w.stages.map((st) => {
+  const close = () => h('button', { class: 'btn-line', style: 'margin-top:8px', text: '단계 목록 닫기', onclick: () => { delete S.wf[sk]; render(); } });
+  return h('div', null, close(), w.stages.map((st) => {
     const k = sk + ':' + st.key;
     const mine = layerOf(st);
     const eff = st.effective;
@@ -383,7 +417,7 @@ function wfEditor(orgId) {
       for (const x of before) { const c = $(id('in-' + x.key)); if (c && !c.dataset.filled) { c.checked = (eff.inputs || []).includes(x.key); c.dataset.filled = '1'; } }
     }, 0);
     return h('div', null, head, form);
-  }));
+  }), close());
 }
 
 // ---------------------------------------------------------------- 운영(플랫폼 관리자)
