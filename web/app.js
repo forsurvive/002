@@ -262,9 +262,10 @@ function projectList() {
         brandMark('margin-bottom:6px'),
         h('div', { class: 'top-name', style: 'font-size:30px', text: '스토리 엔진' })),
       h('div', { class: 'line', style: 'flex:none' },
-        // 온라인판 — 관리는 운영자 · 기관 관리자에게만 보인다(막는 것은 서버다). 수업 · 초대 코드는 누구나.
+        // 온라인판 — 관리는 운영자 · 기관 관리자에게만, 내 수업은 수업에 든 사람에게만, 내 계정은 누구나(막는 것은 서버다)
         S.me && S.me.manage ? h('button', { class: 'btn-text', text: '관리', onclick: () => { location.href = '/manage.html'; } }) : null,
-        S.me ? h('button', { class: 'btn-text', text: '수업 · 초대 코드', onclick: () => { location.href = '/school.html'; } }) : null,
+        S.me && S.me.classes > 0 ? h('button', { class: 'btn-text', text: '내 수업', onclick: () => { location.href = '/school.html'; } }) : null,
+        S.me ? h('button', { class: 'btn-text', text: '내 계정', onclick: () => { location.href = '/account.html'; } }) : null,
         S.me ? h('button', { class: 'btn-text', text: '로그아웃', onclick: logout }) : null,
         h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: () => startTour() }),
         h('button', { class: 'plus', text: '+', onclick: () => {
@@ -1312,7 +1313,7 @@ function placeChoice() {
         places.map((c) => h('button', { class: pick === c.classId ? 'btn' : 'btn-line', text: c.orgName + ' · ' + c.name, onclick: () => choose(c.classId) })),
         h('button', { class: pick === '' ? 'btn' : 'btn-line', text: '내 개인 작품', onclick: () => choose('') })),
     ] : null,
-    pick === '' ? h('div', { class: 'when', style: 'margin-top:8px', text: '내 개인 작품 — AI 는 내 AI 키(«수업 · 초대 코드» 페이지)로 돌고, 비용은 본인에게 나갑니다.' }) : null);
+    pick === '' ? h('div', { class: 'when', style: 'margin-top:8px', text: '내 개인 작품 — AI 는 내 AI 키(«내 계정»)로 돌고, 비용은 본인에게 나갑니다.' }) : null);
 }
 
 // 돌려주는 값: 이 자리에서 창까지 다 갈무리했으면 true. 거절당했으면 false(창을 열어 둔다).

@@ -1,12 +1,13 @@
 'use strict';
 
-// 온라인판의 두 화면이 이 한 파일을 쓴다(<body data-page>로 가른다).
-//   school.html «수업»  — 초대 코드로 들어오기 · 내 수업 · 수업 현황(강사) · 내 비밀번호 바꾸기
+// 온라인판의 세 화면이 이 한 파일을 쓴다(<body data-page>로 가른다).
+//   school.html  «내 수업»  — 들어가 있는 수업 · 내 수업 작품(열기 · 개인 작품으로 복사) · 수업 현황 · 학생 초대 코드(강사) · 새 수업 코드 넣기
+//   account.html «내 계정»  — 새 수업 코드 넣기 · 내 AI 키 · 내 비밀번호 바꾸기(누구나)
 //   manage.html «관리»  — 운영자(플랫폼 관리자)와 기관 관리자만: 기관 · 이용 기간 · 수업 · 초대 · 사람(비밀번호 재설정 · 내보내기) · 기관 키 · 사용량
 // 모든 판정은 서버(online/edu.mjs · tenancy)가 한다. 이 화면은 서버가 허락한 것을 보여 줄 뿐이다.
 // 학생에게 비용 · 횟수 · 키를 보이지 않는다. 초대 코드는 만든 그 자리에서 한 번만 보인다.
 
-const PAGE = document.body.dataset.page === 'manage' ? 'manage' : 'school';
+const PAGE = ['manage', 'account'].includes(document.body.dataset.page) ? document.body.dataset.page : 'school';
 const S = { me: null, loggedIn: false, orgs: {}, progress: {}, shown: {}, say: '', open: {}, usage: {}, members: {}, wf: {}, wfOpen: {} };
 
 function h(tag, attrs, ...kids) {
@@ -41,6 +42,7 @@ async function load() {
   S.loggedIn = m.ok === true;
   S.me = m.ok ? m : null;
   S.orgs = {};
+  if (S.me && PAGE === 'account') S.myKeys = (await edu('me.key.list')).credentials || [];
   if (S.me && PAGE === 'manage') {
     // 관리할 수 있는 기관 — 플랫폼 관리자는 전부, 기관 관리자는 제 기관(서버가 골라 준다)
     const list = (await edu('org.list')).organizations || [];
@@ -76,28 +78,20 @@ async function makeInvite(key, orgId, classId, role) {
 // ---------------------------------------------------------------- 들어오기(초대 코드)
 
 function joinBox() {
+  // 로그인한 사람이 새 수업 · 기관에 들어간다 — 지금 계정 그대로(새 계정을 만들지 않는다).
+  // 로그인 전에는 서버가 첫 화면(/login)으로 보낸다 — 거기서 코드 · 계정 만들기 · «이미 계정이 있어요».
   const go = async () => {
-    const body = { code: val('j-code') };
-    if (!body.code) return tell('초대 코드를 넣어 주세요');
-    if (!S.loggedIn && (!val('j-id') || !val('j-pw'))) return tell('아이디와 비밀번호를 정해 넣어 주세요');
-    if (!S.loggedIn) Object.assign(body, { loginId: val('j-id'), displayName: val('j-name'), password: val('j-pw') });
-    if (!S.loggedIn && body.password !== val('j-pw2')) return tell('비밀번호가 서로 다릅니다');
-    const r = await edu('invite.accept', body);
+    const code = val('j-code');
+    if (!code) return tell('초대 코드를 넣어 주세요');
+    const r = await edu('invite.accept', { code });
     if (!r.ok) return tell(r.error);
-    S.say = '들어왔습니다';
+    S.say = '들어왔습니다 — «내 수업»에 보입니다';
     await load();
   };
-  return section(S.loggedIn ? '초대 코드로 수업 · 기관에 들어가기' : '초대 코드로 처음 들어오기',
+  return section('새 수업 코드 넣기',
     h('div', { class: 'line', style: 'align-items:flex-end' },
       field('초대 코드', 'j-code', 'text', { placeholder: 'ABCD-EFGH-JKLM', autocapitalize: 'characters', spellcheck: 'false' }),
-      ...(S.loggedIn ? [] : [
-        field('아이디(영문 소문자 · 숫자)', 'j-id', 'text', { autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
-        field('이름', 'j-name'),
-        field('비밀번호(10자 이상)', 'j-pw', 'password', { autocomplete: 'new-password' }),
-        field('비밀번호 한 번 더', 'j-pw2', 'password', { autocomplete: 'new-password' }),
-      ]),
-      h('button', { class: 'btn-red', text: '들어가기', onclick: go })),
-    S.loggedIn ? null : h('div', { class: 'when', style: 'margin-top:10px' }, '이미 계정이 있으면 ', h('a', { href: '/login', text: '로그인' }), ' 한 뒤 코드를 넣어 주세요.'));
+      h('button', { class: 'btn-red', text: '들어가기', onclick: go })));
 }
 
 // ---------------------------------------------------------------- 내 수업
@@ -159,7 +153,7 @@ async function copyWork(w) {
 // ---------------------------------------------------------------- 내 AI 키(누구나 — 쓰기 전용). 내 개인 작품의 AI 는 이 키로.
 function myKeyBox() {
   const k = 'mykey';
-  if (!S.open[k]) return h('button', { class: 'btn-text', text: '내 AI 키', onclick: async () => { S.myKeys = (await edu('me.key.list')).credentials || []; S.open[k] = true; render(); } });
+  if (!S.open[k] && PAGE !== 'account') return h('button', { class: 'btn-text', text: '내 AI 키', onclick: async () => { S.myKeys = (await edu('me.key.list')).credentials || []; S.open[k] = true; render(); } });
   const have = (S.myKeys || []).filter((x) => x.status === 'active');
   const save = async () => {
     const r = await edu('me.key.set', { provider: 'anthropic', apiKey: val('mk-key') });
@@ -297,7 +291,7 @@ function membersBox(orgId) {
 
 function passwordBox() {
   const k = 'pwbox';
-  if (!S.open[k]) return h('button', { class: 'btn-text', text: '내 비밀번호 바꾸기', onclick: () => { S.open[k] = true; render(); } });
+  if (!S.open[k] && PAGE !== 'account') return h('button', { class: 'btn-text', text: '내 비밀번호 바꾸기', onclick: () => { S.open[k] = true; render(); } });
   const go = async () => {
     if (val('pw-next') !== val('pw-next2')) return tell('새 비밀번호가 서로 다릅니다');
     const r = await fetch('/api/auth/password', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ current: val('pw-cur'), next: val('pw-next') }) })
@@ -419,7 +413,6 @@ function platformBox() {
 function render() {
   const head = (title) => h('div', { class: 'line', style: 'margin-bottom:22px' },
     h('div', { class: 'top-name', style: 'font-size:28px;flex:1', text: title }),
-    S.loggedIn && PAGE === 'manage' ? h('a', { class: 'btn-line', href: '/school.html', text: '수업 · 초대 코드' }) : null,
     S.loggedIn ? h('a', { class: 'btn-line', href: '/', text: '작업실로' }) : h('a', { class: 'btn-line', href: '/login', text: '로그인' }));
   const notice = S.say ? h('div', { class: 'notice', style: 'margin-bottom:14px', text: S.say }) : null;
   if (PAGE === 'manage') {
@@ -431,11 +424,14 @@ function render() {
           : [platformBox(), Object.keys(S.orgs).map(orgBox)]));
     return;
   }
-  $('root').replaceChildren(h('div', { class: 'body' }, head('수업'), notice,
-    myClasses(),
-    joinBox(),
-    S.loggedIn ? myKeyBox() : null,
-    S.loggedIn ? passwordBox() : null));
+  if (PAGE === 'account') {
+    $('root').replaceChildren(h('div', { class: 'body' }, head('내 계정'), notice,
+      S.loggedIn ? [joinBox(), myKeyBox(), passwordBox()] : h('div', { class: 'when', text: '로그인이 필요합니다' })));
+    return;
+  }
+  $('root').replaceChildren(h('div', { class: 'body' }, head('내 수업'), notice,
+    S.loggedIn ? (myClasses() || h('div', { class: 'when', style: 'margin-bottom:14px', text: '들어가 있는 수업이 없습니다' })) : h('div', { class: 'when', text: '로그인이 필요합니다' }),
+    S.loggedIn ? joinBox() : null));
 }
 
 load();

@@ -354,7 +354,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       if (!user) {
         if (url.pathname.startsWith('/api')) return json(res, 401, bad('로그인이 필요합니다', 'login'));
         // 로그인 전에는 첫 화면(로그인 · 초대 코드 · 계정 만들기) 하나로 모은다
-        if (req.method === 'GET' && ['/', '/index.html', '/school.html', '/manage.html'].includes(url.pathname)) {
+        if (req.method === 'GET' && ['/', '/index.html', '/school.html', '/manage.html', '/account.html'].includes(url.pathname)) {
           return send(res, 302, '', 'text/plain; charset=utf-8', { location: '/login' });
         }
       }

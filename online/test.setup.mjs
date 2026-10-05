@@ -42,7 +42,7 @@ export async function run({ pool, ok, eq }) {
     const r = await post(base, '/api/setup', { ...body, setupCode: srv.setupCode.toLowerCase() });
     ok('**맞는 설정 코드면 처음 설정(소문자도)**', r.status === 200 && (await r.json()).ok);
     ok('출입 열쇠 없이 화면 · 로그인이 열린다', (await fetch(base + '/login')).status !== 401 && (await post(base, '/api/auth/login', { loginId: body.loginId, password: body.password })).status === 200);
-    for (const path of ['/', '/school.html', '/manage.html']) {
+    for (const path of ['/', '/school.html', '/manage.html', '/account.html']) {
       const rr = await fetch(base + path, { redirect: 'manual' });
       ok('로그인 전 ' + path + ' → 첫 화면(/login)', rr.status === 302 && rr.headers.get('location') === '/login');
     }
