@@ -177,6 +177,17 @@ export async function run({ pool, ok, eq }) {
     eq('**남의 프로젝트 작업을 치울 수 없다(404)**', other.status, 404);
     ok('그 작업은 그대로 목록에', (await state(pid)).jobs.some((j) => j.id === j1));
 
+    // ---------------- 두 곳에서 고치기 — 온라인도 같은 셈(표에서 다시 읽은 시각으로 견준다)
+    {
+      const seen = (await state(pid)).docs.find((x) => x.id === doc).updatedAt;
+      await sleep(5);
+      await op('doc.write', { pid, id: doc, body: '다른 탭 글' });
+      const late = await op('doc.write', { pid, id: doc, body: '내 글', baseAt: seen });
+      const now = (await state(pid)).docs.find((x) => x.id === doc);
+      ok('**온라인 — 먼저 고친 글이 있으면 알리고 이력에 남긴다**', late.conflict === true && now.body === '내 글' && now.versions.some((v) => v.body === '다른 탭 글'));
+      ok('온라인 — 다시 읽은 시각이면 conflict 없음', !(await op('doc.write', { pid, id: doc, body: '이어서', baseAt: now.updatedAt })).conflict);
+    }
+
     // ---------------- 출력 상한에 닿은 결과 — 저장하되 «잘렸을 수 있음» 표
     behave = async () => success({ text: '길게 쓰다 만 글', finishReason: 'length' });
     const jl = (await op('doc.update', { pid, id: doc })).jobId;

@@ -217,13 +217,22 @@ export function createOps(d) {
       return r.ok === false ? r : ok({ id });
     },
 
-    'doc.write': async (b) => state.update(b.pid, (p) => {
-      model.docWrite(p, b.id, {
-        title: b.title, body: b.body, request: b.request,
-        refIds: b.refIds, targetIds: b.targetIds, agentIds: b.agentIds,
-        categoryId: b.categoryId === undefined ? undefined : b.categoryId,
+    // baseAt — 화면이 고치기 시작할 때 본 문서의 updatedAt(없으면 견주지 않는다 — 폰 동반 프로그램 등 옛 부르기 그대로).
+    // 그 사이 다른 곳(다른 탭 · AI 작업)이 먼저 고쳤어도 지금 글을 쓴다 — 먼저 고친 글은 이력(판)에 남으므로 잃는 것이 없다.
+    // 대신 conflict 를 돌려주어 화면이 «이력에 남았다»고 알린다.
+    'doc.write': async (b) => {
+      let conflict = false;
+      const r = await state.update(b.pid, (p) => {
+        const cur = model.findDoc(p, b.id);
+        conflict = !!cur && b.baseAt != null && (b.body != null || b.title != null) && (cur.updatedAt || 0) > Number(b.baseAt);
+        model.docWrite(p, b.id, {
+          title: b.title, body: b.body, request: b.request,
+          refIds: b.refIds, targetIds: b.targetIds, agentIds: b.agentIds,
+          categoryId: b.categoryId === undefined ? undefined : b.categoryId,
+        });
       });
-    }),
+      return conflict && (!r || r.ok !== false) ? { ...(r || ok()), conflict: true } : r;
+    },
 
     'doc.final': async (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.docSetFinal(p, id, !!b.on); }),
 

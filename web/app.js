@@ -1127,16 +1127,23 @@ function docPanel(close) {
   const verb = !String(d.body || '').trim() && !d.versions.length ? '생성' : '갱신';
   // 이 창이 닫힐 때 저장할 것
   // 칸을 떠날 때마다 부른다 — 친 것이 있을 때만 쓴다. 닫는 길(S.saveOpen)은 건드리지 않는다.
+  // 고치기 시작할 때 본 판의 시각 — 치는 동안은 얼려 두고, 치지 않을 때는 지금 것을 따른다
+  const typing = ['d-title', 'd-body'].some((k) => k in S.typed);
+  if (!typing || S.open.baseAt == null) S.open.baseAt = d.updatedAt || 0;
   const saveFields = async () => {
     if (S.redrawing) return;
-    const body = { id: d.id };
+    const body = { id: d.id, baseAt: S.open && S.open.baseAt };
     if ('d-title' in S.typed) body.title = $('d-title').value;
     if ('d-body' in S.typed && $('d-body')) body.body = $('d-body').value;
     if ('d-req' in S.typed) body.request = $('d-req').value;
     clearTyped('d-title', 'd-body', 'd-req');
     if (Object.keys(body).length === 1) return;   // 손대지 않았으면 쓰지 않는다
     if (S.open) S.open.fresh = false;             // 한 글자라도 담았으면 갓 만든 것이 아니다
-    await api('doc.write', body);
+    const r = await api('doc.write', body);
+    if (S.open && S.open.id === d.id) {
+      S.open.baseAt = null;
+      if (r && r.conflict) { S.open.err = '그사이 다른 곳에서 고친 글이 있었습니다 — 그 글은 이력(판)에 남아 있습니다'; render(); }
+    }
   };
   // 닫을 때만 지나는 길 — 저장한 뒤, 갓 만들어 비어 있으면 거둔다.
   // (칸을 떠날 때마다 부르는 saveFields 에 두면 창 안에서 칸만 옮겨도 문서가 사라진다.)

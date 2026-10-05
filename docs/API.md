@@ -115,6 +115,7 @@
 편집 op 의 온라인 차이:
 - `doc.update` 에 `requestOnce`(이번 실행에만) · `tier`/`provider`(정책이 허락할 때) · `idempotencyKey` 를 더한다.
 - `doc.write` 에 `rowVersion` 을 더한다(동시 편집 충돌이면 `409 conflict`).
+  → 구현(2026-10-05)은 거절 대신 **알림**: `baseAt`(화면이 고치기 시작할 때 본 `updatedAt`)보다 문서가 새로우면 지금 글을 쓰되 `{ok:true, conflict:true}` — 먼저 고친 글은 판 이력에 남아 잃는 것이 없다(거절하면 치던 글을 잃는다). 두 판 공통 · `baseAt` 없는 옛 부르기(폰)는 그대로.
 - `auth.read`/`auth.write`(개인판 CLI 갈래)는 온라인에서 쓰지 않는다 → `credential.*` 가 대신한다.
 
 ### 2-3. 지금 구현된 것 — `online/server.mjs` (Sprint 6~8)

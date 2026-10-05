@@ -315,6 +315,19 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const dlc = await fetch(base + '/api/download?pid=' + pid + '&kind=cat&id=' + catId);
   ok('카테고리 내려받기', (await dlc.text()).includes('설정'));
 
+  // 두 곳에서 같은 문서를 고치면 — 나중 글을 쓰되 먼저 고친 글은 이력에 남고, 화면에 알린다(baseAt 이 있을 때만)
+  {
+    const before = (await stateOf(pid)).project.docs.find((x) => x.id === docId);
+    const seen = before.updatedAt;
+    await sleep(5);
+    await post('doc.write', { pid, id: docId, body: '다른 탭이 먼저 쓴 글' });
+    const late = await post('doc.write', { pid, id: docId, body: '내가 쓰던 글', baseAt: seen });
+    const now = (await stateOf(pid)).project.docs.find((x) => x.id === docId);
+    ok('**먼저 고친 글이 있으면 conflict 로 알리고, 그 글은 이력에 남는다**', late.ok && late.conflict === true && now.body === '내가 쓰던 글' && now.versions.some((v) => v.body === '다른 탭이 먼저 쓴 글'));
+    const calm = await post('doc.write', { pid, id: docId, body: '이어 쓴 글', baseAt: now.updatedAt });
+    ok('아무도 먼저 고치지 않았으면 conflict 없음 · baseAt 없는 옛 부르기도 그대로', calm.ok && !calm.conflict && !(await post('doc.write', { pid, id: docId, body: '폰에서 쓴 글' })).conflict);
+  }
+
   // 업로드는 글만(명세 §63) — 바이너리(NUL)는 자료 · 문서로 받지 않는다. 화면은 txt · md · 2MB 로 먼저 거른다.
   eq('**글이 아닌 것은 문서로 받지 않는다**', (await post('doc.create', { pid, title: 'x', body: 'PK\u0003\u0004\u0000\u0000' })).ok, false);
   eq('**글이 아닌 자료도 받지 않는다**', (await post('project.create', { name: 'x', spec: { form: '단편' }, materials: [{ name: 'a.hwp', text: 'HWP\u0000\u0000' }] })).ok, false);
