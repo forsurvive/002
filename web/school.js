@@ -863,26 +863,51 @@ function opsView() {
 }
 
 // 새 기관 — 이용 기간을 바로 연다(기본값 90일 · 학생 40자리 — 끄면 기관만)
+// 새 기관 — 이용 기간을 바로 열고(기본 90일 · 학생 40자리), 기관 관리자 계정도 함께 만든다(선택 — 비우면 기관만).
+// 기관 자체는 로그인 계정이 아니다 — 로그인은 사람(기관 관리자)의 아이디 · 비밀번호로 한다.
 function newOrgView() {
   if (S.open.withLic == null) S.open.withLic = true;
+  setTimeout(() => wireIdCheck('no-aid'), 0);   // 아이디를 쓸 수 있는지 치는 동안 본다
+  const gen = () => { const a = 'abcdefghjkmnpqrstuvwxyz23456789'; const r = crypto.getRandomValues(new Uint8Array(12)); $('no-apw').value = [...r].map((x, i) => (i && i % 4 === 0 ? '-' : '') + a[x % a.length]).join(''); };
   const go = async () => {
+    const aid = val('no-aid'); const apw = val('no-apw');
+    // 기관을 만들기 전에 막을 수 있는 것은 먼저 막는다(기관만 만들어지고 계정이 실패하는 일을 줄인다)
+    if (!aid && (val('no-aname') || apw)) return tell('기관 관리자 아이디를 넣어 주세요(계정 없이 기관만 만들려면 세 칸을 모두 비웁니다)');
+    if (aid && apw && apw.length < 10) return tell('기관 관리자 비밀번호는 10자 이상 — 비우면 자동으로 지어 드립니다');
+    if (aid) {
+      const chk = await edu('login.available', { loginId: aid });
+      if (chk.ok && !chk.available) return tell('기관 관리자 아이디 — ' + chk.say);
+    }
     const r = await edu('org.create', { name: val('no-name'), slug: val('no-slug') });
     if (!r.ok) return tell(r.error);
-    const l = S.open.withLic ? await edu('license.issue', { orgId: r.organization.id, days: Number(val('no-days')) || 90, seatLimit: Number(val('no-seats')) || null }) : null;
-    S.sel = r.organization.id; S.sub[r.organization.id] = 'AI';
-    S.sayGood = !l || l.ok;
-    S.say = l && !l.ok ? '기관은 만들었지만 이용 기간을 열지 못했습니다 — ' + l.error
-      : '«' + r.organization.name + '» 기관을 만들었습니다' + (l ? ' · 이용 기간을 열었습니다' : '') + ' — 다음으로 AI 키를 넣으세요';
+    const id = r.organization.id;
+    const l = S.open.withLic ? await edu('license.issue', { orgId: id, days: Number(val('no-days')) || 90, seatLimit: Number(val('no-seats')) || null }) : null;
+    const m = aid ? await edu('member.create', { orgId: id, role: 'organization_admin', loginId: aid, displayName: val('no-aname'), password: apw }) : null;
+    S.sel = id;
+    const bad = [l && !l.ok ? '이용 기간을 열지 못했습니다 — ' + l.error : '', m && !m.ok ? '기관 관리자 계정을 만들지 못했습니다 — ' + m.error : ''].filter(Boolean);
+    if (m && m.ok) S.shown['mk-' + id] = m.loginId + ' / ' + (m.password || apw);   // [사용자] 탭에 그대로 보인다(지금만)
+    S.sub[id] = m && m.ok ? '사용자' : 'AI';
+    S.sayGood = !bad.length;
+    S.say = bad.length ? '«' + r.organization.name + '» 기관은 만들었지만 — ' + bad.join(' · ')
+      : '«' + r.organization.name + '» 기관을 만들었습니다' + (l ? ' · 이용 기간을 열었습니다' : '') + (m ? ' · 기관 관리자 계정을 만들었습니다(아래 아이디 / 비밀번호를 전해 주세요)' : '') + ' — 다음으로 [AI] 탭에서 키를 넣으세요';
     await load();
   };
   return h('div', { class: 'card-box' },
+    h('div', { class: 'lab', text: '기관' }),
     h('div', { class: 'line', style: 'align-items:flex-end' }, field('기관 이름', 'no-name'),
       field('영문 약칭(선택 — 비워 두면 자동)', 'no-slug', 'text', { placeholder: '예: sea-school', autocapitalize: 'none', spellcheck: 'false' })),
     h('div', { class: 'line', style: 'margin-top:12px;gap:6px;cursor:pointer', onmousedown: () => { S.open.withLic = !S.open.withLic; render(); } },
       h('button', { class: 'ck' + (S.open.withLic ? ' on' : '') }), h('span', { text: '이용 기간도 바로 열기' })),
     S.open.withLic ? h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
       field('이용 일수', 'no-days', 'text', { value: '90' }), field('학생 자리', 'no-seats', 'text', { value: '40' })) : null,
-    h('div', { class: 'line', style: 'margin-top:12px' }, h('button', { class: 'btn-red', text: '기관 만들기', onclick: go })));
+    h('div', { class: 'lab', style: 'margin-top:18px', text: '기관 관리자 계정(선택 — 이 기관을 관리할 사람이 로그인하는 계정. 비우면 기관만 만들고, 나중에 [사용자] 탭에서 만들거나 초대합니다)' }),
+    // 위쪽 맞춤 — 아이디 칸 아래에 «쓸 수 있는지» 한 줄이 붙어도 다른 칸이 밀리지 않게
+    h('div', { class: 'line', style: 'align-items:flex-start' },
+      field('아이디(영문 소문자 · 숫자, 3자 이상)', 'no-aid', 'text', { autocapitalize: 'none', spellcheck: 'false' }),
+      field('이름', 'no-aname'),
+      field('비밀번호(10자 이상 — 비우면 자동)', 'no-apw', 'text', { autocomplete: 'off', spellcheck: 'false' }),
+      h('button', { class: 'btn-text', style: 'margin-top:30px', text: '자동으로', onclick: gen })),
+    h('div', { class: 'line', style: 'margin-top:14px' }, h('button', { class: 'btn-red', text: '기관 만들기', onclick: go })));
 }
 
 // 관리 화면 — 맨 위 줄에서 고른다(운영 · 기관마다 · 새 기관). 기관이 하나뿐인 기관 관리자는 줄 없이 곧바로.
