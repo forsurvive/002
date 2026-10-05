@@ -56,13 +56,16 @@ const READ_OPS = new Set(['peek', 'prompt.read']);
  * 다만 온라인판은 앱 계정(아이디 · 비밀번호)이 문을 지킨다 — 출입 열쇠는 쓰지 않는다(2026-10-05 사용자 결정).
  * SE2_ACCESS_KEY 가 플랫폼 비밀값에 남아 있어도 무시한다. 굳이 한 겹 더 세우려면 SE2_ONLINE_GATE=1 을 함께 적는다.
  */
+// 설정 코드 견주기 — 대소문자 · 띄어쓰기 · 기호는 가리지 않고 글자 · 숫자만 본다(한글도 글자다 — 사람이 정한 코드에 한글이 섞일 수 있다)
+export const setupNorm = (c) => String(c || '').normalize('NFC').toUpperCase().replace(/[^\p{L}\p{N}]/gu, '');
+
 export function onlinePlan(env = process.env) {
   const gateOn = String(env.SE2_ONLINE_GATE || '') === '1';
   const plan = resolveHosting({ ...env, SE2_ALLOW_OPEN: '1', SE2_ACCESS_KEY: gateOn ? env.SE2_ACCESS_KEY || '' : '' });
   plan.notes = plan.notes.filter((n) => !/SE2_ALLOW_OPEN|saved as files/.test(n));
   // 처음 설정 코드를 사람이 정할 수도 있다 — 플랫폼 로그를 볼 수 없을 때(Secrets 의 SE2_SETUP_CODE, 글자 · 숫자 12자 이상).
   // 짧으면 쓰지 않고 지금처럼 켤 때마다 새로 짓는다(값은 어디에도 찍지 않는다).
-  const fixed = String(env.SE2_SETUP_CODE || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const fixed = setupNorm(env.SE2_SETUP_CODE);
   plan.setupCode = fixed.length >= 12 ? fixed : '';
   if (env.SE2_SETUP_CODE && !plan.setupCode) plan.notes.push('SE2_SETUP_CODE is too short (12+ letters/digits) - ignored');
   return plan;
@@ -256,7 +259,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
   const CODE_ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const setupCode = plan.exposed && !plan.gate
     ? plan.setupCode || Array.from(randomBytes(12), (b, i) => (i && i % 4 === 0 ? '-' : '') + CODE_ABC[b % CODE_ABC.length]).join('') : '';
-  const norm = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const norm = setupNorm;
   const setupCodeOk = (c) => {
     if (!setupCode) return false;
     const got = createHash('sha256').update(norm(c)).digest();
@@ -315,7 +318,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
           if (f && f.n >= 5 && f.until > Date.now()) return json(res, 429, bad('잠시 뒤에 다시 시도해 주세요', 'rate_limited'));
           if (!setupCodeOk(body.setupCode)) {
             if (!f || f.until <= Date.now()) setupFails.set(ip, { n: 1, until: Date.now() + 15 * 60 * 1000 }); else f.n += 1;
-            return json(res, 403, bad('설정 코드가 맞지 않습니다 — 서버 콘솔(Console)에 찍힌 코드를 넣어 주세요', 'setup_code'));
+            return json(res, 403, bad('설정 코드가 맞지 않습니다 — Secrets 의 SE2_SETUP_CODE 값(또는 서버 콘솔의 코드)을 넣어 주세요', 'setup_code'));
           }
         }
         const made = await auth.createUser(pool, { loginId: body.loginId, password: body.password, displayName: body.displayName || '', isPlatformAdmin: true });

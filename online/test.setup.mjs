@@ -33,6 +33,7 @@ export async function run({ pool, ok, eq }) {
     const mine = 'my-own-setup-code-2026';
     const pl = onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_SETUP_CODE: mine });
     ok('SE2_SETUP_CODE(12자 이상)를 설정 코드로 쓴다', pl.setupCode === 'MYOWNSETUPCODE2026');
+    ok('**한글이 섞인 코드도 쓴다(글자로 센다)**', onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_SETUP_CODE: '올드타워 첫 설정 코드 2026' }).setupCode === '올드타워첫설정코드2026');
     ok('짧은 값은 쓰지 않고 알린다', onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_SETUP_CODE: 'short' }).setupCode === ''
       && onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_SETUP_CODE: 'short' }).notes.some((n) => n.includes('SE2_SETUP_CODE')));
     const { srv, base } = await serve(pool, pl, credentials);
