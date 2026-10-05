@@ -74,6 +74,10 @@ export async function run({ pool, ok, eq }) {
     // ---------------- 학생 — 자리 상한(2)
     const invS = (await edu('edu-in', 'invite.create', { orgId: org.id, classId: c1.id, role: 'student', maxUses: 10 })).invite;
     ok('강사가 맡은 수업 학생을 초대한다', !!invS);
+    const ck = await edu(null, 'invite.check', { code: invS.code });
+    ok('**첫 화면의 코드 확인 — 로그인 없이 기관 · 수업 · 역할만 알려 준다**', ck.ok && ck.role === 'student' && ck.className && ck.organizationName && !('id' in ck) && !('organizationId' in ck), JSON.stringify(ck));
+    eq('코드 확인은 자리를 쓰지 않는다', (await pool.query('SELECT used_count FROM invites WHERE class_id = $1 AND role = $2 ORDER BY created_at DESC LIMIT 1', [c1.id, 'student'])).rows[0].used_count, 0);
+    eq('틀린 코드는 확인되지 않는다', (await edu(null, 'invite.check', { code: 'XXXX-YYYY-ZZZZ' })).status, 404);
     const sa = await edu(null, 'invite.accept', { code: invS.code, loginId: 'edu-s1', password: 'long-enough-s1', displayName: '학생 하나' });
     const sb = await edu(null, 'invite.accept', { code: invS.code, loginId: 'edu-s2', password: 'long-enough-s2', displayName: '학생 둘' });
     ok('학생 둘이 들어온다', sa.ok && sb.ok && sa.role === 'student');

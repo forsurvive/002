@@ -301,8 +301,8 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
     },
   };
 
-  // 초대 받기 — 로그인하지 않은 사람도(새 계정을 만들며), 로그인한 사람도(기관 · 수업에 더해지며)
-  async function acceptInvite(user, b, ip) {
+  // 초대 코드 확인 — 맞고, 기관이 살아 있고, (학생이면) 이용 기간 · 자리가 남았는가. 틀리면 맞히기 횟수에 센다.
+  async function findInvite(user, b, ip) {
     const key = String(ip || '');
     const t = tries.get(key);
     if (t && t.n >= TRY_LIMIT && t.until > Date.now()) return no(429, '잠시 뒤에 다시 시도해 주세요', 'rate_limited');
@@ -325,6 +325,23 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
         if (!already && used >= lic.seat_limit) return no(403, '수업 자리가 다 찼습니다 — 선생님(기관)께 문의해 주세요', 'seats_full');
       }
     }
+    return { inv, miss };
+  }
+
+  // 첫 화면에서 코드만 먼저 확인한다(쓰지 않는다) — 맞으면 계정 만들기 칸을 연다
+  async function checkInvite(user, b, ip) {
+    const f = await findInvite(user, b, ip);
+    if (!f.inv) return f;
+    const org = await one('SELECT name FROM organizations WHERE id = $1', [f.inv.organization_id]);
+    const cls = f.inv.class_id ? await one('SELECT name FROM classes WHERE id = $1', [f.inv.class_id]) : null;
+    return { status: 200, body: { ok: true, role: f.inv.role, organizationName: org ? org.name : '', className: cls ? cls.name : '' } };
+  }
+
+  // 초대 받기 — 로그인하지 않은 사람도(새 계정을 만들며), 로그인한 사람도(기관 · 수업에 더해지며)
+  async function acceptInvite(user, b, ip) {
+    const f = await findInvite(user, b, ip);
+    if (!f.inv) return f;
+    const { inv, miss } = f;
     let who = user;
     let made = false;
     if (!who) {
@@ -345,17 +362,18 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
       await pool.query(`INSERT INTO class_members (class_id, organization_id, user_id, role) VALUES ($1,$2,$3,$4)
         ON CONFLICT (class_id, user_id) DO NOTHING`, [inv.class_id, inv.organization_id, who.id, inv.role]);
     }
-    tries.delete(key);
+    tries.delete(String(ip || ''));
     await auth.audit(pool, { actor: who.id, organizationId: inv.organization_id, action: 'invite.accept', targetType: 'invite', targetId: inv.id, details: { role: inv.role, newAccount: made }, ip });
     return { status: 200, body: { ok: true, role: inv.role, organizationId: inv.organization_id, classId: inv.class_id }, newUser: made ? who : null };
   }
 
   return {
     OPS,
-    OP_NAMES: [...Object.keys(OPS), 'invite.accept'],
+    OP_NAMES: [...Object.keys(OPS), 'invite.accept', 'invite.check'],
     async handle(user, body, ip = '') {
       const op = String((body && body.op) || '');
       if (op === 'invite.accept') return acceptInvite(user, body, ip);
+      if (op === 'invite.check') return checkInvite(user, body, ip);
       if (!user) return no(401, '로그인이 필요합니다', 'login');
       const fn = OPS[op];
       if (!fn) return no(404, '그런 문이 없습니다: ' + op);

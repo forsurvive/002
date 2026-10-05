@@ -146,6 +146,7 @@
 | `invite.create` `{orgId, classId?, role, days, maxUses}` | 기관 관리자(모든 역할) · 강사(맡은 수업 학생만) | 코드 원문은 이번 응답에만(`ABCD-EFGH-JKLM`) |
 | `invite.revoke` `{inviteId}` | 만든 쪽 | |
 | `invite.accept` `{code, loginId?, password?, displayName?}` | **로그인 없이도** | 새 계정을 만들며(또는 지금 계정에) 기관 · 수업에 더한다 · 학생 자리 상한 · 틀린 코드 고삐(429) |
+| `invite.check` `{code}` | **로그인 없이도** | 첫 화면에서 코드만 확인(쓰지 않는다) → `{role, organizationName, className}` · 틀리면 같은 고삐에 센다 |
 | `org.key.set` `{orgId, provider, apiKey}` · `org.key.list` | 기관 관리자 | 기관 키(쓰기 전용 — 끝 네 자리만 보임) |
 | `org.members` `{orgId}` | 기관 관리자 | 사람 목록 — 한 사람 한 계정(아이디 · 이름 · 역할 · 수업). 초대 코드는 들어오는 열쇠일 뿐 계정이 아니다 |
 | `member.reset_password` `{orgId, userId}` | 기관 관리자(제 기관 학생 · 강사) | 임시 비밀번호를 한 번만 보여 주고 그 사람의 세션을 끊는다 |
