@@ -1,5 +1,8 @@
 'use strict';
 
+// 화면 밝기 — 기본은 어두운 화면(style.css :root). «밝게» 를 고른 브라우저만 기억해 둔다.
+try { if (localStorage.getItem('se-theme') === 'light') document.documentElement.dataset.theme = 'light'; } catch { /* 저장소를 못 쓰면 기본 */ }
+
 // 온라인판의 로그인 — 앱 계정(아이디 · 비밀번호). 들어가면 첫 화면(/)으로 간다.
 // 개인판에는 이 화면이 없다(그 PC 안에서만 열리므로).
 

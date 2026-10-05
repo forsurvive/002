@@ -1,5 +1,8 @@
 'use strict';
 
+// 화면 밝기 — 기본은 어두운 화면(style.css :root). «밝게» 를 고른 브라우저만 기억해 둔다.
+try { if (localStorage.getItem('se-theme') === 'light') document.documentElement.dataset.theme = 'light'; } catch { /* 저장소를 못 쓰면 기본 */ }
+
 // 화면 — 서버 상태를 받아 그대로 그린다. 조작은 모두 POST /api {op} 한 문으로 나간다.
 
 const S = {
@@ -255,6 +258,14 @@ function render() {
 
 // ---------------------------------------------------------------- 프로젝트 목록
 
+const isLight = () => document.documentElement.dataset.theme === 'light';
+function toggleTheme() {
+  const light = !isLight();
+  if (light) document.documentElement.dataset.theme = 'light'; else delete document.documentElement.dataset.theme;
+  try { localStorage.setItem('se-theme', light ? 'light' : 'dark'); } catch { /* 이번 창에서만 */ }
+  render();
+}
+
 function projectList() {
   return h('div', { class: 'body' },
     h('div', { class: 'top', style: 'position:static;padding:0 0 22px;border:none;background:none' },
@@ -262,11 +273,15 @@ function projectList() {
         brandMark('margin-bottom:6px'),
         h('div', { class: 'top-name', style: 'font-size:30px', text: '스토리 엔진' })),
       h('div', { class: 'line', style: 'flex:none' },
-        // 온라인판 — 관리는 운영자 · 기관 관리자에게만, 내 수업은 수업에 든 사람에게만, 내 계정은 누구나(막는 것은 서버다)
-        S.me && S.me.manage ? h('button', { class: 'btn-text', text: '관리', onclick: () => { location.href = '/manage.html'; } }) : null,
-        S.me && S.me.classes > 0 ? h('button', { class: 'btn-text', text: '내 수업', onclick: () => { location.href = '/school.html'; } }) : null,
-        S.me ? h('button', { class: 'btn-text', text: '내 계정', onclick: () => { location.href = '/account.html'; } }) : null,
-        S.me ? h('button', { class: 'btn-text', text: '로그아웃', onclick: logout }) : null,
+        // 온라인판 — 관리는 운영자 · 기관 관리자에게만, 내 수업은 수업에 든 사람에게만, 내 계정은 누구나(막는 것은 서버다).
+        // 쪽으로 가는 문(알약)과 로그아웃 · 밝기(옅은 글자)를 띄워 갈라 보인다.
+        S.me ? h('div', { class: 'nav' },
+          S.me.manage ? h('button', { class: 'nav-btn', text: '관리', onclick: () => { location.href = '/manage.html'; } }) : null,
+          S.me.classes > 0 ? h('button', { class: 'nav-btn', text: '내 수업', onclick: () => { location.href = '/school.html'; } }) : null,
+          h('button', { class: 'nav-btn', text: '내 계정', onclick: () => { location.href = '/account.html'; } }),
+          h('span', { class: 'nav-sep' }),
+          h('button', { class: 'nav-out', text: '로그아웃', onclick: logout })) : null,
+        h('button', { class: 'nav-out', text: isLight() ? '어둡게' : '밝게', onclick: toggleTheme }),
         h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: () => startTour() }),
         h('button', { class: 'plus', text: '+', onclick: () => {
           // 온라인판 — 열린 수업이 있으면 그 수업을 먼저 골라 둔다(학생 대부분은 과제를 만든다)

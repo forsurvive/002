@@ -1,6 +1,41 @@
 /* 색은 넷뿐 — 적·백·흑·파랑. 회색은 쓰지 않고 흑의 불투명도를 낮춰 쓴다.
    값만 애플 시스템 색으로 맞췄다(2026-09-19 리뉴얼). 갈래는 그대로다. */
 :root {
+  /* 기본은 어두운 화면(2026-10-05 사용자 결정). 같은 네 색을 자리만 바꿔 쓴다 — 흑이 바탕, 백이 글자. */
+  --ink: #ffffff;
+  --paper: #1c1c1e;
+  --blue: #007aff;
+  --blue-soft: #5ac8fa;
+  --red: #ff3b30;
+  --red-soft: #ff9f9a;
+
+  --base: rgb(0 0 0);                 /* 쪽 바탕 — 흑(카드는 --paper 로 한 겹 떠 보인다) */
+  --on-color: var(--ink);             /* 파랑 · 빨강 바탕 위의 글자 */
+  --bar: rgba(28, 28, 30, .78);       /* 위쪽 띠 · 메뉴(반투명) */
+  --line: rgba(255, 255, 255, .12);
+  --line-soft: rgba(255, 255, 255, .07);
+  --dim: rgba(255, 255, 255, .58);
+  --dim2: rgba(255, 255, 255, .36);
+  --hover: rgba(255, 255, 255, .06);
+  --group: rgba(255, 255, 255, .06);
+  --group-on: rgba(255, 255, 255, .12);
+  --blue-tint: rgba(0, 122, 255, .24);
+  --red-tint: rgba(255, 59, 48, .22);
+
+  --shadow-s: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-m: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .35);
+  --shadow-l: 0 2px 6px rgba(0, 0, 0, .5), 0 28px 68px rgba(0, 0, 0, .6);
+  --focus: 0 0 0 3.5px rgba(0, 122, 255, .35);
+
+  --r-s: 8px;
+  --r-m: 12px;
+  --r-l: 18px;
+  --r-xl: 26px;
+  --pill: 980px;
+  color-scheme: dark;
+}
+/* 밝은 화면 — «밝게» 를 고른 사람만(브라우저에 기억). 값은 예전 그대로다. */
+:root[data-theme="light"] {
   --ink: #1c1c1e;
   --paper: #ffffff;
   --blue: #007aff;
@@ -8,6 +43,9 @@
   --red: #ff3b30;
   --red-soft: #ff9f9a;
 
+  --base: var(--paper);
+  --on-color: var(--paper);
+  --bar: rgba(255, 255, 255, .78);
   /* 나머지는 모두 흑·적·청의 불투명도로 낸다 — 새 색을 들이지 않는다. */
   --line: rgba(28, 28, 30, .10);
   --line-soft: rgba(28, 28, 30, .055);
@@ -29,10 +67,12 @@
   --r-l: 18px;
   --r-xl: 26px;
   --pill: 980px;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+html { background: var(--base); }
 body {
   margin: 0; background: var(--group); color: var(--ink);
   font: 15px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Pretendard Variable", "Pretendard",
@@ -56,7 +96,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .shell { display: grid; grid-template-columns: 264px 1fr; height: 100vh; }
 
 .side {
-  background: rgba(28, 28, 30, .035);
+  background: var(--hover);
   -webkit-backdrop-filter: saturate(180%) blur(24px);
   backdrop-filter: saturate(180%) blur(24px);
   border-right: 1px solid var(--line);
@@ -77,7 +117,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   border-radius: var(--r-s); transition: background .12s, color .12s;
 }
 .tab:hover { background: var(--group); }
-.tab.on { background: var(--blue); color: var(--paper); font-weight: 600; }
+.tab.on { background: var(--blue); color: var(--on-color); font-weight: 600; }
 
 .side-jobs { flex: 1; overflow: auto; padding: 10px; margin-top: 12px; border-top: 1px solid var(--line); }
 .side-jobs:empty { border-top: none; }
@@ -100,7 +140,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .top {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
   padding: 13px 30px; position: sticky; top: 0; z-index: 5;
-  background: rgba(255, 255, 255, .72);
+  background: var(--bar);
   -webkit-backdrop-filter: saturate(180%) blur(24px);
   backdrop-filter: saturate(180%) blur(24px);
   border-bottom: 1px solid var(--line);
@@ -124,7 +164,7 @@ button.top-name:hover { color: var(--blue); }
 /* ---------------------------------------------------------------- 조각 */
 
 .btn {
-  background: var(--blue); color: var(--paper); padding: 9px 19px;
+  background: var(--blue); color: var(--on-color); padding: 9px 19px;
   border-radius: var(--pill); font-weight: 600; font-size: 15px;
   transition: filter .12s, transform .06s;
 }
@@ -136,6 +176,17 @@ button.top-name:hover { color: var(--blue); }
   border-radius: var(--pill); font-size: 15px; font-weight: 600;
 }
 .btn-line:hover { background: var(--group-on); }
+a.btn-line, a.btn-text { text-decoration: none; display: inline-block; }
+/* 위쪽 이동 문 — 쪽으로 가는 문은 알약(흑 글자), 로그아웃 · 밝기는 옅은 글자. 둘 사이에 금 하나. */
+.nav { display: flex; align-items: center; gap: 6px; }
+.nav-btn {
+  background: var(--group); color: var(--ink); padding: 7px 14px;
+  border-radius: var(--pill); font-size: 14px; font-weight: 600;
+}
+.nav-btn:hover { background: var(--group-on); }
+.nav-sep { width: 1px; height: 18px; background: var(--line); margin: 0 6px; }
+.nav-out { color: var(--dim); font-size: 14px; font-weight: 500; padding: 7px 8px; }
+.nav-out:hover { color: var(--ink); }
 .btn-red {
   background: var(--red-tint); color: var(--red); padding: 9px 17px;
   border-radius: var(--pill); font-size: 15px; font-weight: 600;
@@ -147,7 +198,7 @@ button.top-name:hover { color: var(--blue); }
 /* «+» 는 글자로 그리지 않는다 — 글꼴마다 글자의 중심이 달라 원 한가운데에 서지 않는다.
    막대 둘을 한가운데에 놓아 크기가 바뀌어도 늘 정중앙이다. */
 .plus {
-  width: 34px; height: 34px; border-radius: 50%; background: var(--blue); color: var(--paper);
+  width: 34px; height: 34px; border-radius: 50%; background: var(--blue); color: var(--on-color);
   font-size: 0; line-height: 0; position: relative; display: block;
   box-shadow: var(--shadow-s); transition: filter .12s, transform .06s;
 }
@@ -196,7 +247,7 @@ textarea { resize: vertical; min-height: 88px; line-height: 1.65; }
 }
 .tg::after {
   content: ''; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%;
-  background: var(--paper); box-shadow: 0 2px 5px rgba(28, 28, 30, .22); transition: left .2s;
+  background: var(--on-color); box-shadow: 0 2px 5px rgba(28, 28, 30, .22); transition: left .2s;
 }
 .tg.on { background: var(--red); }
 .tg.on::after { left: 22px; }
@@ -246,7 +297,7 @@ textarea { resize: vertical; min-height: 88px; line-height: 1.65; }
 .menu {
   position: absolute; top: calc(100% + 10px); right: 0; z-index: 15;
   animation: menu-in .16s cubic-bezier(.2, .9, .3, 1); transform-origin: top right;
-  background: rgba(255, 255, 255, .88);
+  background: var(--bar);
   -webkit-backdrop-filter: saturate(180%) blur(24px);
   backdrop-filter: saturate(180%) blur(24px);
   border-radius: var(--r-m); width: 224px;
@@ -255,7 +306,7 @@ textarea { resize: vertical; min-height: 88px; line-height: 1.65; }
 @keyframes menu-in { from { opacity: 0; transform: translateY(-8px) scale(.98); } to { opacity: 1; transform: none; } }
 .menu button { display: block; width: 100%; text-align: left; padding: 11px 16px; font-size: 15px; }
 .menu button + button { border-top: 1px solid var(--line-soft); }
-.menu button:hover { background: var(--blue); color: var(--paper); }
+.menu button:hover { background: var(--blue); color: var(--on-color); }
 
 /* ---------------------------------------------------------------- 창 */
 
@@ -297,7 +348,7 @@ textarea { resize: vertical; min-height: 88px; line-height: 1.65; }
   display: inline-flex; align-items: center; gap: 7px; background: var(--group);
   border-radius: var(--pill); padding: 6px 9px 6px 13px; font-size: 14px; font-weight: 500;
 }
-.chip .mark { background: rgba(28, 28, 30, .07); }
+.chip .mark { background: var(--group-on); }
 .chip.final { background: var(--red-tint); color: var(--red); }
 .chip button { color: var(--dim); font-size: 15px; line-height: 1; padding: 0 3px; }
 .chip button:hover { color: var(--red); }
@@ -321,7 +372,7 @@ details summary:hover { opacity: .7; }
 /* 논의 스레드 — 말풍선 */
 .talk { display: flex; flex-direction: column; gap: 10px; padding: 6px 0 10px; }
 .msg { max-width: 78%; white-space: pre-wrap; word-break: break-word; border-radius: 20px; padding: 11px 16px; }
-.msg.me { align-self: flex-end; background: var(--blue); color: var(--paper); cursor: pointer; }
+.msg.me { align-self: flex-end; background: var(--blue); color: var(--on-color); cursor: pointer; }
 .msg.me:hover { filter: brightness(1.08); }
 .msg.ai { align-self: flex-start; background: var(--group); color: var(--ink); }
 .branches { display: flex; gap: 8px; flex-wrap: wrap; align-self: flex-end; }

@@ -1,5 +1,8 @@
 'use strict';
 
+// 화면 밝기 — 기본은 어두운 화면(style.css :root). «밝게» 를 고른 브라우저만 기억해 둔다.
+try { if (localStorage.getItem('se-theme') === 'light') document.documentElement.dataset.theme = 'light'; } catch { /* 저장소를 못 쓰면 기본 */ }
+
 // 온라인판의 세 화면이 이 한 파일을 쓴다(<body data-page>로 가른다).
 //   school.html  «내 수업»  — 들어가 있는 수업 · 내 수업 작품(열기 · 개인 작품으로 복사) · 수업 현황 · 학생 초대 코드(강사) · 새 수업 코드 넣기
 //   account.html «내 계정»  — 새 수업 코드 넣기 · 내 AI 키 · 내 비밀번호 바꾸기(누구나)
@@ -442,6 +445,18 @@ function platformBox() {
       h('button', { class: 'btn-line', text: '이용 기간 열기', onclick: () => issue(org.id) }))));
 }
 
+// 화면 밝기 — 기본은 어둡게, 고르면 이 브라우저가 기억한다
+function themeBox() {
+  const light = document.documentElement.dataset.theme === 'light';
+  const flip = () => {
+    if (light) delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = 'light';
+    try { localStorage.setItem('se-theme', light ? 'dark' : 'light'); } catch { /* 이번 창에서만 */ }
+    render();
+  };
+  return section('화면',
+    h('div', { class: 'line' }, h('div', { class: 'lab', style: 'margin:0', text: '밝은 화면' }), h('button', { class: 'tg' + (light ? ' on' : ''), onclick: flip })));
+}
+
 // ---------------------------------------------------------------- 그리기
 
 function render() {
@@ -460,7 +475,7 @@ function render() {
   }
   if (PAGE === 'account') {
     $('root').replaceChildren(h('div', { class: 'body' }, head('내 계정'), notice,
-      S.loggedIn ? [joinBox(), myKeyBox(), passwordBox()] : h('div', { class: 'when', text: '로그인이 필요합니다' })));
+      S.loggedIn ? [joinBox(), myKeyBox(), passwordBox(), themeBox()] : h('div', { class: 'when', text: '로그인이 필요합니다' })));
     return;
   }
   $('root').replaceChildren(h('div', { class: 'body' }, head('내 수업'), notice,
