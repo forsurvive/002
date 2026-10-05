@@ -119,6 +119,21 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
 
 손으로 하는 길(선택): 계정 추가 `node online/admin.mjs create-user <아이디>` · 키 바꾸기 `node online/admin.mjs set-key <아이디> anthropic` · 개인판 작품 옮기기 `node online/import.mjs <파일> --owner <아이디>`.
 
+## 4-2. 게시(Publish) — 따라 하기(2026-10-05, docs.replit.com «Publish your app» · «Development and production databases» 확인)
+
+게시하면 **개발용과 따로인 운영 데이터베이스**가 생긴다(현재 Replit 인프라 «Helium» — 게시할 때 저절로 만들어지고 `DATABASE_URL` 도 저절로 꽂힌다).
+그래서 게시한 주소에는 계정이 하나도 없다 — 처음 한 번 «처음 설정»을 한다(설정 코드는 게시 쪽 Logs 에 찍힌다). 개발용 데이터는 옮기지 않는다(시험 계정이 섞인다).
+
+1. 작업 공간에서 최신 코드: Shell `npm run update` → ▶ 실행 → Preview 에서 로그인 · 작품 열기가 되는지 본다.
+2. 운영용 마스터 키 만들기: Shell `npm run key` → 찍힌 한 줄(44자)을 복사해 둔다. **이 대화 · 문서 · 깃에는 붙이지 않는다.**
+3. 오른쪽 위 **게시(Publish)** → 배포 종류 **Reserved VM**(Autoscale 아님 — 작업 worker 가 늘 돌아야 한다) → 기계는 가장 작은 공유 VM 이면 파일럿에 충분.
+4. 게시 설정의 Secrets(«Adjust settings»/«Manage» 안)에 `CREDENTIALS_KEY_V1` = 2 에서 복사한 값. 운영 데이터베이스 설정이 보이면 «Create production database» 켜기 · 개발 데이터 복사는 끈다.
+5. 접근은 **Public**(계정이 문을 지킨다) → **Publish** → 끝나면 `….replit.app` 주소를 연다.
+6. 첫 화면이 «처음 설정»이면: 게시 화면의 **Logs** 에서 `[SETUP] First-run setup code: XXXX-XXXX-XXXX` 를 찾아 넣고 운영자 아이디 · 비밀번호를 정한다(운영용 새 계정).
+7. 이후 고칠 때: 작업 공간 `npm run update` → Preview 확인 → **Republish**. 운영 데이터는 그대로다(마이그레이션은 서버가 켤 때 스스로 돈다).
+
+비용: Reserved VM 은 달마다 정액, 운영 데이터베이스는 쓴 만큼(5분 쉬면 계산이 멈춘다). 결제 수단을 물으면 그때 넣는다.
+
 ## 5. PostgreSQL (Phase 3 계획)
 
 문서 발췌:
