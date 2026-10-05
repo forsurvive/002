@@ -35,8 +35,9 @@ const USAGE = [
   '         node online/admin.mjs set-key <login-id> <anthropic|openai|google>   (key from stdin)',
   '         node online/admin.mjs list-users',
   '         node online/admin.mjs reset-password <login-id>   (new password from stdin)',
+  '         node online/admin.mjs disable-user <login-id> | enable-user <login-id>',
 ];
-if (!['create-user', 'set-key', 'list-users', 'reset-password'].includes(cmd) || (cmd !== 'list-users' && (!rest[0] || rest[0].startsWith('--'))) || (cmd === 'set-key' && !PROVIDER_IDS.includes(rest[1]))) {
+if (!['create-user', 'set-key', 'list-users', 'reset-password', 'disable-user', 'enable-user'].includes(cmd) || (cmd !== 'list-users' && (!rest[0] || rest[0].startsWith('--'))) || (cmd === 'set-key' && !PROVIDER_IDS.includes(rest[1]))) {
   for (const l of USAGE) console.log(l);
   process.exit(cmd ? 1 : 0);
 }
@@ -50,6 +51,17 @@ try {
     const { rows } = await pool.query('SELECT login_id, is_platform_admin, status, created_at FROM users ORDER BY created_at');
     if (!rows.length) console.log('  (no accounts yet - open the app to finish the first-run setup)');
     for (const r of rows) console.log('  ' + r.login_id.padEnd(24) + (r.is_platform_admin ? 'OPERATOR' : 'user') + (r.status !== 'active' ? ' (' + r.status + ')' : ''));
+  } else if (cmd === 'disable-user' || cmd === 'enable-user') {
+    // 멈추면 곧바로 로그인 · 세션이 막힌다(작품은 그대로)
+    const status = cmd === 'disable-user' ? 'disabled' : 'active';
+    const u = (await pool.query('SELECT id FROM users WHERE login_id = $1', [String(rest[0]).toLowerCase()])).rows[0];
+    if (!u) { console.log('  [STOP] no such user'); process.exitCode = 1; }
+    else {
+      await pool.query('UPDATE users SET status = $2, updated_at = now() WHERE id = $1', [u.id, status]);
+      if (status === 'disabled') await pool.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [u.id]);
+      await audit(pool, { action: 'user.status', targetType: 'user', targetId: u.id, details: { status } });
+      console.log('  ' + String(rest[0]).toLowerCase() + ': ' + status);
+    }
   } else if (cmd === 'reset-password') {
     const u = (await pool.query('SELECT id FROM users WHERE login_id = $1', [String(rest[0]).toLowerCase()])).rows[0];
     if (!u) { console.log('  [STOP] no such user'); process.exitCode = 1; }

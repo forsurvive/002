@@ -292,7 +292,7 @@ const ACT = {
   'invite.revoke': '초대 코드 거둠', 'invite.accept': '초대로 들어옴', 'credential.set': 'AI 키 넣음', 'credential.revoke': 'AI 키 지움', 'member.create': '계정 만듦',
   'member.remove': '사용자 뺌', 'member.reset_password': '비밀번호 재설정', 'workflow.save': '단계 고침', 'project.create': '작품 만듦', 'project.delete': '작품 지움',
   'project.copy_personal': '개인 작품으로 복사', 'project.import': '작품 가져옴', 'ai.choose': 'AI 회사 고름', 'auth.login': '로그인', 'auth.login_failed': '로그인 실패',
-  'auth.password_changed': '비밀번호 바꿈', 'admin.password_reset': '비밀번호 재설정(도구)', 'admin.user_created': '계정 만듦(도구)', 'setup.first_admin': '첫 관리자 만듦',
+  'auth.password_changed': '비밀번호 바꿈', 'user.status': '계정 상태', 'admin.password_reset': '비밀번호 재설정(도구)', 'admin.user_created': '계정 만듦(도구)', 'setup.first_admin': '첫 관리자 만듦',
 };
 const when = (t) => (t ? new Date(t).toLocaleString() : '');
 async function toggleAudit(key, orgId) {
@@ -682,12 +682,24 @@ function platformBox() {
     if (!r.ok) return tell(r.error);
     S.say = org.name + ' 이용 기간 — ' + (to === 'active' ? '다시 열었습니다' : '멈췄습니다'); await load();
   };
+  const userStatus = async (status) => {
+    const loginId = val('us-id');
+    if (!loginId) return tell('아이디를 적어 주세요');
+    if (status === 'disabled' && !confirm(loginId + ' — 계정을 멈출까요? 곧바로 로그아웃되고 다시 열 때까지 들어올 수 없습니다.')) return;
+    const r = await edu('user.status', { loginId, status });
+    if (!r.ok) return tell(r.error);
+    S.say = r.loginId + (status === 'disabled' ? ' — 멈췄습니다' : ' — 다시 열었습니다'); $('us-id').value = ''; await load();
+  };
   const pausedLic = (orgId) => ((S.orgs[orgId].lic || {}).licenses || []).find((l) => l.status === 'suspended' && (!l.ends_at || new Date(l.ends_at) > new Date()));
   return section('운영 — 기관 · 이용 기간 · 단계',
     h('div', { class: 'line' },
       h('button', { class: 'btn-line', text: S.ops ? '운영 현황 닫기' : '운영 현황(작업 · 실패 · 사용량)', onclick: toggleOps }),
       h('button', { class: 'btn-line', text: S.audit.all ? '감사 기록 닫기' : '감사 기록(전체)', onclick: () => toggleAudit('all', null) })),
     opsBox(), auditRows('all'),
+    h('div', { class: 'lab', style: 'margin-top:16px', text: '계정 멈추기(곧바로 로그아웃 · 작품은 그대로)' }),
+    h('div', { class: 'line', style: 'align-items:flex-end' }, field('아이디', 'us-id', 'text', { autocapitalize: 'none', spellcheck: 'false' }),
+      h('button', { class: 'btn-red', text: '멈추기', onclick: () => userStatus('disabled') }),
+      h('button', { class: 'btn-line', text: '다시 열기', onclick: () => userStatus('active') })),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '단계 · 강의 카드 고쳐 쓰기(전체 기본 — 모든 기관 · 개인에게)' }),
     wfEditor(null),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '기관' }),

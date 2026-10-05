@@ -145,6 +145,7 @@
 | `license.limits` `{licenseId, allowedProviders, allowedTiers}` | 플랫폼 관리자 | 그 이용 기간에 쓸 수 있는 AI 회사 · 등급(빈 목록 = 모두). 기관 작품의 부르기는 이 안으로 잘린다(`online/call.mjs` `licensePolicy`) |
 | `license.read` `{orgId}` | 기관 관리자 | 라이선스 · 쓰는 학생 자리 |
 | `org.status` `{orgId, status: active\|suspended}` | 플랫폼 관리자 | 기관 멈추기 · 다시 열기 — 멈추면 새 작품 · AI 작업이 서지 않는다(`org_suspended`), 작품 · 읽기는 그대로 |
+| `user.status` `{loginId, status: active\|disabled}` | 플랫폼 관리자 | 계정 멈추기 · 다시 열기 — 멈추면 세션을 곧바로 끊고 로그인을 막는다(작품은 그대로, 자기 자신은 못 멈춤). 콘솔: `node online/admin.mjs disable-user|enable-user <아이디>` |
 | `ops.overview` | 플랫폼 관리자 | 운영 현황 — 작업 상태 수(진행 중 + 24시간) · 응답 없는 작업 · 최근 실패 20(가린 까닭만) · 24시간 AI 호출(회사 · 결과) · 석 달 사용량(기관/개인 · 추정 $). 원고 · 키 없음 |
 | `run.list` `{pid, docId}` | 그 작품을 읽을 수 있는 사람 | 만든 기록 — 이 문서를 지은 부르기(최근 20)마다 때 · 결과 판 · 등급 이름 · 이번 요청 · 본 것(역할 · 제목 · **그때의 판 번호**) · 잘렸을 수 있음. 비용 · 모델 id · 키 없음. 문서 창 [만든 기록](온라인) |
 | `audit.list` `{orgId?, action?, limit?}` | 플랫폼 관리자(전체) · 기관 관리자(제 기관) | 감사 기록 — 언제 · 누가(아이디) · 무엇을. IP 는 내주지 않는다 · details 는 처음부터 가린 값 |

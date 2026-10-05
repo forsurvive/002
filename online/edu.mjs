@@ -152,6 +152,19 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       return ok({ organization: o });
     },
 
+    // 계정 멈추기 · 다시 열기 — 멈추면 곧바로 로그인 · 세션이 막힌다(작품은 그대로). 운영자만, 자기 자신은 못 멈춘다.
+    async 'user.status'(user, b, ip) {
+      if (!user.isPlatformAdmin) return FORBIDDEN;
+      if (!['active', 'disabled'].includes(b.status)) return no(422, '상태가 맞지 않습니다', 'validation');
+      const u = await one('SELECT id, login_id FROM users WHERE lower(login_id) = lower($1)', [String(b.loginId || '').trim()]);
+      if (!u) return NOT_FOUND;
+      if (u.id === user.id) return no(422, '자기 계정은 멈출 수 없습니다', 'validation');
+      await pool.query('UPDATE users SET status = $2, updated_at = now() WHERE id = $1', [u.id, b.status]);
+      if (b.status === 'disabled') await pool.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [u.id]);
+      await log(user, null, 'user.status', 'user', u.id, { loginId: u.login_id, status: b.status }, ip);
+      return ok({ loginId: u.login_id, status: b.status });
+    },
+
     // ---------------- 운영 현황(최상위 관리자) — 작업 · 실패 · 사용량. 원고 · 키는 싣지 않는다(실패 까닭은 사람 말로 가린 것만).
     async 'ops.overview'(user) {
       if (!user.isPlatformAdmin) return FORBIDDEN;

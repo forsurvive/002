@@ -238,6 +238,16 @@ export async function run({ pool, ok, eq }) {
     ok('**멈춘 기관에는 새 작품이 서지 않는다**', halt.status === 403 && halt.code === 'org_suspended', JSON.stringify(halt));
     ok('다시 열면 된다', (await edu('edu-root', 'org.status', { orgId: org.id, status: 'active' })).ok
       && (await api('edu-s1', 'project.create', { classId: c1.id, name: '다시 연 뒤', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }] })).ok);
+    // ---------------- 계정 멈추기
+    eq('**기관 관리자는 계정을 못 멈춘다**', (await edu('edu-oa', 'user.status', { loginId: 'edu-s2', status: 'disabled' })).status, 403);
+    eq('자기 계정은 못 멈춘다', (await edu('edu-root', 'user.status', { loginId: 'edu-root', status: 'disabled' })).status, 422);
+    ok('운영자가 계정을 멈춘다', (await edu('edu-root', 'user.status', { loginId: 'EDU-S2', status: 'disabled' })).ok);
+    eq('**멈춘 계정의 세션은 곧바로 끊긴다**', (await edu('edu-s2', 'me.memberships')).status, 401);
+    const relog = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loginId: 'edu-s2', password: 'long-enough-s2' }) });
+    eq('**멈춘 계정은 로그인하지 못한다**', relog.status, 401);
+    await edu('edu-root', 'user.status', { loginId: 'edu-s2', status: 'active' });
+    await login('edu-s2', 'long-enough-s2');
+    ok('다시 열면 로그인한다', (await edu('edu-s2', 'me.memberships')).ok);
     ok('허락 범위를 비우면 모두', (await edu('edu-root', 'license.limits', { licenseId: lic.id, allowedProviders: [], allowedTiers: [] })).license.allowed_providers === null);
     eq('**남의 기관 키는 확인 · 지우기 못 한다**', (await edu('edu-s2', 'org.key.revoke', { orgId: org.id, provider: 'anthropic' })).status, 404);
     const mk = await edu('edu-s1', 'me.key.set', { apiKey: MY_KEY });
