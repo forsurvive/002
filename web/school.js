@@ -87,10 +87,15 @@ const codeBox = (key, note) => {
     return h('div', { class: 'line', style: 'margin-top:10px' },
       h('div', { class: 'mark', style: 'font-size:15px;padding:6px 10px', text: v }), copyBtn(v), h('div', { class: 'when', text: note || '' }));
   }
-  return h('div', { class: 'line', style: 'margin-top:10px' },
-    h('div', { class: 'mark', style: 'font-size:13px;padding:6px 10px;word-break:break-all;white-space:normal', text: inviteUrl(v) }),
-    linkBtns(inviteUrl(v), '스토리 엔진 초대'),
-    h('div', { class: 'when', text: note || '이 링크를 보내면 받은 사람이 눌러서 바로 가입합니다(코드 ' + v + ') · «초대 링크 목록»에서도 다시 볼 수 있습니다' }));
+  const code = typeof v === 'string' ? v : v.code;
+  const who = typeof v === 'string' ? '' : (ROLE_SAY[v.role] || '') + '용 초대 링크' + (v.cls ? ' · ' + v.cls : '');
+  return h('div', { style: 'margin-top:10px' },
+    // 누구를 부르는 링크인지 먼저 — 잘못 보내지 않게(기관 관리자 링크를 학생에게 보내면 그 사람이 기관 관리자가 된다)
+    who ? h('div', { class: 'lab', style: 'margin-bottom:4px;color:var(--ink);font-weight:700', text: who }) : null,
+    h('div', { class: 'line' },
+      h('div', { class: 'mark', style: 'font-size:13px;padding:6px 10px;word-break:break-all;white-space:normal', text: inviteUrl(code) }),
+      linkBtns(inviteUrl(code), '스토리 엔진 ' + (who || '초대'))),
+    h('div', { class: 'when', text: note || '받은 사람이 누르면 ' + ((typeof v === 'object' && ROLE_SAY[v.role]) || '') + ' 계정 만들기 화면이 열립니다(코드 ' + code + ') · «초대 링크 목록»에서도 다시 볼 수 있습니다' }));
 };
 // 링크로 보내기 — 코드를 손으로 옮기지 않게. [링크 복사]는 어디서나, [보내기]는 휴대폰의 공유 창(카카오톡 · 문자 …)이 있을 때만.
 const inviteUrl = (code) => location.origin + '/login?invite=' + encodeURIComponent(code);
@@ -128,7 +133,7 @@ function inviteList(key, orgId, classId) {
   };
   return h('div', { style: 'width:100%' }, btn,
     rows.length ? rows.map((x) => h('div', { class: 'row', style: 'cursor:default' },
-      h('div', { class: 'name', text: (ROLE_SAY[x.role] || x.role) + ' 초대' + (x.className ? ' · ' + x.className : '') }),
+      h('div', { class: 'name', style: 'font-weight:600', text: (ROLE_SAY[x.role] || x.role) + '용 초대 링크' + (x.className ? ' · ' + x.className : '') }),
       x.code ? linkBtns(inviteUrl(x.code), '스토리 엔진 초대') : h('span', { class: 'when', text: '(다시 보일 수 없는 옛 초대)' }),
       x.code ? h('span', { class: 'when', text: '코드 ' + x.code }) : null,
       h('span', { class: 'mark', text: x.used + ' / ' + x.max + '명' }),
@@ -140,7 +145,9 @@ function inviteList(key, orgId, classId) {
 async function makeInvite(key, orgId, classId, role) {
   const r = await edu('invite.create', { orgId, classId, role });
   if (!r.ok) return tell(r.error);
-  S.shown[key] = r.invite.code;
+  // 누구를 부르는 링크인지 함께 둔다(기관 관리자용 · 강사용 · 학생용 — 어느 수업)
+  const cls = classId ? (((S.orgs[orgId] || {}).classes || []).find((c) => c.id === classId) || (S.me && (S.me.classes || []).find((c) => c.id === classId)) || {}).name || '' : '';
+  S.shown[key] = { code: r.invite.code, role, cls };
   // 열려 있는 초대 코드 목록에도 새 코드가 서게 다시 받는다
   for (const k of ['o-' + orgId, 'c-' + classId]) if (S.invites[k]) { delete S.invites[k]; await toggleInvites(k, orgId); }
   render();
