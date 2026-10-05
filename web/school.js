@@ -195,6 +195,8 @@ const AI_KEY_LABEL = { anthropic: 'Claude(Anthropic) API 키', openai: 'ChatGPT(
 S.prov = {};
 S.lim = {};
 S.dates = {};
+S.audit = {};
+S.ops = null;
 const provOf = (k) => S.prov[k] || 'anthropic';
 const providerPick = (k) => h('div', { class: 'line', style: 'margin-top:10px' },
   Object.entries(AI_CO).map(([p, name]) => h('button', { class: provOf(k) === p ? 'btn' : 'btn-line', text: name, onclick: () => { S.prov[k] = p; render(); } })));
@@ -282,6 +284,59 @@ const usageRows = (key) => (S.usage[key] ? h('div', { style: 'margin-top:8px' },
   : h('div', { class: 'when', text: '아직 쓴 것이 없습니다' }),
 h('div', { class: 'when', style: 'margin-top:6px', text: '금액은 모델 가격표로 낸 추정입니다 — 정확한 청구는 AI 회사의 청구서를 보세요' })) : null);
 
+// ---------------------------------------------------------------- 감사 기록 · 운영 현황(열었다 닫는다)
+
+const ACT = {
+  'org.create': '기관 만듦', 'org.settings': '기관 설정', 'org.status': '기관 상태', 'license.issue': '이용 기간 엶', 'license.status': '이용 기간 상태',
+  'license.limits': '쓸 수 있는 범위', 'class.create': '수업 만듦', 'class.dates': '수업 기간', 'class.archive': '수업 닫음', 'class.reopen': '수업 다시 엶', 'invite.create': '초대 코드',
+  'invite.revoke': '초대 코드 거둠', 'invite.accept': '초대로 들어옴', 'credential.set': 'AI 키 넣음', 'credential.revoke': 'AI 키 지움', 'member.create': '계정 만듦',
+  'member.remove': '사용자 뺌', 'member.reset_password': '비밀번호 재설정', 'workflow.save': '단계 고침', 'project.create': '작품 만듦', 'project.delete': '작품 지움',
+  'project.copy_personal': '개인 작품으로 복사', 'project.import': '작품 가져옴', 'ai.choose': 'AI 회사 고름', 'auth.login': '로그인', 'auth.login_failed': '로그인 실패',
+  'auth.password_changed': '비밀번호 바꿈', 'admin.password_reset': '비밀번호 재설정(도구)', 'admin.user_created': '계정 만듦(도구)', 'setup.first_admin': '첫 관리자 만듦',
+};
+const when = (t) => (t ? new Date(t).toLocaleString() : '');
+async function toggleAudit(key, orgId) {
+  if (S.audit[key]) { delete S.audit[key]; return render(); }
+  const r = await edu('audit.list', orgId ? { orgId } : {});
+  if (!r.ok) return tell(r.error);
+  S.audit[key] = r.entries; render();
+}
+const auditRows = (key) => (S.audit[key] ? h('div', { style: 'margin-top:8px' }, h('div', { class: 'lab', text: '감사 기록(최근 50)' }), S.audit[key].length
+  ? S.audit[key].map((a) => h('div', { class: 'row', style: 'cursor:default' },
+    h('div', { class: 'name', text: (ACT[a.action] || a.action) + (a.org_name ? ' · ' + a.org_name : '') }),
+    h('span', { class: 'mark', text: a.actor || '-' }),
+    h('div', { class: 'when', text: when(a.at) })))
+  : h('div', { class: 'when', text: '아직 없습니다' })) : null);
+
+async function toggleOps() {
+  if (S.ops) { S.ops = null; return render(); }
+  const r = await edu('ops.overview');
+  if (!r.ok) return tell(r.error);
+  S.ops = r; render();
+}
+const JOB_ST = { queued: '대기', running: '도는 중', paused: '멈춤', waiting_for_user: '답 기다림', done: '끝남', failed: '실패', cancelled: '취소' };
+function opsBox() {
+  const o = S.ops;
+  if (!o) return null;
+  return h('div', { style: 'margin-top:8px' },
+    h('div', { class: 'lab', text: '작업(진행 중 + 지난 24시간)' }),
+    h('div', { class: 'line' }, o.jobs.length ? o.jobs.map((j) => h('span', { class: 'mark', text: (JOB_ST[j.status] || j.status) + ' ' + j.n })) : h('span', { class: 'when', text: '없음' }),
+      o.stuck ? h('span', { class: 'mark', style: 'color:var(--red)', text: '응답 없는 작업 ' + o.stuck }) : null),
+    h('div', { class: 'lab', style: 'margin-top:12px', text: '최근 실패한 작업' }),
+    o.failures.length ? o.failures.map((f) => h('div', { class: 'row', style: 'cursor:default' },
+      h('div', { class: 'name', text: (f.error_message_safe || f.error_code || '실패') + ' · ' + f.kind }),
+      h('span', { class: 'mark', text: (f.org_name || '개인') + ' · ' + (f.login_id || '-') }),
+      h('div', { class: 'when', text: when(f.at) }))) : h('div', { class: 'when', text: '없음' }),
+    h('div', { class: 'lab', style: 'margin-top:12px', text: 'AI 호출(지난 24시간)' }),
+    o.calls.length ? h('div', { class: 'line' }, o.calls.map((c) => h('span', { class: 'mark', text: (c.provider || '-') + ' · ' + (c.status === 'succeeded' ? '성공' : c.error_code || c.status) + ' ' + c.n })))
+      : h('div', { class: 'when', text: '없음' }),
+    h('div', { class: 'lab', style: 'margin-top:12px', text: '사용량(최근 석 달 · 추정)' }),
+    o.usage.length ? o.usage.map((u) => h('div', { class: 'row', style: 'cursor:default' },
+      h('div', { class: 'name', text: u.month + ' · ' + u.who }),
+      h('span', { class: 'mark', text: (u.payer === 'organization' ? '기관 키' : u.payer === 'user' ? '개인 키' : u.payer || '-') + ' · 호출 ' + u.calls }),
+      h('div', { class: 'when', text: '$' + u.cost_usd.toFixed(2) }))) : h('div', { class: 'when', text: '없음' }));
+}
+
 // ---------------------------------------------------------------- 기관 관리
 
 function orgBox(id) {
@@ -355,6 +410,9 @@ function orgBox(id) {
     S.usage['o-' + id] ? h('button', { class: 'btn-line', text: '사용량 닫기', onclick: () => { delete S.usage['o-' + id]; render(); } })
       : h('button', { class: 'btn-line', text: '사용량 보기', onclick: () => showUsage('o-' + id, id) }),
     usageRows('o-' + id),
+    h('div', { class: 'lab', style: 'margin-top:16px', text: '감사 기록(누가 무엇을 바꿨나)' }),
+    h('button', { class: 'btn-line', text: S.audit['o-' + id] ? '감사 기록 닫기' : '감사 기록 보기', onclick: () => toggleAudit('o-' + id, id) }),
+    auditRows('o-' + id),
     h('div', { class: 'line', style: 'margin-top:16px' },
       h('div', { class: 'lab', style: 'margin:0', text: '학생에게 작업 중 강의 카드 보이기' }),
       h('button', { class: 'tg' + (!(org.settings && org.settings.student_cards === false) ? ' on' : ''),
@@ -612,14 +670,35 @@ function platformBox() {
       h('span', { class: 'when', text: lim.p.length || lim.t.length ? '' : '(고르지 않으면 모두)' }),
       liveOf(orgId) ? h('button', { class: 'btn-text', text: '지금 이용 기간에 적용', onclick: () => saveLimits(orgId) }) : null);
   };
+  const orgStatus = async (org) => {
+    const to = org.status === 'active' ? 'suspended' : 'active';
+    if (to === 'suspended' && !confirm(org.name + ' — 기관 이용을 멈출까요? 새 작품 · AI 작업이 서지 않습니다(작품은 그대로).')) return;
+    const r = await edu('org.status', { orgId: org.id, status: to });
+    if (!r.ok) return tell(r.error);
+    S.say = org.name + (to === 'active' ? ' — 다시 열었습니다' : ' — 멈췄습니다'); await load();
+  };
+  const licStatus = async (org, l, to) => {
+    const r = await edu('license.status', { licenseId: l.id, status: to });
+    if (!r.ok) return tell(r.error);
+    S.say = org.name + ' 이용 기간 — ' + (to === 'active' ? '다시 열었습니다' : '멈췄습니다'); await load();
+  };
+  const pausedLic = (orgId) => ((S.orgs[orgId].lic || {}).licenses || []).find((l) => l.status === 'suspended' && (!l.ends_at || new Date(l.ends_at) > new Date()));
   return section('운영 — 기관 · 이용 기간 · 단계',
-    h('div', { class: 'lab', text: '단계 · 강의 카드 고쳐 쓰기(전체 기본 — 모든 기관 · 개인에게)' }),
+    h('div', { class: 'line' },
+      h('button', { class: 'btn-line', text: S.ops ? '운영 현황 닫기' : '운영 현황(작업 · 실패 · 사용량)', onclick: toggleOps }),
+      h('button', { class: 'btn-line', text: S.audit.all ? '감사 기록 닫기' : '감사 기록(전체)', onclick: () => toggleAudit('all', null) })),
+    opsBox(), auditRows('all'),
+    h('div', { class: 'lab', style: 'margin-top:16px', text: '단계 · 강의 카드 고쳐 쓰기(전체 기본 — 모든 기관 · 개인에게)' }),
     wfEditor(null),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '기관' }),
     h('div', { class: 'line', style: 'align-items:flex-end' }, field('기관 이름', 'no-name'), field('영문 약칭(선택 — 비워 두면 자동)', 'no-slug', 'text', { placeholder: '예: sea-school', autocapitalize: 'none', spellcheck: 'false' }),
       h('button', { class: 'btn-line', text: '기관 만들기', onclick: addOrg })),
     Object.values(S.orgs).map(({ org }) => [h('div', { class: 'line', style: 'margin-top:10px;align-items:flex-end' },
       h('div', { class: 'name', style: 'flex:1;font-weight:600', text: org.name }),
+      org.status !== 'active' ? h('span', { class: 'mark', style: 'color:var(--red)', text: '멈춤' }) : null,
+      h('button', { class: 'btn-text' + (org.status === 'active' ? ' red' : ''), text: org.status === 'active' ? '기관 멈추기' : '기관 다시 열기', onclick: () => orgStatus(org) }),
+      liveOf(org.id) ? h('button', { class: 'btn-text red', text: '이용 기간 멈추기', onclick: () => licStatus(org, liveOf(org.id), 'suspended') })
+        : pausedLic(org.id) ? h('button', { class: 'btn-text', text: '이용 기간 다시 열기', onclick: () => licStatus(org, pausedLic(org.id), 'active') }) : null,
       field('이용 일수', 'ld-' + org.id, 'text', { value: '90' }), field('학생 자리', 'ls-' + org.id, 'text', { value: '40' }),
       h('button', { class: 'btn-line', text: '이용 기간 열기', onclick: () => issue(org.id) })), limRow(org.id)]));
 }

@@ -221,6 +221,23 @@ export async function run({ pool, ok, eq }) {
     const tierWork = await api('edu-s1', 'project.create', { name: '등급 시험', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }], classId: c1.id });
     const tst = (await (await fetch(base + '/api/state?pid=' + tierWork.pid, { headers: { cookie: jar['edu-s1'] } })).json()).project;
     ok('**새 수업 작품은 기관 시작 등급으로 · 허락된 등급만 고르는 칸에**', tst.model === 'sonnet' && !tst.models.includes('opus') && !tst.models.includes('fable'), JSON.stringify([tst.model, tst.models]));
+    // ---------------- 운영 현황 · 감사 기록 · 기관 멈추기
+    eq('**운영 현황은 최상위 관리자만**', (await edu('edu-oa', 'ops.overview')).status, 403);
+    const ov = await edu('edu-root', 'ops.overview');
+    ok('운영 현황 — 작업 · 실패 · 호출 · 사용량(원고 · 키 없이)', ov.ok && Array.isArray(ov.jobs) && Array.isArray(ov.failures) && Array.isArray(ov.usage) && typeof ov.stuck === 'number'
+      && !JSON.stringify(ov).includes(MY_KEY) && !JSON.stringify(ov).includes(FAKE_ORG_KEY), JSON.stringify(ov).slice(0, 300));
+    const au = await edu('edu-oa', 'audit.list', { orgId: org.id });
+    ok('기관 관리자는 제 기관 감사 기록을 본다(누가 · 무엇을)', au.ok && au.entries.some((e) => e.action === 'class.create' && e.actor === 'edu-oa') && au.entries.every((e) => !('ip' in e)));
+    eq('**기관 관리자는 전체 감사 기록을 못 본다**', (await edu('edu-oa', 'audit.list')).status, 403);
+    eq('**학생은 기관 감사 기록을 못 본다**', (await edu('edu-s1', 'audit.list', { orgId: org.id })).status, 404);
+    ok('최상위 관리자는 전체를 본다(골라 보기)', (await edu('edu-root', 'audit.list', { action: 'org.create' })).entries.every((e) => e.action === 'org.create'));
+    ok('**감사 기록에 키 원문이 없다**', !JSON.stringify((await edu('edu-root', 'audit.list', { limit: 200 })).entries).includes(FAKE_ORG_KEY));
+    eq('**기관 관리자는 제 기관을 멈추지 못한다**', (await edu('edu-oa', 'org.status', { orgId: org.id, status: 'suspended' })).status, 403);
+    ok('운영자가 기관을 멈춘다', (await edu('edu-root', 'org.status', { orgId: org.id, status: 'suspended' })).organization.status === 'suspended');
+    const halt = await api('edu-s1', 'project.create', { classId: c1.id, name: '멈춤 시험', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }] });
+    ok('**멈춘 기관에는 새 작품이 서지 않는다**', halt.status === 403 && halt.code === 'org_suspended', JSON.stringify(halt));
+    ok('다시 열면 된다', (await edu('edu-root', 'org.status', { orgId: org.id, status: 'active' })).ok
+      && (await api('edu-s1', 'project.create', { classId: c1.id, name: '다시 연 뒤', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }] })).ok);
     ok('허락 범위를 비우면 모두', (await edu('edu-root', 'license.limits', { licenseId: lic.id, allowedProviders: [], allowedTiers: [] })).license.allowed_providers === null);
     eq('**남의 기관 키는 확인 · 지우기 못 한다**', (await edu('edu-s2', 'org.key.revoke', { orgId: org.id, provider: 'anthropic' })).status, 404);
     const mk = await edu('edu-s1', 'me.key.set', { apiKey: MY_KEY });

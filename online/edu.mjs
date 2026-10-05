@@ -114,6 +114,56 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
         throw e;
       }
     },
+    // 기관 멈추기 · 다시 열기 — 멈추면 새 작품 · AI 작업이 서지 않는다(작품은 그대로 · 읽기는 된다). 운영자만.
+    async 'org.status'(user, b, ip) {
+      if (!user.isPlatformAdmin) return FORBIDDEN;
+      if (!isUuid(b.orgId) || !['active', 'suspended'].includes(b.status)) return no(422, '상태가 맞지 않습니다', 'validation');
+      const o = await one('UPDATE organizations SET status = $2, updated_at = now() WHERE id = $1 RETURNING id, name, status', [b.orgId, b.status]);
+      if (!o) return NOT_FOUND;
+      await log(user, o.id, 'org.status', 'organization', o.id, { status: b.status }, ip);
+      return ok({ organization: o });
+    },
+
+    // ---------------- 운영 현황(최상위 관리자) — 작업 · 실패 · 사용량. 원고 · 키는 싣지 않는다(실패 까닭은 사람 말로 가린 것만).
+    async 'ops.overview'(user) {
+      if (!user.isPlatformAdmin) return FORBIDDEN;
+      const jobs = (await pool.query(
+        `SELECT status, count(*)::int AS n FROM jobs WHERE status IN ('queued', 'running', 'paused', 'waiting_for_user') OR created_at > now() - interval '24 hours'
+          GROUP BY status ORDER BY status`)).rows;
+      const stuck = (await pool.query(`SELECT count(*)::int AS n FROM jobs WHERE status = 'running' AND lease_expires_at < now()`)).rows[0].n;
+      const failures = (await pool.query(
+        `SELECT j.id, j.kind, j.error_code, j.error_message_safe, coalesce(j.ended_at, j.created_at) AS at, o.name AS org_name, u.login_id
+           FROM jobs j LEFT JOIN organizations o ON o.id = j.organization_id LEFT JOIN users u ON u.id = j.requested_by
+          WHERE j.status = 'failed' ORDER BY coalesce(j.ended_at, j.created_at) DESC LIMIT 20`)).rows;
+      const calls = (await pool.query(
+        `SELECT provider, status, error_code, count(*)::int AS n FROM generation_runs WHERE started_at > now() - interval '24 hours'
+          GROUP BY 1, 2, 3 ORDER BY n DESC`)).rows;
+      const usage = (await pool.query(
+        `SELECT to_char(date_trunc('month', r.started_at), 'YYYY-MM') AS month, coalesce(o.name, '개인') AS who, r.credential_owner_type AS payer,
+                count(*)::int AS calls, round(coalesce(sum(r.cost_usd), 0)::numeric, 2)::text AS cost_usd
+           FROM generation_runs r LEFT JOIN organizations o ON o.id = r.organization_id
+          WHERE r.started_at > date_trunc('month', now()) - interval '2 months' AND r.provider <> ''
+          GROUP BY 1, 2, 3 ORDER BY 1 DESC, 5 DESC`)).rows.map((r) => ({ ...r, cost_usd: Number(r.cost_usd) }));
+      return ok({ jobs, stuck, failures, calls, usage, estimated: true });
+    },
+
+    // 감사 기록 — 최상위 관리자는 전체(또는 한 기관), 기관 관리자는 제 기관만. details 는 처음부터 가린 값만 남는다.
+    async 'audit.list'(user, b) {
+      const limit = Math.max(1, Math.min(200, Number(b.limit) || 50));
+      const args = []; const where = [];
+      if (b.orgId) {
+        if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
+        args.push(b.orgId); where.push('a.organization_id = $' + args.length);
+      } else if (!user.isPlatformAdmin) return FORBIDDEN;
+      if (b.action) { args.push(String(b.action)); where.push('a.action = $' + args.length); }
+      args.push(limit);
+      const rows = (await pool.query(
+        `SELECT a.id, a.at, a.action, a.target_type, a.details, u.login_id AS actor, o.name AS org_name
+           FROM audit_logs a LEFT JOIN users u ON u.id = a.actor_user_id LEFT JOIN organizations o ON o.id = a.organization_id
+          ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY a.at DESC, a.id DESC LIMIT $${args.length}`, args)).rows;
+      return ok({ entries: rows.map((r) => ({ ...r, id: Number(r.id) })) });
+    },
+
     async 'org.list'(user) {
       const rows = user.isPlatformAdmin
         ? (await pool.query('SELECT id, name, slug, status, settings, created_at FROM organizations ORDER BY name')).rows
