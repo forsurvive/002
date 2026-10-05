@@ -190,19 +190,27 @@ async function copyWork(w) {
 const AI_CO = { anthropic: 'Claude', openai: 'ChatGPT', google: 'Gemini' };
 const AI_KEY_LABEL = { anthropic: 'Claude(Anthropic) API 키', openai: 'ChatGPT(OpenAI) API 키', google: 'Gemini(Google) API 키' };
 S.prov = {};
+S.lim = {};
 const provOf = (k) => S.prov[k] || 'anthropic';
 const providerPick = (k) => h('div', { class: 'line', style: 'margin-top:10px' },
   Object.entries(AI_CO).map(([p, name]) => h('button', { class: provOf(k) === p ? 'btn' : 'btn-line', text: name, onclick: () => { S.prov[k] = p; render(); } })));
 // 쓸 AI 회사 고르기 — 키가 없는 회사는 «키 없음»을 단다(골라도 키를 넣기 전에는 «연결 필요»로 멈춘다)
-function aiChoice(label, current, keys, save) {
+function aiChoice(label, current, keys, save, allowed) {
   const have = new Set((keys || []).filter((x) => x.status === 'active').map((x) => x.provider));
   return h('div', { style: 'margin-top:12px' },
     h('div', { class: 'lab', text: label }),
-    h('div', { class: 'line' }, Object.entries(AI_CO).map(([p, name]) => h('button', {
+    h('div', { class: 'line' }, Object.entries(AI_CO).filter(([p]) => !allowed || allowed.includes(p)).map(([p, name]) => h('button', {
       class: current === p ? 'btn' : 'btn-line', text: name + (have.has(p) ? '' : ' (키 없음)'), onclick: () => save(p),
     }))),
     current ? null : h('div', { class: 'when', style: 'margin-top:4px', text: '아직 고르지 않았습니다 — 고르기 전에는 키를 넣어 둔 회사 가운데 하나를 씁니다.' }));
 }
+
+// 등급 — 화면은 이름만(실제 모델은 회사 · 설정이 정한다). 기관 기본 등급은 새 수업 작품의 시작 등급이 된다.
+const TIER_CO = { high_reasoning: 'High Reasoning', balanced: 'Balanced', fast: 'Fast' };
+const START_TIERS = ['high_reasoning', 'balanced'];
+const limitText = (l) => (l && (l.allowed_providers || l.allowed_model_tiers)
+  ? 'AI ' + (l.allowed_providers ? l.allowed_providers.map((p) => AI_CO[p]).join(' · ') : '모두') + ' / 등급 ' + (l.allowed_model_tiers ? l.allowed_model_tiers.map((t) => TIER_CO[t]).join(' · ') : '모두')
+  : '');
 
 // 넣어 둔 키 — 회사 · 끝 네 자리 · 확인 상태, 그리고 [연결 확인] [지우기]
 const KEY_ERR = { auth: '키가 맞지 않음', credit: '잔액 없음', rate: '요청 많음', model: '모델 표 없음', overloaded: '회사 서버 바쁨', timeout: '응답 늦음' };
@@ -287,6 +295,7 @@ function orgBox(id) {
   return section(org.name + ' — 기관 관리',
     h('div', { class: 'lab', text: '이용 기간' }),
     h('div', { class: 'when', text: live ? '~ ' + (live.ends_at ? day(live.ends_at) : '기한 없음') + ' · 학생 ' + (lic.seatsUsed || 0) + (live.seat_limit ? ' / ' + live.seat_limit : '') : '유효한 이용 기간이 없습니다 — 새 작품 · AI 작업이 멈춥니다' }),
+    live && limitText(live) ? h('div', { class: 'when', text: '쓸 수 있는 범위: ' + limitText(live) }) : null,
     h('div', { class: 'lab', style: 'margin-top:16px', text: '수업' }),
     classes.map((c) => h('div', { style: 'padding:8px 0;border-bottom:1px solid var(--line-soft)' },
       h('div', { class: 'line' },
@@ -307,15 +316,21 @@ function orgBox(id) {
     inviteList('o-' + id, id, null),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '기관 AI 키(학생 작업이 이 키로 돕니다)' }),
     keyRows(keys, 'org.key', { orgId: id }, load),
+    providerPick('ok-' + id),
+    h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
+      field(AI_KEY_LABEL[provOf('ok-' + id)], 'ok-' + id, 'password', { autocomplete: 'off', spellcheck: 'false' }), h('button', { class: 'btn-line', text: '저장', onclick: saveKey })),
     aiChoice('이 기관 작품에 쓸 AI 회사', (org.settings && org.settings.ai_provider) || '', keys, async (p) => {
       const r = await edu('org.settings', { orgId: id, aiProvider: p });
       if (!r.ok) return tell(r.error);
       S.say = AI_CO[p] + '를 씁니다';
       await load();
-    }),
-    providerPick('ok-' + id),
-    h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
-      field(AI_KEY_LABEL[provOf('ok-' + id)], 'ok-' + id, 'password', { autocomplete: 'off', spellcheck: 'false' }), h('button', { class: 'btn-line', text: '저장', onclick: saveKey })),
+    }, live && live.allowed_providers),
+    h('div', { style: 'margin-top:12px' },
+      h('div', { class: 'lab', text: '새 수업 작품의 시작 등급(학생이 작품마다 바꿀 수 있습니다)' }),
+      h('div', { class: 'line' }, START_TIERS.filter((t) => !(live && live.allowed_model_tiers) || live.allowed_model_tiers.includes(t)).map((t) => h('button', {
+        class: ((org.settings && org.settings.ai_tier) || '') === t ? 'btn' : 'btn-line', text: TIER_CO[t],
+        onclick: async () => { const r = await edu('org.settings', { orgId: id, aiTier: t }); if (!r.ok) return tell(r.error); S.say = TIER_CO[t] + '로 시작합니다'; await load(); },
+      })))),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '사용자' }),
     h('div', { class: 'line', style: 'margin-bottom:8px' }, makeMemberBox(id)),
     codeBox('mk-' + id),
@@ -547,10 +562,34 @@ function wfEditor(orgId) {
 function platformBox() {
   if (!S.me || !S.me.platformAdmin) return null;
   const addOrg = async () => { const r = await edu('org.create', { name: val('no-name'), slug: val('no-slug') }); if (!r.ok) return tell(r.error); await load(); };
+  // 쓸 수 있는 AI 회사 · 등급 — 아무것도 고르지 않으면 모두
+  const liveOf = (orgId) => ((S.orgs[orgId].lic || {}).licenses || []).find((l) => l.status === 'active' && (!l.ends_at || new Date(l.ends_at) > new Date()));
+  const limOf = (orgId) => {
+    if (!S.lim[orgId]) { const l = liveOf(orgId) || {}; S.lim[orgId] = { p: [...(l.allowed_providers || [])], t: [...(l.allowed_model_tiers || [])] }; }
+    return S.lim[orgId];
+  };
+  const flip = (xs, x) => { const i = xs.indexOf(x); if (i < 0) xs.push(x); else xs.splice(i, 1); render(); };
   const issue = async (orgId) => {
-    const r = await edu('license.issue', { orgId, days: Number(val('ld-' + orgId)) || 30, seatLimit: Number(val('ls-' + orgId)) || null });
+    const lim = limOf(orgId);
+    const r = await edu('license.issue', { orgId, days: Number(val('ld-' + orgId)) || 30, seatLimit: Number(val('ls-' + orgId)) || null, allowedProviders: lim.p, allowedTiers: lim.t });
     if (!r.ok) return tell(r.error);
     await load();
+  };
+  const saveLimits = async (orgId) => {
+    const l = liveOf(orgId); const lim = limOf(orgId);
+    const r = await edu('license.limits', { licenseId: l.id, allowedProviders: lim.p, allowedTiers: lim.t });
+    if (!r.ok) return tell(r.error);
+    S.say = '쓸 수 있는 범위를 바꿨습니다';
+    await load();
+  };
+  const limRow = (orgId) => {
+    const lim = limOf(orgId);
+    const chip = (xs, x, name) => h('button', { class: xs.includes(x) ? 'btn' : 'btn-line', text: name, onclick: () => flip(xs, x) });
+    return h('div', { class: 'line', style: 'margin:4px 0 6px' },
+      h('span', { class: 'when', text: '쓸 수 있는 AI' }), Object.entries(AI_CO).map(([p, n]) => chip(lim.p, p, n)),
+      h('span', { class: 'when', text: '등급' }), Object.entries(TIER_CO).map(([t, n]) => chip(lim.t, t, n)),
+      h('span', { class: 'when', text: lim.p.length || lim.t.length ? '' : '(고르지 않으면 모두)' }),
+      liveOf(orgId) ? h('button', { class: 'btn-text', text: '지금 이용 기간에 적용', onclick: () => saveLimits(orgId) }) : null);
   };
   return section('운영 — 기관 · 이용 기간 · 단계',
     h('div', { class: 'lab', text: '단계 · 강의 카드 고쳐 쓰기(전체 기본 — 모든 기관 · 개인에게)' }),
@@ -558,10 +597,10 @@ function platformBox() {
     h('div', { class: 'lab', style: 'margin-top:16px', text: '기관' }),
     h('div', { class: 'line', style: 'align-items:flex-end' }, field('기관 이름', 'no-name'), field('영문 약칭(선택 — 비워 두면 자동)', 'no-slug', 'text', { placeholder: '예: sea-school', autocapitalize: 'none', spellcheck: 'false' }),
       h('button', { class: 'btn-line', text: '기관 만들기', onclick: addOrg })),
-    Object.values(S.orgs).map(({ org }) => h('div', { class: 'line', style: 'margin-top:10px;align-items:flex-end' },
+    Object.values(S.orgs).map(({ org }) => [h('div', { class: 'line', style: 'margin-top:10px;align-items:flex-end' },
       h('div', { class: 'name', style: 'flex:1;font-weight:600', text: org.name }),
       field('이용 일수', 'ld-' + org.id, 'text', { value: '90' }), field('학생 자리', 'ls-' + org.id, 'text', { value: '40' }),
-      h('button', { class: 'btn-line', text: '이용 기간 열기', onclick: () => issue(org.id) }))));
+      h('button', { class: 'btn-line', text: '이용 기간 열기', onclick: () => issue(org.id) })), limRow(org.id)]));
 }
 
 // 화면 밝기 — 기본은 어둡게, 고르면 이 브라우저가 기억한다

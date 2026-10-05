@@ -142,6 +142,9 @@ export interface AIProvider {
 - 개인판(지금 그대로): 이번에 고른 값 → 걸린 첫 에이전트 → 자리(slotModels) → 작품.
 - 온라인: 이번에 고른 값(**정책이 허락할 때만**) → 걸린 첫 에이전트의 tier → 워크플로우 단계 기본 tier → 프로젝트 기본 → 기관 기본.
   모든 결과는 기관이 허용한 `provider × tier` 안으로 잘린다. 고른 경로는 `generation_runs.model_source` 에 남는다.
+  - 허용 범위 = 지금 유효한 라이선스의 `allowed_providers` · `allowed_model_tiers`(비면 모두). 운영자가 `license.limits` 로 정한다(2026-10-05 구현).
+  - 기관 기본 = `organizations.settings.ai_provider` · `ai_tier`. `ai_tier` 는 새 수업 작품의 시작 모델이 된다(Balanced → sonnet 별칭) — 학생이 고친 작품 값이 앞선다.
+  - 화면(온라인)은 별칭 대신 등급 이름(High Reasoning / Balanced)만, 허용되지 않은 등급은 고르는 칸에서 뺀다.
 - 합평 패널에서 걸린 사람들의 tier/provider 가 갈리면 지금처럼 «어느 모델로 모을지» 묻는다(학생 모드에서는 묻지 않고 정책값).
 
 ## 6. Credential 해석 (`online/credentials`)

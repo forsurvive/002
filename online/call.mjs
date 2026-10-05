@@ -16,6 +16,19 @@ const sha = (s) => createHash('sha256').update(String(s), 'utf8').digest('hex');
 // 개인판 모델 별칭 → 온라인 tier. 대응은 운영자가 정한다(docs/AI_PROVIDER.md §4) — 적히지 않은 별칭은 프로젝트/기관 기본을 따른다.
 export const DEFAULT_ALIAS_TIERS = { opus: 'high_reasoning', sonnet: 'balanced' };
 
+// 기관 작품은 지금 유효한 라이선스가 허락한 회사 · 등급 안에서만 고른다(비어 있으면 모두). 개인 작품은 제한 없음.
+export const licensePolicy = (row) => ({
+  ...(row.organization_id && row.allowed_providers && row.allowed_providers.length ? { providers: row.allowed_providers } : {}),
+  ...(row.organization_id && row.allowed_model_tiers && row.allowed_model_tiers.length ? { tiers: row.allowed_model_tiers } : {}),
+});
+
+// 비용 주체의 기본 — 기관 작품은 기관의 회사 · 등급, 개인 작품은 그 사람의 회사
+const orgLayer = (row) => {
+  const provider = row.organization_id ? row.org_provider : row.user_provider;
+  const tier = row.organization_id ? row.org_tier : '';
+  return provider || tier ? { ...(provider ? { provider } : {}), ...(tier ? { tier } : {}) } : null;
+};
+
 /**
  * deps = { pool, store, generator, aliasTiers?, policyOf?(projectRow) }
  * 돌려주는 call(args, ctx) 는 Core(run.mjs)가 부르는 모양 그대로: { ok, text, error, reason, retryAfterMs, runId }
@@ -30,8 +43,13 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
     // 고른 AI 회사 — 작품이 정했으면 그것, 아니면 비용 주체의 기본(기관 작품은 기관, 개인 작품은 그 사람)
     const row = (await pool.query(
       `SELECT p.owner_user_id, p.organization_id, p.model_policy->>'provider' AS project_provider,
-              coalesce(o.settings->>'ai_provider', '') AS org_provider, coalesce(u.settings->>'ai_provider', '') AS user_provider
+              coalesce(o.settings->>'ai_provider', '') AS org_provider, coalesce(o.settings->>'ai_tier', '') AS org_tier,
+              coalesce(u.settings->>'ai_provider', '') AS user_provider,
+              l.allowed_providers, l.allowed_model_tiers
          FROM projects p LEFT JOIN organizations o ON o.id = p.organization_id LEFT JOIN users u ON u.id = p.owner_user_id
+         LEFT JOIN LATERAL (SELECT allowed_providers, allowed_model_tiers FROM licenses
+                             WHERE organization_id = p.organization_id AND status = 'active' AND starts_at <= now() AND (ends_at IS NULL OR ends_at > now())
+                             ORDER BY ends_at DESC NULLS FIRST LIMIT 1) l ON true
         WHERE p.id = $1`, [pid])).rows[0];
     const tdoc = await ids(pid, 'documents', target);
     const thread = ctx.threadId ? await ids(pid, 'threads', ctx.threadId) : null;
@@ -54,10 +72,10 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
       systemPrompt, userPrompt, signal: signal || ctx.signal || null,
       metadata: {
         project: { id: pid, ownerUserId: row.owner_user_id, organizationId: row.organization_id },
-        policy: policyOf(row),
+        policy: { ...licensePolicy(row), ...(await policyOf(row)) },
         model: {
           project: tier || row.project_provider ? { ...(tier ? { tier } : {}), ...(row.project_provider ? { provider: row.project_provider } : {}) } : null,
-          org: (row.organization_id ? row.org_provider : row.user_provider) ? { provider: row.organization_id ? row.org_provider : row.user_provider } : null,
+          org: orgLayer(row),
         },
       },
     });

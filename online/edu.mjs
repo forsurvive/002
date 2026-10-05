@@ -11,6 +11,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import * as auth from './auth.mjs';
 import { isUuid } from './tenancy.mjs';
 import { PROVIDER_IDS } from '../ai/credentials.mjs';
+import { TIERS } from '../ai/catalog.mjs';
 import { importProject } from './import.mjs';
 import { loadAggregate } from './store.mjs';
 
@@ -37,6 +38,8 @@ const tries = new Map();
 const TRY_LIMIT = 10; const TRY_WINDOW = 15 * 60 * 1000;
 export function resetInviteThrottle() { tries.clear(); }
 
+const LIC_COLS = 'id, plan, status, starts_at, ends_at, seat_limit, allowed_providers, allowed_model_tiers';
+
 export function createEdu({ pool, credentials = null, wfs = null, keyTester = null }) {
   const one = async (sql, args) => (await pool.query(sql, args)).rows[0] || null;
   const rolesIn = async (userId, orgId) => new Set((await pool.query(
@@ -49,6 +52,20 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
   const liveLicense = (orgId) => one(
     `SELECT * FROM licenses WHERE organization_id = $1 AND status = 'active' AND starts_at <= now() AND (ends_at IS NULL OR ends_at > now())
       ORDER BY ends_at DESC NULLS FIRST LIMIT 1`, [orgId]);
+
+  // 라이선스가 허락하는 AI 회사 · 등급 — 빈 목록 · 없음은 «모두»(null)
+  const limits = (b) => {
+    const list = (v, known) => {
+      if (v == null) return null;
+      if (!Array.isArray(v)) return { bad: true };
+      const xs = [...new Set(v.map(String))];
+      return xs.some((x) => !known.includes(x)) ? { bad: true } : xs.length ? xs : null;
+    };
+    const providers = list(b.allowedProviders, PROVIDER_IDS);
+    const tiers = list(b.allowedTiers, Object.keys(TIERS));
+    if ((providers && providers.bad) || (tiers && tiers.bad)) return { error: '모르는 AI 회사 · 등급입니다' };
+    return { providers, tiers };
+  };
 
   const OPS = {
     // ---------------- 나
@@ -111,6 +128,11 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
         if (b.aiProvider && !PROVIDER_IDS.includes(b.aiProvider)) return no(422, '모르는 AI 회사입니다', 'validation');
         patch.ai_provider = b.aiProvider;
       }
+      // 이 기관 작품의 기본 등급(''이면 Balanced) — 작품 · 단계가 정하면 그쪽이 앞선다
+      if (typeof b.aiTier === 'string') {
+        if (b.aiTier && !(b.aiTier in TIERS)) return no(422, '모르는 등급입니다', 'validation');
+        patch.ai_tier = b.aiTier;
+      }
       const o = await one('UPDATE organizations SET settings = settings || $2::jsonb, updated_at = now() WHERE id = $1 RETURNING settings', [b.orgId, JSON.stringify(patch)]);
       await log(user, b.orgId, 'org.settings', 'organization', b.orgId, patch, ip);
       return ok({ settings: o.settings });
@@ -120,10 +142,12 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       if (!isUuid(b.orgId) || !(await one('SELECT 1 FROM organizations WHERE id = $1', [b.orgId]))) return NOT_FOUND;
       const days = Math.max(1, Math.min(3650, Number(b.days) || 30));
       const seats = b.seatLimit == null ? null : Math.max(1, Number(b.seatLimit) || 1);
-      const l = await one(`INSERT INTO licenses (organization_id, plan, ends_at, seat_limit, created_by)
-        VALUES ($1, $2, now() + make_interval(days => $3), $4, $5) RETURNING id, plan, status, starts_at, ends_at, seat_limit`,
-      [b.orgId, String(b.plan || 'trial'), days, seats, user.id]);
-      await log(user, b.orgId, 'license.issue', 'license', l.id, { plan: l.plan, days, seats }, ip);
+      const lim = limits(b);
+      if (lim.error) return no(422, lim.error, 'validation');
+      const l = await one(`INSERT INTO licenses (organization_id, plan, ends_at, seat_limit, created_by, allowed_providers, allowed_model_tiers)
+        VALUES ($1, $2, now() + make_interval(days => $3), $4, $5, $6, $7) RETURNING ${LIC_COLS}`,
+      [b.orgId, String(b.plan || 'trial'), days, seats, user.id, lim.providers, lim.tiers]);
+      await log(user, b.orgId, 'license.issue', 'license', l.id, { plan: l.plan, days, seats, providers: lim.providers, tiers: lim.tiers }, ip);
       return ok({ license: l });
     },
     async 'license.status'(user, b, ip) {
@@ -134,9 +158,21 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       await log(user, l.organization_id, 'license.status', 'license', l.id, { status: b.status }, ip);
       return ok({ license: l });
     },
+    // 이용 기간 안에서 쓸 수 있는 AI 회사 · 등급을 고친다(비우면 모두) — 운영자만
+    async 'license.limits'(user, b, ip) {
+      if (!user.isPlatformAdmin) return FORBIDDEN;
+      if (!isUuid(b.licenseId)) return NOT_FOUND;
+      const lim = limits(b);
+      if (lim.error) return no(422, lim.error, 'validation');
+      const l = await one(`UPDATE licenses SET allowed_providers = $2, allowed_model_tiers = $3, updated_at = now() WHERE id = $1 RETURNING ${LIC_COLS}, organization_id`,
+        [b.licenseId, lim.providers, lim.tiers]);
+      if (!l) return NOT_FOUND;
+      await log(user, l.organization_id, 'license.limits', 'license', l.id, { providers: lim.providers, tiers: lim.tiers }, ip);
+      return ok({ license: l });
+    },
     async 'license.read'(user, b) {
       if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
-      const rows = (await pool.query('SELECT id, plan, status, starts_at, ends_at, seat_limit FROM licenses WHERE organization_id = $1 ORDER BY created_at DESC', [b.orgId])).rows;
+      const rows = (await pool.query(`SELECT ${LIC_COLS} FROM licenses WHERE organization_id = $1 ORDER BY created_at DESC`, [b.orgId])).rows;
       const seatsUsed = (await one(`SELECT count(DISTINCT user_id)::int AS n FROM organization_members WHERE organization_id = $1 AND role = 'student' AND status = 'active'`, [b.orgId])).n;
       return ok({ licenses: rows, seatsUsed });
     },

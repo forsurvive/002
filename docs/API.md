@@ -139,8 +139,9 @@
 | `me.memberships` | 로그인한 사람 | 내 기관(역할) · 수업(역할) |
 | `org.create` `{name, slug}` | 플랫폼 관리자 | 기관 만들기 |
 | `org.list` | 플랫폼 관리자(전체) · 기관 관리자(제 기관) | |
-| `org.settings` `{orgId, adminCanReadProjects}` | 기관 관리자 | 기관 관리자의 작품 열람 정책(기본 꺼짐) |
-| `license.issue` `{orgId, plan, days, seatLimit}` · `license.status` `{licenseId, status}` | 플랫폼 관리자 | 사용권 발급 · 정지/해지 |
+| `org.settings` `{orgId, adminCanReadProjects, studentCards, allowCopy, aiProvider, aiTier}` | 기관 관리자(열람은 최상위만) | 열람 정책 · 강의 카드 · 복사 허용 · 기관 작품의 AI 회사 · 새 수업 작품의 시작 등급(`high_reasoning`/`balanced`) |
+| `license.issue` `{orgId, plan, days, seatLimit, allowedProviders?, allowedTiers?}` · `license.status` `{licenseId, status}` | 플랫폼 관리자 | 사용권 발급 · 정지/해지 |
+| `license.limits` `{licenseId, allowedProviders, allowedTiers}` | 플랫폼 관리자 | 그 이용 기간에 쓸 수 있는 AI 회사 · 등급(빈 목록 = 모두). 기관 작품의 부르기는 이 안으로 잘린다(`online/call.mjs` `licensePolicy`) |
 | `license.read` `{orgId}` | 기관 관리자 | 라이선스 · 쓰는 학생 자리 |
 | `class.create` · `class.list` · `class.archive` `{…, reopen}` | 기관 관리자(목록은 멤버도) | 수업 |
 | `class.progress` `{classId}` | 맡은 강사 · 기관 관리자 | 학생마다 프로젝트 · 문서 수 · 최근 작업 상태(비용 칸 없음) |

@@ -101,4 +101,24 @@ export async function run({ pool, ok, eq }) {
   ok('rate 와 retry-after 가 올라온다', busy.ok === false && busy.reason === 'rate' && busy.retryAfterMs === 20000);
   const { generator: g3 } = fakeRouter(pool, { reply: () => success({ text: '   ' }), keys });
   eq('빈 응답은 empty', (await createOnlineCall({ pool, store, generator: g3 })({ pid, code: 'F-UPDATE', refIds: [d1], keepSeat: true }, {})).reason, 'empty');
+
+  // ---------------- 기관 작품 — 라이선스가 허락한 등급 안에서만, 기관 기본 등급이 그 다음
+  {
+    const org = (await pool.query(`INSERT INTO organizations (name, slug, settings) VALUES ('정책 기관', 'policy-org', '{"ai_tier":"balanced"}') RETURNING id`)).rows[0].id;
+    const lic = (await pool.query(`INSERT INTO licenses (organization_id, ends_at, allowed_model_tiers) VALUES ($1, now() + interval '30 days', '{balanced}') RETURNING id`, [org])).rows[0].id;
+    await credentials.set({ ownerType: 'organization', ownerId: org, provider: 'anthropic', apiKey: FAKE_KEY + '-org', createdBy: u.id });
+    const opid = await store.create({ name: '수업 작품' }, { ownerUserId: u.id, organizationId: org });
+    await store.update(opid, (p) => { M.docCreate(p, { title: '세계관', body: '바다' }); });
+    const { generator: g4, seen: s4 } = fakeRouter(pool, { keys });
+    const oc = createOnlineCall({ pool, store, generator: g4 });
+    const r4 = await oc({ pid: opid, code: 'F-UPDATE', refIds: [], keepSeat: true, modelPick: 'opus' }, { userId: u.id });
+    const run4 = (await pool.query('SELECT model_tier, model_id, credential_owner_type FROM generation_runs WHERE id = $1', [r4.runId])).rows[0];
+    ok('**라이선스가 Balanced 만 허락하면 High Reasoning 을 골라도 Balanced 로 돈다**', r4.ok && run4.model_tier === 'balanced' && s4[0].model === 'test-model-mid' && run4.credential_owner_type === 'organization', JSON.stringify(run4));
+    await pool.query(`UPDATE licenses SET allowed_model_tiers = NULL WHERE id = $1`, [lic]);
+    const r5 = await oc({ pid: opid, code: 'F-UPDATE', refIds: [], keepSeat: true, modelPick: 'opus' }, { userId: u.id });
+    eq('제한을 풀면 고른 등급대로', (await pool.query('SELECT model_tier FROM generation_runs WHERE id = $1', [r5.runId])).rows[0].model_tier, 'high_reasoning');
+    await pool.query(`UPDATE licenses SET allowed_providers = '{openai}' WHERE id = $1`, [lic]);
+    const r6 = await oc({ pid: opid, code: 'F-UPDATE', refIds: [], keepSeat: true }, { userId: u.id });
+    ok('**허락되지 않은 회사로는 부르지 않는다**', r6.ok === false && s4.length === 2 && (await pool.query('SELECT provider FROM generation_runs WHERE id = $1', [r6.runId])).rows[0].provider === 'openai');
+  }
 }

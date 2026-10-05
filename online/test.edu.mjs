@@ -194,6 +194,18 @@ export async function run({ pool, ok, eq }) {
     eq('**남의 작품 회사는 못 바꾼다**', (await edu('edu-s1', 'project.ai.set', { pid: mine2.pid, provider: 'google' })).status, 404);
     eq('**수업 작품 회사는 학생이 못 바꾼다(기관이 정한다)**', (await edu('edu-s1', 'project.ai.set', { pid: proj.pid, provider: 'google' })).status, 403);
     ok('기관이 회사를 고른다', (await edu('edu-oa', 'org.settings', { orgId: org.id, aiProvider: 'anthropic' })).settings.ai_provider === 'anthropic');
+    // ---------------- 기관 기본 등급 · 라이선스가 허락하는 회사 · 등급
+    ok('기관이 시작 등급을 고른다', (await edu('edu-oa', 'org.settings', { orgId: org.id, aiTier: 'balanced' })).settings.ai_tier === 'balanced');
+    eq('모르는 등급은 고르지 못한다', (await edu('edu-oa', 'org.settings', { orgId: org.id, aiTier: 'ultra' })).status, 422);
+    eq('**허락 범위는 운영자만 고친다**', (await edu('edu-oa', 'license.limits', { licenseId: lic.id, allowedTiers: ['fast'] })).status, 403);
+    eq('모르는 회사는 허락 범위에 못 넣는다', (await edu('edu-root', 'license.limits', { licenseId: lic.id, allowedProviders: ['mystery'] })).status, 422);
+    const lim = await edu('edu-root', 'license.limits', { licenseId: lic.id, allowedProviders: ['anthropic', 'google'], allowedTiers: ['balanced', 'fast'] });
+    ok('운영자가 허락 범위를 정한다', lim.ok && lim.license.allowed_providers.join() === 'anthropic,google' && lim.license.allowed_model_tiers.join() === 'balanced,fast', JSON.stringify(lim));
+    ok('기관 관리자는 허락 범위를 본다', (await edu('edu-oa', 'license.read', { orgId: org.id })).licenses.some((l) => (l.allowed_model_tiers || []).includes('fast')));
+    const tierWork = await api('edu-s1', 'project.create', { name: '등급 시험', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }], classId: c1.id });
+    const tst = (await (await fetch(base + '/api/state?pid=' + tierWork.pid, { headers: { cookie: jar['edu-s1'] } })).json()).project;
+    ok('**새 수업 작품은 기관 시작 등급으로 · 허락된 등급만 고르는 칸에**', tst.model === 'sonnet' && !tst.models.includes('opus') && !tst.models.includes('fable'), JSON.stringify([tst.model, tst.models]));
+    ok('허락 범위를 비우면 모두', (await edu('edu-root', 'license.limits', { licenseId: lic.id, allowedProviders: [], allowedTiers: [] })).license.allowed_providers === null);
     eq('**남의 기관 키는 확인 · 지우기 못 한다**', (await edu('edu-s2', 'org.key.revoke', { orgId: org.id, provider: 'anthropic' })).status, 404);
     const mk = await edu('edu-s1', 'me.key.set', { apiKey: MY_KEY });
     ok('**누구나 내 AI 키를 넣는다 — 돌려받는 것은 끝 네 자리뿐**', mk.ok && !JSON.stringify(mk).includes(MY_KEY) && !JSON.stringify(await edu('edu-s1', 'me.key.list')).includes(MY_KEY)

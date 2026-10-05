@@ -30,7 +30,7 @@ import { createTenancy, SAY } from './tenancy.mjs';
 import { createEdu } from './edu.mjs';
 import { createWorkflowSource } from './workflow.mjs';
 import { createWorker } from './worker.mjs';
-import { createOnlineCall } from './call.mjs';
+import { createOnlineCall, DEFAULT_ALIAS_TIERS } from './call.mjs';
 import { buildAi } from './ai.mjs';
 import { resolveHosting, hostOf, originOk, gateOk } from '../tools/hosting.mjs';
 
@@ -74,8 +74,11 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
     async create(fields) {
       // 수업 안에 만들면 그 기관 · 수업에 묶인다(비용 주체 ORGANIZATION — 기관 키로 돈다)
       const id = await store.create(fields, { ownerUserId: user.id, organizationId: place ? place.organizationId : null, classId: place ? place.classId : null });
+      // 수업 작품은 기관이 정한 기본 등급으로 시작한다(학생이 설정 탭에서 바꿀 수 있다 — 라이선스가 허락하는 안에서)
+      const orgTier = place && pool ? ((await pool.query(`SELECT settings->>'ai_tier' AS t FROM organizations WHERE id = $1`, [place.organizationId])).rows[0] || {}).t : '';
+      const startAlias = Object.keys(DEFAULT_ALIAS_TIERS).find((a) => DEFAULT_ALIAS_TIERS[a] === orgTier) || '';
       // 만들며 넣은 자료는 곧바로 «자료» 카테고리의 문서가 된다(개인판 state.create 와 같다)
-      await store.update(id, (p) => { p.materials = fields.materials || []; materialsToDocs(p); }, by);
+      await store.update(id, (p) => { p.materials = fields.materials || []; materialsToDocs(p); if (startAlias) p.model = startAlias; }, by);
       return { id };
     },
     remove: (pid) => store.remove(pid),
@@ -419,12 +422,16 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         // 이 작품의 AI 회사 — 작품이 정한 것 · 비용 주체의 기본 · 키가 있는 회사들(화면의 «AI 회사» 칸)
         const ar = (await pool.query(
           `SELECT p.model_policy->>'provider' AS provider, p.organization_id, coalesce(o.settings->>'ai_provider', '') AS org_provider, coalesce(u.settings->>'ai_provider', '') AS user_provider,
+                  (SELECT l.allowed_model_tiers FROM licenses l WHERE l.organization_id = p.organization_id AND l.status = 'active' AND l.starts_at <= now()
+                     AND (l.ends_at IS NULL OR l.ends_at > now()) ORDER BY l.ends_at DESC NULLS FIRST LIMIT 1) AS tiers,
                   (SELECT coalesce(array_agg(DISTINCT c.provider), '{}') FROM provider_credentials c WHERE c.status = 'active'
                      AND ((p.organization_id IS NOT NULL AND c.owner_type = 'organization' AND c.owner_id = p.organization_id::text)
                        OR (p.organization_id IS NULL AND c.owner_type = 'user' AND c.owner_id = p.owner_user_id::text))) AS keys
              FROM projects p LEFT JOIN organizations o ON o.id = p.organization_id LEFT JOIN users u ON u.id = p.owner_user_id WHERE p.id = $1`, [pid])).rows[0];
         // 온라인 화면은 등급만 보인다 — fable 은 opus 와 같은 High Reasoning 이라 고르는 칸에서 뺀다(이미 고른 작품은 남긴다).
         if (Array.isArray(st.models)) st.models = st.models.filter((m) => m !== 'fable' || st.model === 'fable');
+        // 기관 작품은 이용 기간이 허락한 등급만 고르는 칸에 남긴다(막는 것은 부르기 쪽 정책이다)
+        if (ar && ar.tiers && ar.tiers.length && Array.isArray(st.models)) st.models = st.models.filter((m) => !DEFAULT_ALIAS_TIERS[m] || ar.tiers.includes(DEFAULT_ALIAS_TIERS[m]) || st.model === m);
         if (ar) st.ai = { provider: ar.provider || '', classWork: !!ar.organization_id, ownerDefault: ar.organization_id ? ar.org_provider : ar.user_provider, keys: ar.keys || [] };
         return json(res, 200, { ok: true, project: st, projects, me }, cache);
       }
