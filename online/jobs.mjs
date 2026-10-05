@@ -47,7 +47,11 @@ export function viewOf(r) {
   };
 }
 
-export function createJobQueue(pool) {
+// 한 사람이 줄에 세울 수 있는 만큼 — 고장 난 화면 · 되풀이 클릭 · 스크립트가 비용을 태우지 못하게(docs/SECURITY.md «비용»).
+// 숫자는 화면에 보이지 않는다(학생은 횟수를 보지 않는다) — 넘치면 «잠시 뒤에» 만.
+export const USER_LIMITS = { active: 8, perWindow: 40, windowMs: 10 * 60 * 1000 };
+
+export function createJobQueue(pool, { userLimits = USER_LIMITS } = {}) {
   // Core id → 표의 키(문서 · 스레드). 없으면 null(대상이 없는 작업 — 에이전트 준비 등)
   async function targetOf(pid, legacy) {
     if (!legacy) return null;
@@ -70,6 +74,16 @@ export function createJobQueue(pool) {
         : null;
       const before = await same();
       if (before) return { ok: true, jobId: before.id, again: true };
+      if (requestedBy && userLimits) {
+        const u = (await pool.query(
+          `SELECT count(*) FILTER (WHERE status IN ('queued', 'running')) AS active,
+                  count(*) FILTER (WHERE created_at > now() - make_interval(secs => $2)) AS recent
+             FROM jobs WHERE requested_by = $1 AND (status IN ('queued', 'running') OR created_at > now() - make_interval(secs => $2))`,
+          [requestedBy, userLimits.windowMs / 1000])).rows[0];
+        if (Number(u.active) >= userLimits.active || Number(u.recent) >= userLimits.perWindow) {
+          return { ok: false, code: 'busy', error: '작업이 많이 쌓여 있습니다 — 앞의 작업이 끝난 뒤 다시 해 주세요' };
+        }
+      }
       try {
         const { rows } = await pool.query(
           `INSERT INTO jobs (id, organization_id, project_id, requested_by, kind, title, target_id, target_legacy_id, params, idempotency_key, max_attempts)

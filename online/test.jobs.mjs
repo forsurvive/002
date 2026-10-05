@@ -27,6 +27,23 @@ export async function run({ pool, ok, eq }) {
   const v = (await q.list(pid)).find((j) => j.id === a.jobId);
   ok('화면 꼴: 기다리는 것은 «대기 중»으로 도는 줄', v.status === 'running' && v.step === '대기 중' && v.targetId === d1 && v.kind === 'update');
 
+  // ---------------- 한 사람의 줄 상한 — 폭주(되풀이 클릭 · 스크립트)가 비용을 태우지 못하게, 숫자는 말하지 않는다
+  {
+    const small = createJobQueue(pool, { userLimits: { active: 2, perWindow: 3, windowMs: 60000 } });
+    const v2 = (await createUser(pool, { loginId: 'flooder', password: 'long-enough-1' })).user;
+    const fp = await store.create({ name: '폭주 시험' }, { ownerUserId: v2.id });
+    let ds = [];
+    await store.update(fp, (p) => { ds = [1, 2, 3, 4].map((i) => M.docCreate(p, { title: 'f' + i }).id); });
+    const r1 = await small.enqueue({ pid: fp, requestedBy: v2.id, kind: 'update', targetId: ds[0], params: {} });
+    const r2 = await small.enqueue({ pid: fp, requestedBy: v2.id, kind: 'update', targetId: ds[1], params: {} });
+    const r3 = await small.enqueue({ pid: fp, requestedBy: v2.id, kind: 'update', targetId: ds[2], params: {} });
+    ok('**한 사람이 줄에 세운 작업이 상한에 닿으면 «잠시 뒤에»(숫자 없이)**', r1.ok && r2.ok && r3.ok === false && r3.code === 'busy' && !/\d/.test(r3.error), JSON.stringify(r3));
+    await pool.query("UPDATE jobs SET status = 'done' WHERE requested_by = $1", [v2.id]);
+    ok('앞의 작업이 끝나면 다시 넣는다', (await small.enqueue({ pid: fp, requestedBy: v2.id, kind: 'update', targetId: ds[2], params: {} })).ok);
+    eq('**짧은 사이 너무 많이 넣으면 끝난 것까지 세어 막는다**', (await small.enqueue({ pid: fp, requestedBy: v2.id, kind: 'update', targetId: ds[3], params: {} })).code, 'busy');
+    await pool.query("UPDATE jobs SET status = 'cancelled' WHERE requested_by = $1 AND status IN ('queued','running')", [v2.id]);
+  }
+
   // ---------------- 두 worker 가 동시에 집어도 한 행은 한 번만
   const claims = await Promise.all(Array.from({ length: 6 }, (_, i) => q.claim('w' + i)));
   const got = claims.filter(Boolean).map((r) => r.id);

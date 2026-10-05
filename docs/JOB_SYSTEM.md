@@ -122,6 +122,7 @@ agents       : { kind: '소설'|…, slotsDone: ['S02','F-UPDATE',…], studyDon
 ## 7. 동시성
 
 - worker 프로세스 하나에 **동시 슬롯 N**(`WORKER_CONCURRENCY`, 기본 4). 파일럿 10~20명 → 측정 → 조정(명세 0-D).
+- 사람별 상한(`online/jobs.mjs` `USER_LIMITS`): 줄에 선(queued · running) 작업 8개 · 10분에 40개까지. 넘치면 넣지 않고 «작업이 많이 쌓여 있습니다»(숫자 없이 — 학생은 횟수를 보지 않는다). 되풀이 클릭 · 고장 난 화면 · 스크립트의 비용 폭주를 막는다(2026-10-05).
 - 기관별 상한 `organizations.max_concurrent_jobs`(기본 5): 넘치면 그 기관 작업은 `queued` 로 기다린다(학생 화면에는 «대기 중»만, 숫자는 보이지 않음).
 - provider/credential 별 상한: 429 를 자주 받는 credential 은 짧게 쉬게 한다(메모리의 토큰 버킷 — worker 하나일 때는 충분).
 - 지금의 `MAX_CALLS`(개인판 CLI 고삐)는 개인판에 그대로 둔다.
