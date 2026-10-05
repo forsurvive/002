@@ -54,12 +54,16 @@ export function createWorker({ queue, store, call, prepare = null, allowed = nul
     const beat = setInterval(() => { check().catch(() => {}); }, heartbeatMs);
 
     // 작업마다 저장은 «누가 고쳤나»(판의 created_by)를 그 작업을 맡긴 사람으로 남긴다
-    const jobStore = { get: (pid) => store.get(pid), update: (pid, fn) => store.update(pid, fn, { userId }) };
+    // 바로 앞의 성공한 부르기 — 그 뒤의 저장에서 생긴 판 · 메시지가 그 생성 기록에 잇닿는다(판 source='ai')
+    let lastRun = null;
+    const jobStore = { get: (pid) => store.get(pid), update: (pid, fn) => store.update(pid, fn, { userId, runId: lastRun }) };
+    const seen = (r) => { if (r && r.ok && r.runId) lastRun = r.runId; return r; };
+    const traced = Object.assign(async (args, c) => seen(await call(args, c)), call, call.raw ? { raw: async (args, c) => seen(await call.raw(args, c)) } : {});
     const deps = {
       store: jobStore,
-      call: (args, ctx) => call(args, ctx),
+      call: traced,
       // 에이전트 준비 · 자료 분석 — Core 의 본체에 온라인 저장 · 부르기(call.raw 는 판정 · 짓기용)를 넣는다
-      prepare: prepare || ((pid, c, request) => prepareThenStudy({ store: jobStore, call, raw: call.raw, prompts: PROMPTS }, pid, c, request)),
+      prepare: prepare || ((pid, c, request) => prepareThenStudy({ store: jobStore, call: traced, raw: traced.raw, prompts: PROMPTS }, pid, c, request)),
       // 단계 생성 — 그 프로젝트에 쓸 템플릿(운영자 · 기관이 고쳐 쓴 것까지)
       workflow: workflow || (async () => baseTemplate()),
     };

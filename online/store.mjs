@@ -133,7 +133,10 @@ function newHistory(a, b) {
   return b.slice();
 }
 
-async function saveAggregate(db, pid, before, after, maps, { userId = null } = {}) {
+async function saveAggregate(db, pid, before, after, maps, { userId = null, runId = null } = {}) {
+  // AI 작업이 쓴 고침이면(runId) 이번에 생긴 현재 판 · AI 메시지를 그 생성 기록에 잇는다 — «이 판은 어느 부르기에서 나왔나»
+  const src = runId ? 'ai' : 'user';
+  const linkRun = async (vid) => { if (runId) await db.query('UPDATE generation_runs SET result_version_id = coalesce(result_version_id, $2) WHERE id = $1', [runId, vid]); };
   const orgId = (await db.query('SELECT organization_id FROM projects WHERE id = $1', [pid])).rows[0].organization_id;
   const idOf = (kind, legacy) => {
     if (legacy == null) return null;
@@ -208,9 +211,10 @@ async function saveAggregate(db, pid, before, after, maps, { userId = null } = {
           VALUES ($1,$2,$3,$4,$5,$6,$7,'import',$8,$9)`, [docId, pid, seq, v.title, v.body, sha(v.body), String(v.body).length, userId, Number(v.at) || null]);
       }
       const vid = randomUUID();
-      await db.query(`INSERT INTO document_versions (id, document_id, project_id, seq, title, body, body_sha256, char_count, source, created_by, at_ms)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'user',$9,$10)`, [vid, docId, pid, seq + 1, d.title, d.body || '', sha(d.body || ''), String(d.body || '').length, userId, Number(d.updatedAt) || null]);
+      await db.query(`INSERT INTO document_versions (id, document_id, project_id, seq, title, body, body_sha256, char_count, source, created_by, at_ms, generation_run_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [vid, docId, pid, seq + 1, d.title, d.body || '', sha(d.body || ''), String(d.body || '').length, src, userId, Number(d.updatedAt) || null, runId]);
       await db.query('UPDATE documents SET current_version_id = $2 WHERE id = $1', [docId, vid]);
+      await linkRun(vid);
       continue;
     }
     const was = b || null;
@@ -227,13 +231,15 @@ async function saveAggregate(db, pid, before, after, maps, { userId = null } = {
         await db.query('UPDATE document_versions SET at_ms = $2 WHERE id = (SELECT current_version_id FROM documents WHERE id = $1)', [docId, Number(pushed[0].at) || null]);
         rest = pushed.slice(1);
       }
-      const rows = [...rest.filter((v) => v.body != null), { title: d.title, body: d.body || '', at: d.updatedAt }];
+      // 지난 판(이번 고침 전의 것)은 사람의 판, 마지막(지금 본문)만 이번 고침의 출처(AI 작업이면 'ai')
+      const rows = [...rest.filter((v) => v.body != null).map((v) => ({ ...v, now: false })), { title: d.title, body: d.body || '', at: d.updatedAt, now: true }];
       for (const v of rows) {
         const vid = randomUUID();
-        await db.query(`INSERT INTO document_versions (id, document_id, project_id, seq, title, body, body_sha256, char_count, source, created_by, at_ms)
-          SELECT $1, $2, $3, coalesce(max(seq), 0) + 1, $4, $5, $6, $7, 'user', $8, $9 FROM document_versions WHERE document_id = $2`,
-          [vid, docId, pid, v.title, v.body, sha(v.body), String(v.body).length, userId, Number(v.at) || null]);
+        await db.query(`INSERT INTO document_versions (id, document_id, project_id, seq, title, body, body_sha256, char_count, source, created_by, at_ms, generation_run_id)
+          SELECT $1, $2, $3, coalesce(max(seq), 0) + 1, $4, $5, $6, $7, $8, $9, $10, $11 FROM document_versions WHERE document_id = $2`,
+          [vid, docId, pid, v.title, v.body, sha(v.body), String(v.body).length, v.now ? src : 'user', userId, Number(v.at) || null, v.now ? runId : null]);
         await db.query('UPDATE documents SET current_version_id = $2 WHERE id = $1', [docId, vid]);
+        if (v.now) await linkRun(vid);
       }
     }
     if (!was || !same(cols, [was.kind, was.categoryId ? idOf('cat', was.categoryId) : null, was.orphanFrom ? idOf('cat', was.orphanFrom) : null, was.title,
@@ -286,8 +292,10 @@ async function saveAggregate(db, pid, before, after, maps, { userId = null } = {
     // 말은 쌓이기만 한다(고치면 새 가지가 돋는다) — 표에 없는 말만 넣는다
     for (const [k, m] of t.messages.entries()) {
       if (known('msg', m.id)) continue;
-      await db.query(`INSERT INTO thread_messages (id, thread_id, project_id, parent_id, role, text, created_by, legacy_id, created_at, sort_order)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [idOf('msg', m.id), thId, pid, m.parentId ? idOf('msg', m.parentId) : null, m.role, m.text, m.role === 'user' ? userId : null, m.id, ts(m.at), k]);
+      await db.query(`INSERT INTO thread_messages (id, thread_id, project_id, parent_id, role, text, created_by, legacy_id, created_at, sort_order, generation_run_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [idOf('msg', m.id), thId, pid, m.parentId ? idOf('msg', m.parentId) : null, m.role, m.text, m.role === 'user' ? userId : null, m.id, ts(m.at), k,
+        m.role === 'user' ? null : runId]);
+      if (runId && m.role !== 'user') await db.query('UPDATE generation_runs SET result_message_id = coalesce(result_message_id, $2) WHERE id = $1', [runId, idOf('msg', m.id)]);
     }
     if (!b || bThOrder.get(t.id) !== ti || !same([b.title, b.headId, b.updatedAt], [t.title, t.headId, t.updatedAt])) {
       await db.query('UPDATE threads SET title=$2, head_message_id=$3, updated_at=$4, sort_order=$5, deleted_at=NULL WHERE id=$1', [thId, t.title, t.headId ? idOf('msg', t.headId) : null, ts(t.updatedAt), ti]);
@@ -357,7 +365,7 @@ export function createProjectStore(pool) {
       return r ? r.project : null;
     },
 
-    async update(pid, fn, { userId = null } = {}) {
+    async update(pid, fn, { userId = null, runId = null } = {}) {
       const c = await pool.connect();
       try {
         await c.query('BEGIN');
@@ -365,7 +373,7 @@ export function createProjectStore(pool) {
         if (!loaded) { await c.query('ROLLBACK'); return { ok: false, error: '프로젝트를 찾을 수 없습니다' }; }
         const before = structuredClone(loaded.project);
         const r = fn(loaded.project);
-        await saveAggregate(c, pid, before, loaded.project, loaded.maps, { userId });
+        await saveAggregate(c, pid, before, loaded.project, loaded.maps, { userId, runId });
         await c.query('COMMIT');
         return r === undefined ? { ok: true } : r;
       } catch (e) {

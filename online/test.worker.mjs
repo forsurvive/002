@@ -58,6 +58,12 @@ export async function run({ pool, ok, eq }) {
     ok('생성 기록이 작업과 사람에 이어진다(실패 한 번 + 성공 한 번)', runs.length === 2 && runs[1].status === 'succeeded' && runs[1].requested_by === u.id);
     const by = (await pool.query("SELECT v.created_by FROM document_versions v JOIN documents d ON d.id = v.document_id WHERE d.legacy_id = $1 ORDER BY v.seq DESC LIMIT 1", [doc])).rows[0];
     eq('새 판은 맡긴 사람의 이름으로', by.created_by, u.id);
+    const link = (await pool.query(`SELECT v.id, v.source, v.generation_run_id, r.id AS run, r.result_version_id FROM document_versions v JOIN documents d ON d.id = v.document_id
+      JOIN generation_runs r ON r.job_id = $2 AND r.status = 'succeeded' WHERE d.legacy_id = $1 ORDER BY v.seq DESC LIMIT 1`, [doc, j0])).rows[0];
+    ok('**AI 가 쓴 판은 source=ai · 그 생성 기록을 가리키고, 기록도 그 판을 가리킨다**', link.source === 'ai' && link.generation_run_id === link.run && link.result_version_id === link.id, JSON.stringify(link));
+    await op('doc.write', { pid, id: doc, body: '내가 고친 글' });
+    const mine = (await pool.query(`SELECT v.source, v.generation_run_id FROM document_versions v JOIN documents d ON d.id = v.document_id WHERE d.legacy_id = $1 ORDER BY v.seq DESC LIMIT 1`, [doc])).rows[0];
+    ok('사람이 고친 판은 source=user · 기록 없음', mine.source === 'user' && !mine.generation_run_id);
 
     // 두 번째 갱신 — 앞 본문은 판으로 남는다(덮어쓰지 않는다)
     behave = async () => success({ text: '고친 글' });
@@ -94,6 +100,9 @@ export async function run({ pool, ok, eq }) {
     await until(pid, jt, (j) => j.status === 'done');
     const t1 = (await state(pid)).threads.find((t) => t.id === th);
     ok('답이 그 말 밑에 · 말은 한 번만', t1.messages.length === 2 && t1.messages[1].role === 'assistant' && t1.messages[1].text === '답: ok' && t1.messages[1].parentId === t1.messages[0].id);
+    const msgs = (await pool.query(`SELECT role, generation_run_id FROM thread_messages WHERE legacy_id = ANY($1) ORDER BY sort_order`, [t1.messages.map((m) => m.id)])).rows;
+    ok('AI 답은 그 생성 기록을 가리킨다(사람 말은 아니다)', msgs.length === 2 && !msgs[0].generation_run_id && !!msgs[1].generation_run_id, JSON.stringify(msgs));
+    ok('생성 기록도 그 답을 가리킨다', !!(await pool.query('SELECT result_message_id FROM generation_runs WHERE id = $1', [msgs[1].generation_run_id])).rows[0].result_message_id);
 
     // ---------------- 취소 — 진행 중 호출을 끊고 글은 그대로
     behave = (input) => new Promise((resolve) => {
