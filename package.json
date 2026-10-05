@@ -11,7 +11,7 @@
     "migrate": "node online/migrate.mjs",
     "online": "node online/server.mjs",
     "stop": "pkill -f '[o]nline/start.mjs' ; pkill -f '[t]ools/server.mjs' ; echo 'Stopped - press Run to start again'",
-    "update": "pkill -f '[o]nline/start.mjs' ; pkill -f '[t]ools/server.mjs' ; git pull origin claude/charming-keller-12p0c5 && echo 'Updated - press Run to start'",
+    "update": "pkill -f '[o]nline/start.mjs' ; pkill -f '[t]ools/server.mjs' ; git fetch origin claude/charming-keller-12p0c5 && (git stash -u -q || true) && git checkout -q -B claude/charming-keller-12p0c5 origin/claude/charming-keller-12p0c5 && echo \"Updated to $(git log --oneline -1) - press Run to start\"",
     "key": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"",
     "worker": "node online/worker-main.mjs"
   },

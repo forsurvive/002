@@ -158,7 +158,7 @@ async function handle(plan, req, res) {
       const file = join(WEB, rel);
       if (!file.startsWith(WEB) || !existsSync(file)) return send(res, 404, '없음', 'text/plain; charset=utf-8');
       const buf = await readFile(file);
-      return send(res, 200, buf, TYPES[extname(file)] || 'application/octet-stream');
+      return send(res, 200, buf, TYPES[extname(file)] || 'application/octet-stream', { 'cache-control': 'no-cache' });   // 새로 받은 화면이 곧바로 보이게
     }
     send(res, 405, '', 'text/plain');
   } catch (e) {

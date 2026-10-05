@@ -227,7 +227,8 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
     const file = join(WEB, normalize(rel).replace(/^[\\/]+/, ''));
     if (!file.startsWith(WEB) || !existsSync(file)) return send(res, 404, '없음', 'text/plain; charset=utf-8');
     const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
-    return send(res, 200, await readFile(file), TYPES[extname(file)] || 'application/octet-stream');
+    // 화면 파일은 매번 새로 확인하게 — 고쳐 올린 뒤 옛 화면(캐시)이 남지 않게
+    return send(res, 200, await readFile(file), TYPES[extname(file)] || 'application/octet-stream', { 'cache-control': 'no-cache' });
   };
 
   // ---------------- 출입 열쇠(스테이징) — 쿠키 값은 열쇠에서 뽑은 지문(열쇠 원문은 쿠키에 없다)
