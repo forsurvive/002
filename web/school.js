@@ -227,9 +227,10 @@ function orgBox(id) {
         onclick: async () => { await edu('org.settings', { orgId: id, studentCards: !!(org.settings && org.settings.student_cards === false) }); await load(); } })),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '단계 · 강의 카드 고쳐 쓰기(이 기관)' }),
     wfEditor(id),
+    // 학생 작품 열람 — 최상위 관리자만 바꾼다. 기관 관리자는 지금 상태만 본다.
     h('div', { class: 'line', style: 'margin-top:16px' },
-      h('div', { class: 'lab', style: 'margin:0', text: '기관 관리자가 학생 작품을 읽을 수 있게' }),
-      h('button', { class: 'tg' + (readable ? ' on' : ''), onclick: async () => { await edu('org.settings', { orgId: id, adminCanReadProjects: !readable }); await load(); } })));
+      h('div', { class: 'lab', style: 'margin:0', text: '기관 관리자가 학생 작품을 읽을 수 있게' + (S.me && S.me.platformAdmin ? '' : ' — ' + (readable ? '켜짐' : '꺼짐') + '(최상위 관리자가 정함)') }),
+      S.me && S.me.platformAdmin ? h('button', { class: 'tg' + (readable ? ' on' : ''), onclick: async () => { await edu('org.settings', { orgId: id, adminCanReadProjects: !readable }); await load(); } }) : null));
 }
 
 // ---------------------------------------------------------------- 사람(기관 관리자) — 한 사람 한 계정

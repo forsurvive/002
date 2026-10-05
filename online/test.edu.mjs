@@ -136,7 +136,8 @@ export async function run({ pool, ok, eq }) {
 
     // ---------------- 기관 설정 · 감사 로그
     eq('학생은 기관 설정을 못 고친다', (await edu('edu-s1', 'org.settings', { orgId: org.id, adminCanReadProjects: true })).status, 404);
-    ok('기관 관리자는 «작품 열람» 정책을 켠다', (await edu('edu-oa', 'org.settings', { orgId: org.id, adminCanReadProjects: true })).settings.admin_can_read_projects === true);
+    eq('**기관 관리자는 «작품 열람» 정책을 스스로 켜지 못한다(최상위 관리자만)**', (await edu('edu-oa', 'org.settings', { orgId: org.id, adminCanReadProjects: true })).status, 403);
+    ok('최상위 관리자가 «작품 열람» 정책을 켠다', (await edu('edu-root', 'org.settings', { orgId: org.id, adminCanReadProjects: true })).settings.admin_can_read_projects === true);
     const acts = new Set((await pool.query('SELECT action FROM audit_logs WHERE organization_id = $1', [org.id])).rows.map((r) => r.action));
     ok('감사 로그(기관 · 라이선스 · 수업 · 초대 · 수락 · 키 · 설정)', ['org.create', 'license.issue', 'class.create', 'invite.create', 'invite.accept', 'credential.set', 'org.settings', 'class.archive'].every((a) => acts.has(a)), [...acts].join(','));
     // ---------------- 사용량 — 비용을 내는 쪽만

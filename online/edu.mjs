@@ -85,7 +85,11 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
       if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
       // 고칠 수 있는 칸만(기관 관리자의 작품 열람 — 기본 꺼짐)
       const patch = {};
-      if (typeof b.adminCanReadProjects === 'boolean') patch.admin_can_read_projects = b.adminCanReadProjects;
+      // 학생 작품 열람은 최상위 관리자만 켜고 끈다(2026-10-05 사용자 결정 — 기관 관리자가 스스로 열지 못하게)
+      if (typeof b.adminCanReadProjects === 'boolean') {
+        if (!user.isPlatformAdmin) return no(403, '학생 작품 열람은 최상위 관리자만 정합니다', 'forbidden');
+        patch.admin_can_read_projects = b.adminCanReadProjects;
+      }
       // 학생에게 작업 중 강의 카드를 보이는가(기본 켬)
       if (typeof b.studentCards === 'boolean') patch.student_cards = b.studentCards;
       const o = await one('UPDATE organizations SET settings = settings || $2::jsonb, updated_at = now() WHERE id = $1 RETURNING settings', [b.orgId, JSON.stringify(patch)]);
