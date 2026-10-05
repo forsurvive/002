@@ -12,7 +12,8 @@
     "online": "node online/server.mjs",
     "stop": "pkill -f '[o]nline/start.mjs' ; pkill -f '[t]ools/server.mjs' ; echo 'Stopped - press Run to start again'",
     "update": "pkill -f '[o]nline/start.mjs' ; pkill -f '[t]ools/server.mjs' ; git pull origin claude/charming-keller-12p0c5 && echo 'Updated - press Run to start'",
-    "key": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\""
+    "key": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"",
+    "worker": "node online/worker-main.mjs"
   },
   "dependencies": {
     "pg": "^8.23.1"

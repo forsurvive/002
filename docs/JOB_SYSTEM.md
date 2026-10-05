@@ -4,7 +4,7 @@
 > 개인판의 작업 실행기(`tools/jobs.mjs`)는 그대로 남는다.
 >
 > 구현에서 정한 것(설계와 다른 점 포함):
-> - **웹과 worker 를 한 프로세스에** 둔다(파일럿 — VM 하나). 웹이 작업을 넣으면 `worker.wake()` 로 곧바로 깨운다. `SE_WORKER=0` 이면 웹만 뜬다(worker 를 따로 띄울 때 — 그때는 깨우기를 LISTEN/NOTIFY 로 바꾼다).
+> - **웹과 worker 를 한 프로세스에** 둔다(파일럿 — VM 하나). 웹이 작업을 넣으면 `worker.wake()` 로 곧바로 깨운다. `SE_WORKER=0` 이면 웹만 뜬다. worker 만 따로 띄우려면 `npm run worker`(`online/worker-main.mjs`) — 웹이 깨워 주지 못하므로 `WORKER_POLL_MS`(기본 2초)마다 줄을 다시 본다(여러 대로 늘면 LISTEN/NOTIFY 로 바꾼다).
 > - 일시중지는 `ctx.gate()`(다음 호출 앞)에서 작업을 **내려놓는다**(worker 를 붙잡지 않음). 이어 하면 다시 돌되, **합평 패널은 체크포인트**(`jobs.checkpoint = { panel: { docId, heard:[{agentId,text}] } }`)로 이미 들은 평을 다시 부르지 않는다. 에이전트 준비는 지어 둔 자리를 프로젝트에 바로 저장하므로 체크포인트 없이 건너뛴다. 갱신 · 논의 · 정리는 호출이 하나라 처음부터.
 > - 논의(talk)는 **작가의 말을 작업 앞에 저장**하고 `askedId` 로 답만 단다(재시도 · 이어 하기에도 말이 한 번).
 > - 키가 없으면(`credential`) 실패가 아니라 `waiting_for_user` — 화면에 «AI 연결이 필요합니다», 키를 넣고 [기다렸다 잇기] 하면 잇는다.

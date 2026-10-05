@@ -135,7 +135,7 @@ export function createWorker({ queue, store, call, prepare = null, allowed = nul
   function arm() {
     if (stopped) return;
     clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => { queue.reap().catch(() => {}).finally(() => tick()); }, running.size ? leaseMs : idleMs);
+    idleTimer = setTimeout(() => { queue.reap().catch(() => {}).finally(() => tick()); }, running.size ? Math.min(leaseMs, idleMs) : idleMs);
   }
 
   return {
