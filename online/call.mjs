@@ -54,11 +54,13 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
     const tdoc = await ids(pid, 'documents', target);
     const thread = ctx.threadId ? await ids(pid, 'threads', ctx.threadId) : null;
     const run = (await pool.query(
-      `INSERT INTO generation_runs (job_id, project_id, organization_id, requested_by, purpose, prompt_key, prompt_layer, target_document_id, thread_id, request_text, model_source, request_once_text, workflow_stage)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+      `INSERT INTO generation_runs (job_id, project_id, organization_id, requested_by, purpose, prompt_key, prompt_layer, target_document_id, thread_id, request_text, model_source, request_once_text, workflow_stage,
+                                   prompt_checksum, prompt_sha256)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
       [ctx.jobId || null, pid, row.organization_id, ctx.userId || null, String(code || ''), String(code || ''),
         project.prompts && project.prompts[code] ? 'override' : project.agents && project.agents[code] ? 'generated' : 'builtin',
-        tdoc ? tdoc.id : null, thread ? thread.id : null, String(request || ''), String(modelSource || ''), String(requestOnce || ''), String(stageKey || '')])).rows[0].id;
+        tdoc ? tdoc.id : null, thread ? thread.id : null, String(request || ''), String(modelSource || ''), String(requestOnce || ''), String(stageKey || ''),
+        sha(systemPrompt || ''), sha(String(systemPrompt || '') + '\n\n' + String(userPrompt || ''))])).rows[0].id;
     for (const [i, x] of inputs.entries()) {
       const d = x.id ? await ids(pid, 'documents', x.id) : null;
       await pool.query(

@@ -72,6 +72,11 @@ export async function run({ pool, ok, eq }) {
   const cur = (await pool.query('SELECT d.current_version_id, v.body FROM documents d JOIN document_versions v ON v.id = d.current_version_id WHERE d.legacy_id = $1', [d1])).rows[0];
   const fin = inputs.find((x) => x.role === 'final');
   ok('**참조 스냅샷: 확정본이 «그때의 판»으로 남는다**', fin && fin.document_version_id === cur.current_version_id && fin.content_sha256 === sha(cur.body) && fin.title === '세계관', JSON.stringify(inputs.map((x) => x.role)));
+  {
+    const h = (await pool.query('SELECT prompt_checksum, prompt_sha256 FROM generation_runs WHERE id = $1', [r.runId])).rows[0];
+    ok('생성 기록에 보낸 프롬프트의 지문(시스템 · 전체 — 원문은 남기지 않는다)', /^[0-9a-f]{64}$/.test(h.prompt_checksum) && /^[0-9a-f]{64}$/.test(h.prompt_sha256) && h.prompt_checksum !== h.prompt_sha256
+      && h.prompt_sha256 === sha(got.systemPrompt + '\n\n' + got.userPrompt), JSON.stringify(h));
+  }
   ok('**기록 어디에도 키 원문이 없다**', !JSON.stringify((await pool.query('SELECT * FROM generation_runs')).rows).includes(FAKE_KEY)
     && !JSON.stringify((await pool.query('SELECT * FROM generation_run_inputs')).rows).includes(FAKE_KEY));
 
