@@ -28,6 +28,19 @@ export async function run({ pool, ok, eq }) {
   const body = { loginId: 'owner', password: 'long-enough-owner', displayName: '주인', apiKey: FAKE_KEY };
   const post = (base, path, b, headers = {}) => fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(b) });
 
+  // ---------------- 설정 코드를 Secrets 로 정하기(플랫폼 로그가 안 보일 때) — 짧으면 무시, 값은 콘솔에 찍지 않는다
+  {
+    const mine = 'my-own-setup-code-2026';
+    const pl = onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_SETUP_CODE: mine });
+    ok('SE2_SETUP_CODE(12자 이상)를 설정 코드로 쓴다', pl.setupCode === 'MYOWNSETUPCODE2026');
+    ok('짧은 값은 쓰지 않고 알린다', onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_SETUP_CODE: 'short' }).setupCode === ''
+      && onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_SETUP_CODE: 'short' }).notes.some((n) => n.includes('SE2_SETUP_CODE')));
+    const { srv, base } = await serve(pool, pl, credentials);
+    eq('**정한 코드가 아니면 거절**', (await post(base, '/api/setup', { ...body, setupCode: 'AAAA-BBBB-CCCC' })).status, 403);
+    ok('정한 코드를 쓰는 서버라고 표시(값은 찍지 않는다)', srv.setupFixed === true);
+    srv.close();
+  }
+
   // ---------------- 바깥에 열면 출입 열쇠 없이 계정으로만 — 처음 설정은 서버 콘솔의 «설정 코드»가 있어야(낯선 사람이 먼저 차지하지 못하게)
   {
     ok('**온라인판은 SE2_ACCESS_KEY 가 있어도 출입 열쇠를 세우지 않는다(SE2_ONLINE_GATE=1 일 때만)**', !onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_ACCESS_KEY: 'k'.repeat(24) }).gate

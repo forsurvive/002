@@ -155,7 +155,7 @@ function mainForms() {
 
 const setupForm = (ai, code) => h('form', { onsubmit: setup },
   h('div', { class: 'when', text: '처음 설정 — 운영자 계정을 만듭니다. 이 화면은 한 번만 나옵니다.' }),
-  code ? field('설정 코드(서버 콘솔에 찍힌 XXXX-XXXX-XXXX)', 'st-code', 'text', { autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false' }) : null,
+  code ? field('설정 코드(서버 콘솔의 XXXX-XXXX-XXXX 또는 Secrets 의 SE2_SETUP_CODE)', 'st-code', 'text', { autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false' }) : null,
   field('아이디(영문 소문자 · 숫자)', 'st-id', 'text', { autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
   field('이름', 'st-name', 'text'),
   field('비밀번호(10자 이상)', 'st-pw', 'password', { autocomplete: 'new-password' }),

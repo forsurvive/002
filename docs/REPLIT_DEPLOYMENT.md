@@ -130,6 +130,8 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
 4. 게시 설정의 Secrets(«Adjust settings»/«Manage» 안)에 `CREDENTIALS_KEY_V1` = 2 에서 복사한 값. 운영 데이터베이스 설정이 보이면 «Create production database» 켜기 · 개발 데이터 복사는 끈다.
 5. 접근은 **Public**(계정이 문을 지킨다) → **Publish** → 끝나면 `….replit.app` 주소를 연다.
 6. 첫 화면이 «처음 설정»이면: 게시 화면의 **Logs** 에서 `[SETUP] First-run setup code: XXXX-XXXX-XXXX` 를 찾아 넣고 운영자 아이디 · 비밀번호를 정한다(운영용 새 계정).
+   **Logs 가 비어 있으면**(2026-10-05 실제로 겪음): 게시 설정의 Secrets 에 `SE2_SETUP_CODE` = 스스로 정한 글자 · 숫자 12자 이상(예: 문장처럼 긴 것)을 넣고 **Republish** →
+   처음 설정 화면의 «설정 코드»에 그 값을 친다(대소문자 · 띄어쓰기 · `-` 는 가리지 않는다). 계정을 만든 뒤에는 이 Secret 을 지워도 된다(계정이 있으면 처음 설정 화면이 다시 열리지 않는다).
 7. 이후 고칠 때: 작업 공간 `npm run update` → Preview 확인 → **Republish**. 운영 데이터는 그대로다(마이그레이션은 서버가 켤 때 스스로 돈다).
 
 비용: Reserved VM 은 달마다 정액, 운영 데이터베이스는 쓴 만큼(5분 쉬면 계산이 멈춘다). 결제 수단을 물으면 그때 넣는다.

@@ -60,6 +60,11 @@ export function onlinePlan(env = process.env) {
   const gateOn = String(env.SE2_ONLINE_GATE || '') === '1';
   const plan = resolveHosting({ ...env, SE2_ALLOW_OPEN: '1', SE2_ACCESS_KEY: gateOn ? env.SE2_ACCESS_KEY || '' : '' });
   plan.notes = plan.notes.filter((n) => !/SE2_ALLOW_OPEN|saved as files/.test(n));
+  // 처음 설정 코드를 사람이 정할 수도 있다 — 플랫폼 로그를 볼 수 없을 때(Secrets 의 SE2_SETUP_CODE, 글자 · 숫자 12자 이상).
+  // 짧으면 쓰지 않고 지금처럼 켤 때마다 새로 짓는다(값은 어디에도 찍지 않는다).
+  const fixed = String(env.SE2_SETUP_CODE || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  plan.setupCode = fixed.length >= 12 ? fixed : '';
+  if (env.SE2_SETUP_CODE && !plan.setupCode) plan.notes.push('SE2_SETUP_CODE is too short (12+ letters/digits) - ignored');
   return plan;
 }
 
@@ -250,7 +255,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
   // ---------------- 처음 설정 코드 — 바깥에 열었고 계정이 아직 없을 때. 서버를 켠 사람만 콘솔에서 본다(메모리에만, 켤 때마다 새로).
   const CODE_ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const setupCode = plan.exposed && !plan.gate
-    ? Array.from(randomBytes(12), (b, i) => (i && i % 4 === 0 ? '-' : '') + CODE_ABC[b % CODE_ABC.length]).join('') : '';
+    ? plan.setupCode || Array.from(randomBytes(12), (b, i) => (i && i % 4 === 0 ? '-' : '') + CODE_ABC[b % CODE_ABC.length]).join('') : '';
   const norm = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   const setupCodeOk = (c) => {
     if (!setupCode) return false;
@@ -484,7 +489,8 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
   }
 
   const server = createServer((req, res) => { handle(req, res); });
-  server.setupCode = setupCode;   // main() 이 (계정이 없을 때) 콘솔에 찍는다
+  server.setupCode = setupCode;   // main() 이 (계정이 없을 때) 콘솔에 찍는다 — 사람이 정한 코드(SE2_SETUP_CODE)는 찍지 않는다
+  server.setupFixed = !!(setupCode && plan.setupCode);
   return server;
 }
 
@@ -521,7 +527,8 @@ export async function main(env = process.env) {
   for (const n of plan.notes) console.log('  [NOTE] ' + n);
   const users = (await pool.query('SELECT count(*)::int AS n FROM users')).rows[0].n;
   if (!users) console.log('  [NOTE] No account yet - open the app in a browser to finish the first-run setup');
-  if (!users && srv.setupCode) console.log('  [SETUP] First-run setup code: ' + srv.setupCode + '  (type it on the setup screen; a new one each start)');
+  if (!users && srv.setupFixed) console.log('  [SETUP] First-run setup code: the SE2_SETUP_CODE value from Secrets');
+  else if (!users && srv.setupCode) console.log('  [SETUP] First-run setup code: ' + srv.setupCode + '  (type it on the setup screen; a new one each start)');
   const bye = async () => { srv.close(); if (worker) await worker.stop(); pool.end().finally(() => process.exit(0)); };
   process.on('SIGINT', bye); process.on('SIGTERM', bye);
   return srv;
