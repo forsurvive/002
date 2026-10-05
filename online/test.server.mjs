@@ -30,7 +30,7 @@ export async function run({ pool, ok, eq }) {
     // ---------------- 들어오기 전
     eq('살아 있는가는 누구나', (await req('/healthz')).status, 200);
     const home = await req('/');
-    ok('로그인 전 첫 화면은 로그인으로', home.status === 302 && home.headers.get('location') === '/login');
+    ok('로그인 전 첫 화면은 로그인 화면(그 자리에서 200 — 게시 상태 검사)', home.status === 200 && (await home.text()).includes('login.js'));
     const lp = await req('/login');
     ok('로그인 화면', lp.status === 200 && (await lp.text()).includes('login.js'));
     const st0 = await req('/api/state');
