@@ -269,7 +269,7 @@ const limitText = (l) => (l && (l.allowed_providers || l.allowed_model_tiers)
   : '');
 
 // 넣어 둔 키 — 회사 · 끝 네 자리 · 확인 상태, 그리고 [연결 확인] [지우기]
-const KEY_ERR = { auth: '키가 맞지 않음', credit: '잔액 없음', rate: '요청 많음', model: '모델 표 없음', overloaded: '회사 서버 바쁨', timeout: '응답 늦음' };
+const KEY_ERR = { auth: '키가 맞지 않음', credit: '잔액 없음', rate: '요청 많음', model: '모델 표 없음', overloaded: '회사 서버 바쁨', timeout: '응답 늦음', invalid: '요청 거절', other: '서버에 닿지 못함' };
 function keyRows(list, op, extra, reload) {
   const live = (list || []).filter((x) => x.status === 'active' || x.status === 'invalid');
   if (!live.length) return h('div', { class: 'when', text: '아직 없습니다' });

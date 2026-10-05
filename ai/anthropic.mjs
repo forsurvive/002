@@ -8,7 +8,7 @@
 // 요청/응답 모양은 공식 문서(Messages API)를 따랐다 — 바뀌면 이 파일과 시험만 고친다.
 
 import { success, failure, usageOf } from './provider.mjs';
-import { sseEvents, retryAfterOf, SAY } from './http.mjs';
+import { sseEvents, retryAfterOf, netDetail, SAY } from './http.mjs';
 
 export const ANTHROPIC_VERSION = '2023-06-01';
 export const DEFAULT_MAX_OUTPUT = 32000;
@@ -64,7 +64,8 @@ export function createAnthropicProvider({ baseUrl = 'https://api.anthropic.com',
           let err = {};
           try { err = ((await res.json()) || {}).error || {}; } catch { /* 본문이 JSON 이 아님 */ }
           const reason = reasonOf(res.status, err.type, err.message);
-          return done(failure(reason, SAY[reason], { providerRequestId: requestId, retryAfterMs: retryAfterOf(res) }));
+          // detail — 상태 번호와 오류 종류만(원문 문구는 싣지 않는다). 연결 시험에서 까닭을 가리는 데 쓴다.
+          return done(failure(reason, SAY[reason], { providerRequestId: requestId, retryAfterMs: retryAfterOf(res), detail: ('HTTP ' + res.status + ' ' + String(err.type || '').replace(/[^A-Za-z_]/g, '')).trim() }));
         }
 
         let text = '';
@@ -89,10 +90,10 @@ export function createAnthropicProvider({ baseUrl = 'https://api.anthropic.com',
         if (stop === 'refusal') return done(failure('safety', SAY.safety, meta));
         if (!text.trim()) return done(failure('empty', SAY.empty, meta));
         return done(success({ ...meta, text, finishReason: stop === 'max_tokens' ? 'length' : 'stop' }));
-      } catch {
+      } catch (e) {
         if (timedOut) return done(failure('timeout', SAY.timeout));
         if (signal && signal.aborted) return done(failure('stopped', SAY.stopped));
-        return done(failure('other', SAY.other));   // 연결 끊김 등 — 원문은 싣지 않는다
+        return done(failure('other', SAY.other, { detail: netDetail(e) }));   // 연결 끊김 등 — 원문은 싣지 않는다
       } finally {
         clearTimeout(timer);
         if (signal) signal.removeEventListener('abort', onAbort);
@@ -102,7 +103,8 @@ export function createAnthropicProvider({ baseUrl = 'https://api.anthropic.com',
     // 연결 시험 — 가장 작은 호출 하나. 키는 돌려주지 않는다.
     async validateCredential(credential, { model } = {}) {
       const r = await this.generate({ model, userPrompt: '.', credential, maxOutputTokens: 1 });
-      return { ok: r.ok || r.reason === 'empty', reason: r.ok ? '' : r.reason === 'empty' ? '' : r.reason, error: r.ok || r.reason === 'empty' ? '' : r.error };
+      const fine = r.ok || r.reason === 'empty';
+      return { ok: fine, reason: fine ? '' : r.reason, error: fine ? '' : r.error, detail: fine ? '' : (r.detail || '') };
     },
   };
 }

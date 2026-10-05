@@ -97,7 +97,7 @@ export function createOpenAIProvider({ baseUrl = 'https://api.openai.com', fetch
     async validateCredential(credential, { model } = {}) {
       const r = await this.generate({ model, userPrompt: '.', credential, maxOutputTokens: 16 });
       const fine = r.ok || r.reason === 'empty';
-      return { ok: fine, reason: fine ? '' : r.reason, error: fine ? '' : r.error };
+      return { ok: fine, reason: fine ? '' : r.reason, error: fine ? '' : r.error, detail: fine ? '' : (r.detail || '') };
     },
   };
 }

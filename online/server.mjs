@@ -521,7 +521,7 @@ export async function main(env = process.env) {
     if (r.applied.length) console.log('  Migrations   : applied ' + r.applied.join(', '));
   }
   // AI — 카탈로그 · 자격증명 · 어댑터. 모자란 것이 있어도 서버는 선다(작업이 «연결 필요»·«모델 없음»으로 멈춘다).
-  const ai = buildAi(pool, env);
+  const ai = buildAi(pool, env, { log: (m) => console.log('  [ai] ' + m) });
   for (const p of ai.problems) console.log('  [NOTE] ' + p);
   const queue = createJobQueue(pool);
   const store = createProjectStore(pool);

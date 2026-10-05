@@ -27,18 +27,18 @@ export function loadCatalog(file = MODELS_FILE) {
   }
 }
 
-export function buildAi(pool, env = process.env, { providers = { anthropic: anthropicProvider, openai: openaiProvider, google: geminiProvider }, file } = {}) {
+export function buildAi(pool, env = process.env, { providers = { anthropic: anthropicProvider, openai: openaiProvider, google: geminiProvider }, file, log } = {}) {
   const { catalog, aliasTiers, problems } = loadCatalog(file);
   const keys = keysFromEnv(env);
   if (!keys.current) problems.push('CREDENTIALS_KEY_V1 is not set - stored AI keys cannot be opened');
   problems.push(...keys.problems);
   const credentials = createCredentialService({ store: pgCredentialStore(pool), keys });
-  return { generator: createProviderRouter({ catalog, credentials, providers }), credentials, catalog, aliasTiers, problems, keyTester: createKeyTester({ catalog, credentials, providers }) };
+  return { generator: createProviderRouter({ catalog, credentials, providers }), credentials, catalog, aliasTiers, problems, keyTester: createKeyTester({ catalog, credentials, providers, log }) };
 }
 
 // 키 연결 시험 — 그 회사의 가장 싼 등급(fast, 없으면 balanced)으로 아주 짧게 한 번 부른다. 결과는 키 행에 적는다(markVerified).
 // owner = { ownerUserId } | { organizationId } — credentials.resolve 가 비용 주체를 가리는 꼴 그대로. 키 원문은 이 함수 밖으로 나가지 않는다.
-export function createKeyTester({ catalog, credentials, providers }) {
+export function createKeyTester({ catalog, credentials, providers, log = () => {} }) {
   return async (owner, provider) => {
     const adapter = providers[provider];
     const entry = catalog.resolve(provider, 'fast') || catalog.resolve(provider, 'balanced');
@@ -47,6 +47,8 @@ export function createKeyTester({ catalog, credentials, providers }) {
     if (!cred.ok) return { ok: false, reason: cred.reason };
     const r = await adapter.validateCredential(cred.credential, { model: entry.modelId });
     await credentials.markVerified(cred.credentialId, { ok: r.ok, reason: r.reason || '' });
-    return { ok: !!r.ok, reason: r.reason || '' };
+    // 운영 로그에는 회사 · 갈래 · 상태 번호만(키 · 원문 없음) — «왜 안 붙나»를 Console 에서 가릴 수 있게
+    if (!r.ok) log('key test ' + provider + ' ' + entry.modelId + ': ' + (r.reason || 'other') + (r.detail ? ' (' + r.detail + ')' : ''));
+    return { ok: !!r.ok, reason: r.reason || '', detail: r.detail || '' };
   };
 }

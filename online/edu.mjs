@@ -580,7 +580,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       const provider = b.provider || 'anthropic';
       if (!PROVIDER_IDS.includes(provider)) return no(422, '모르는 AI 회사입니다', 'validation');
       const r = await credentials.set({ ownerType: 'user', ownerId: user.id, provider, apiKey: b.apiKey, createdBy: user.id });
-      if (!r.ok) return no(422, '키를 저장하지 못했습니다', 'validation');
+      if (!r.ok) return no(422, KEY_BAD[r.error] || '키를 저장하지 못했습니다', 'validation');
       await log(user, null, 'credential.set', 'user', user.id, { provider, ownerType: 'user', credentialId: r.credential.id }, ip);
       return ok({ credential: r.credential, aiProvider: await settleDefault('user', user.id) });
     },
@@ -644,7 +644,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
       if (!PROVIDER_IDS.includes(b.provider)) return no(422, '모르는 AI 회사입니다', 'validation');
       const r = await credentials.set({ ownerType: 'organization', ownerId: b.orgId, provider: b.provider, apiKey: b.apiKey, createdBy: user.id });
-      if (!r.ok) return no(422, '키를 저장하지 못했습니다', 'validation');
+      if (!r.ok) return no(422, KEY_BAD[r.error] || '키를 저장하지 못했습니다', 'validation');
       await log(user, b.orgId, 'credential.set', 'organization', b.orgId, { provider: b.provider, ownerType: 'organization', credentialId: r.credential.id }, ip);
       return ok({ credential: r.credential, aiProvider: await settleDefault('organization', b.orgId) });
     },
@@ -655,12 +655,14 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     },
   };
 
-  const KEY_SAY = { auth: '키가 맞지 않습니다', credit: '잔액(크레딧)이 없습니다', rate: '잠시 뒤에 다시 해 보세요(요청이 많습니다)', model: '이 회사의 모델 표가 없습니다', credential_missing: '넣어 둔 키가 없습니다', credential_unreadable: '키를 열 수 없습니다(마스터 키가 바뀌었나요?)', overloaded: '그 회사 서버가 바쁩니다 — 잠시 뒤에', timeout: '응답이 늦습니다 — 잠시 뒤에' };
+  const KEY_BAD = { key: '키가 너무 짧습니다', key_chars: '키에 쓸 수 없는 글자가 섞였습니다 — 키만 다시 복사해 넣어 주세요' };
+  const KEY_SAY = { auth: '키가 맞지 않습니다', credit: '잔액(크레딧)이 없습니다', rate: '잠시 뒤에 다시 해 보세요(요청이 많습니다)', model: '이 회사의 모델 표가 없습니다', credential_missing: '넣어 둔 키가 없습니다', credential_unreadable: '키를 열 수 없습니다(마스터 키가 바뀌었나요?)', overloaded: '그 회사 서버가 바쁩니다 — 잠시 뒤에', timeout: '응답이 늦습니다 — 잠시 뒤에', invalid: '그 회사가 요청을 받지 않았습니다', other: '그 회사 서버에 닿지 못했습니다' };
   async function testKey(owner, provider) {
     if (!credentials || !keyTester) return no(503, '지금은 확인할 수 없습니다', 'unavailable');
     if (!PROVIDER_IDS.includes(provider)) return no(422, '모르는 AI 회사입니다', 'validation');
     const r = await keyTester(owner, provider);
-    return ok({ verified: !!r.ok, reason: r.reason || '', say: r.ok ? '연결됩니다' : (KEY_SAY[r.reason] || '연결되지 않습니다') });
+    // detail 은 상태 번호 · 오류 종류뿐(키 · 원문 없음) — 키를 넣은 사람이 회사 쪽 안내와 맞춰 볼 수 있게 붙인다
+    return ok({ verified: !!r.ok, reason: r.reason || '', say: r.ok ? '연결됩니다' : (KEY_SAY[r.reason] || '연결되지 않습니다') + (r.detail ? ' (' + r.detail + ')' : '') });
   }
   async function revokeKey(user, ownerType, ownerId, orgId, provider, ip) {
     if (!credentials) return no(503, '지금은 할 수 없습니다', 'unavailable');

@@ -40,6 +40,9 @@ export const retryAfterOf = (res) => {
   return Number.isFinite(v) && v > 0 ? v * 1000 : 0;
 };
 
+// 연결 실패의 갈래 이름만(오류 이름 · 원인 코드) — 원문 문구에는 주소 · 헤더 값이 섞일 수 있어 싣지 않는다.
+export const netDetail = (e) => [e && e.name, e && e.cause && e.cause.code].filter((x) => x && /^[A-Za-z0-9_]+$/.test(String(x))).join(' ') || 'network';
+
 export const headerOf = (res, name) => (res && res.headers && res.headers.get && res.headers.get(name)) || '';
 
 // 화면으로 올리는 문구는 갈래마다 고정 — provider 원문(원고 · 키가 섞일 수 있음)을 싣지 않는다.

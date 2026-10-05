@@ -3,7 +3,8 @@
 //
 // Provider = { id, generate(input) → GenerateResult, validateCredential?(credential) }
 //   input  = { model, systemPrompt, userPrompt, credential?, maxOutputTokens?, temperature?, signal?, timeoutMs?, metadata? }
-//   result = { ok, text, usage, costUsd, costSource, providerRequestId, finishReason, reason, error, retryAfterMs, limit, elapsedMs }
+//   result = { ok, text, usage, costUsd, costSource, providerRequestId, finishReason, reason, error, detail, retryAfterMs, limit, elapsedMs }
+//   detail = 상태 번호 · 오류 종류(ASCII, 원문 · 키 없음) — 연결 시험의 까닭 가리기용
 // **generate 는 절대 throw 하지 않는다** — 모든 실패는 { ok:false, reason } 로 돌아온다(지금 call.mjs 의 약속 그대로).
 // credential 은 로그 · 오류 문구 · 결과 어디에도 싣지 않는다.
 
@@ -42,7 +43,7 @@ export function estimateCost(usage, price) {
     + per(u.cacheReadTokens, price.cacheReadPerMTok) + per(u.cacheWriteTokens, price.cacheWritePerMTok);
 }
 
-const BASE = { ok: false, text: '', usage: usageOf(), costUsd: null, costSource: 'none', providerRequestId: '', finishReason: '', reason: '', error: '', retryAfterMs: 0, limit: null, elapsedMs: 0 };
+const BASE = { ok: false, text: '', usage: usageOf(), costUsd: null, costSource: 'none', providerRequestId: '', finishReason: '', reason: '', error: '', detail: '', retryAfterMs: 0, limit: null, elapsedMs: 0 };
 
 export function success(fields = {}) {
   return { ...BASE, ...fields, ok: true, usage: usageOf(fields.usage), reason: '', error: '' };

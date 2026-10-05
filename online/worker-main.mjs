@@ -17,7 +17,7 @@ import { guardConsole } from './log.mjs';
 export async function startWorker(env = process.env, { log = (m) => console.log(m) } = {}) {
   if (!env.DATABASE_URL) { log('  [STOP] DATABASE_URL is not set'); return null; }
   const pool = createPool(env.DATABASE_URL);
-  const ai = buildAi(pool, env);
+  const ai = buildAi(pool, env, { log: (m) => console.log('  [ai] ' + m) });
   for (const p of ai.problems) log('  [NOTE] ' + p);
   const queue = createJobQueue(pool);
   const store = createProjectStore(pool);

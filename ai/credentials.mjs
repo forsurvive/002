@@ -58,6 +58,9 @@ export function ownerOf(project, { managedAi = false } = {}) {
   return { ownerType: 'user', ownerId: String((project && project.ownerUserId) || '') };
 }
 
+// 붙여 넣을 때 섞이는 것 — 공백 · 줄바꿈 · 보이지 않는 글자 · 둘러싼 따옴표 — 를 걷는다. 키에는 원래 없는 글자들이다.
+export const cleanKey = (k) => String(k || '').replace(/[\s\u200B-\u200D\u2060\uFEFF]/g, '').replace(/^["'`]+|["'`]+$/g, '');
+
 const hintOf = (k) => (String(k).length >= 8 ? '…' + String(k).slice(-4) : '…');
 
 // 화면에 내보내는 꼴 — 원문은 절대 싣지 않는다
@@ -94,8 +97,9 @@ export function createCredentialService({ store, keys }) {
     async set({ ownerType, ownerId = '', provider, apiKey, label = '', createdBy = '' }) {
       if (!OWNERS.includes(ownerType)) return { ok: false, error: 'owner' };
       if (!PROVIDER_IDS.includes(provider)) return { ok: false, error: 'provider' };
-      const key = String(apiKey || '').trim();
+      const key = cleanKey(apiKey);
       if (key.length < 8) return { ok: false, error: 'key' };
+      if (!/^[\x21-\x7e]+$/.test(key)) return { ok: false, error: 'key_chars' };   // 헤더에 실을 수 없는 글자 — 부르는 순간 끊긴다
       const old = await store.findActive(ownerType, String(ownerId), provider);
       const id = newCredId();
       const sealed = seal(key, keys, { ownerType, ownerId: String(ownerId), provider, id });
@@ -112,7 +116,7 @@ export function createCredentialService({ store, keys }) {
       const row = await store.findActive(ownerType, ownerId, provider);
       if (!row) return { ok: false, reason: 'credential_missing', ownerType, ownerId };
       try {
-        const apiKey = open(row.sealed, keys, { ownerType, ownerId, provider, id: row.id });
+        const apiKey = cleanKey(open(row.sealed, keys, { ownerType, ownerId, provider, id: row.id }));   // 앞서 섞여 들어온 줄바꿈도 걷는다
         return { ok: true, credential: { apiKey }, credentialId: row.id, ownerType, ownerId };
       } catch {
         return { ok: false, reason: 'credential_unreadable', ownerType, ownerId };

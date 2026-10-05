@@ -2312,6 +2312,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   mode = 'over'; eq('과부하는 overloaded', (await ask()).reason, 'overloaded');
   mode = 'credit'; eq('잔액 부족은 credit', (await ask()).reason, 'credit');
   mode = 'model'; eq('없는 모델은 model', (await ask()).reason, 'model');
+  mode = 'auth'; let vc = await anth.validateCredential({ apiKey: FAKE_KEY }, { model: 'm' });
+  ok('연결 시험 실패는 상태 번호 · 오류 종류만 남긴다(키 · 원문 없음)', !vc.ok && vc.reason === 'auth' && /^HTTP 401 authentication_error$/.test(vc.detail) && !JSON.stringify(vc).includes(FAKE_KEY), JSON.stringify(vc));
+  vc = await anth.validateCredential({ apiKey: 'sk-ant-\u20ac' + 'x'.repeat(20) }, { model: 'm' });
+  ok('헤더에 실을 수 없는 키는 throw 없이 other + 갈래 이름', !vc.ok && vc.reason === 'other' && /^[A-Za-z0-9_ ]+$/.test(vc.detail), JSON.stringify(vc));
   mode = 'cut'; eq('연결이 끊기면 other — throw 하지 않는다', (await ask()).reason, 'other');
   mode = 'slow'; eq('시간을 넘기면 timeout', (await ask({ timeoutMs: 1000 })).reason, 'timeout');
   const stopper = new AbortController(); setTimeout(() => stopper.abort(), 100);
@@ -2451,6 +2455,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const rUser = await creds.resolve({ ownerUserId: 'u_1' }, 'anthropic');
   ok('**개인 프로젝트는 본인 키로**', rUser.ok && rUser.credential.apiKey === USER_KEY && rUser.ownerType === 'user');
   eq('다른 기관의 키로는 열리지 않는다', (await creds.resolve({ organizationId: 'org_B' }, 'anthropic')).reason, 'credential_missing');
+  // 붙여 넣을 때 섞인 줄바꿈 · 공백 · 보이지 않는 글자 · 따옴표는 걷고, 그래도 남은 비ASCII 는 받지 않는다
+  await creds.set({ ownerType: 'user', ownerId: 'u_paste', provider: 'google', apiKey: ' "sk-paste-\u200b' + 'p'.repeat(20) + '\n" ' });
+  eq('붙여 넣은 키의 군더더기를 걷는다', (await creds.resolve({ ownerUserId: 'u_paste' }, 'google')).credential.apiKey, 'sk-paste-' + 'p'.repeat(20));
+  eq('키에 한글 등이 섞이면 저장하지 않는다', (await creds.set({ ownerType: 'user', ownerId: 'u_paste', provider: 'openai', apiKey: 'sk-키' + 'q'.repeat(20) })).error, 'key_chars');
   eq('연결하지 않은 provider 는 «연결 필요»', (await creds.resolve({ ownerUserId: 'u_1' }, 'openai')).reason, 'credential_missing');
   // 행을 바꿔치기하면(다른 소유자의 행에 남의 봉인을 옮겨 붙이면) 열리지 않는다
   const orgRow = cstore._rows.find((r) => r.ownerType === 'organization');
