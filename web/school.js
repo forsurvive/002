@@ -324,7 +324,7 @@ h('div', { class: 'when', style: 'margin-top:6px', text: '금액은 모델 가�
 
 const ACT = {
   'org.create': '기관 만듦', 'org.settings': '기관 설정', 'org.status': '기관 상태', 'license.issue': '이용 기간 엶', 'license.status': '이용 기간 상태',
-  'license.limits': '쓸 수 있는 범위', 'class.create': '수업 만듦', 'class.dates': '수업 기간', 'class.archive': '수업 닫음', 'class.reopen': '수업 다시 엶', 'invite.create': '초대 코드',
+  'license.limits': '쓸 수 있는 AI 바꿈', 'class.create': '수업 만듦', 'class.dates': '수업 기간', 'class.archive': '수업 닫음', 'class.reopen': '수업 다시 엶', 'invite.create': '초대 코드',
   'invite.revoke': '초대 코드 거둠', 'invite.accept': '초대로 들어옴', 'credential.set': 'AI 키 넣음', 'credential.revoke': 'AI 키 지움', 'member.create': '계정 만듦',
   'member.remove': '사용자 뺌', 'member.reset_password': '비밀번호 재설정', 'workflow.save': '단계 고침', 'project.create': '작품 만듦', 'project.delete': '작품 지움',
   'project.copy_personal': '개인 작품으로 복사', 'project.import': '작품 가져옴', 'ai.choose': 'AI 회사 고름', 'auth.login': '로그인', 'auth.login_failed': '로그인 실패',
@@ -417,6 +417,8 @@ function orgCard(id, go) {
       item('이용 기간', live ? '~ ' + (live.ends_at ? day(live.ends_at) : '기한 없음') + ' · 학생 ' + (lic.seatsUsed || 0) + (live.seat_limit ? '/' + live.seat_limit : '') : '없음 — ' + (S.me.platformAdmin ? '아래에서 여세요' : '운영자에게 요청'), !live),
       item('AI', keyed.length ? (AI_CO[prov] || AI_CO[keyed[0]]) + ' 사용' : '키 없음 — 넣기', !keyed.length, () => go('AI')),
       item('새 수업 작품 시작 등급', TIER_CO[tier], false, () => go('AI'))),
+    // 운영자가 쓸 수 있는 AI 를 줄여 두었으면 — 기관 관리자도 알 수 있게
+    live && limitText(live) ? h('div', { class: 'when', style: 'margin-top:8px', text: '쓸 수 있는 AI(운영자가 정함): ' + limitText(live) }) : null,
     S.me.platformAdmin ? operatorRow(id) : null);
 }
 
@@ -440,7 +442,8 @@ function operatorRow(id) {
   const saveLimits = async () => {
     const r = await edu('license.limits', { licenseId: live.id, allowedProviders: lim.p, allowedTiers: lim.t });
     if (!r.ok) return tell(r.error);
-    S.open[k] = false; S.sayGood = true; S.say = '쓸 수 있는 범위를 바꿨습니다'; await load();
+    const names = (xs, map) => (xs.length ? xs.map((x) => map[x]).join(' · ') : '모두');
+    S.open[k] = false; S.sayGood = true; S.say = org.name + '이(가) 쓸 수 있는 AI 를 바꿨습니다 — 회사: ' + names(lim.p, AI_CO) + ' / 등급: ' + names(lim.t, TIER_CO); await load();
   };
   const orgStatus = async () => {
     const to = org.status === 'active' ? 'suspended' : 'active';
@@ -459,14 +462,14 @@ function operatorRow(id) {
   return h('div', { style: 'margin-top:12px;padding-top:10px;border-top:1px solid var(--line-soft)' },
     h('div', { class: 'line' },
       h('span', { class: 'when', text: '운영자' }),
-      h('button', { class: 'btn-line', text: S.open[k] ? '닫기' : live ? '이용 기간 · 범위' : '이용 기간 열기', onclick: () => { S.open[k] = !S.open[k]; render(); } }),
+      h('button', { class: 'btn-line', text: S.open[k] ? '닫기' : live ? '이용 기간 · 쓸 수 있는 AI' : '이용 기간 열기', onclick: () => { S.open[k] = !S.open[k]; render(); } }),
       live ? h('button', { class: 'btn-text red', text: '이용 기간 멈추기', onclick: () => licStatus(live, 'suspended') })
         : paused ? h('button', { class: 'btn-text', text: '이용 기간 다시 열기', onclick: () => licStatus(paused, 'active') }) : null,
       h('button', { class: 'btn-text' + (org.status === 'active' ? ' red' : ''), text: org.status === 'active' ? '기관 멈추기' : '기관 다시 열기', onclick: orgStatus })),
     S.open[k] ? h('div', { style: 'margin-top:10px' },
-      h('div', { class: 'lab', text: '쓸 수 있는 AI · 등급(아무것도 고르지 않으면 모두)' }),
+      h('div', { class: 'lab', text: '이 기관이 쓸 수 있는 AI 회사 · 등급 — 고른 것만 쓴다(아무것도 고르지 않으면 모두). 비싼 등급을 막거나 계약한 회사만 쓰게 할 때' }),
       h('div', { class: 'line' }, Object.entries(AI_CO).map(([p, n]) => chip(lim.p, p, n)), h('span', { class: 'when', text: '·' }), Object.entries(TIER_CO).map(([t, n]) => chip(lim.t, t, n))),
-      live ? h('div', { class: 'line', style: 'margin-top:6px' }, h('button', { class: 'btn-line', text: '지금 이용 기간에 범위 적용', onclick: saveLimits })) : null,
+      live ? h('div', { class: 'line', style: 'margin-top:6px' }, h('button', { class: 'btn-line', text: '이대로 적용', onclick: saveLimits })) : null,
       h('div', { class: 'line', style: 'margin-top:10px;align-items:flex-end' },
         field('이용 일수', 'ld-' + id, 'text', { value: '90' }), field('학생 자리', 'ls-' + id, 'text', { value: '40' }),
         h('button', { class: 'btn-red', text: live ? '새 이용 기간 열기' : '이용 기간 열기', onclick: issue }))) : null);
