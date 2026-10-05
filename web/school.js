@@ -186,23 +186,35 @@ async function copyWork(w) {
   tell('복사했습니다 — 작업실의 «' + w.name + ' (개인)»');
 }
 
+// AI 회사 — 키를 넣을 때 고른다. 여럿 넣어 두면 Claude → ChatGPT → Gemini 차례로 쓴다(서버 ai/router.mjs).
+const AI_CO = { anthropic: 'Claude', openai: 'ChatGPT', google: 'Gemini' };
+const AI_KEY_LABEL = { anthropic: 'Claude(Anthropic) API 키', openai: 'ChatGPT(OpenAI) API 키', google: 'Gemini(Google) API 키' };
+S.prov = {};
+const provOf = (k) => S.prov[k] || 'anthropic';
+const providerPick = (k) => h('div', { class: 'line', style: 'margin-top:10px' },
+  Object.entries(AI_CO).map(([p, name]) => h('button', { class: provOf(k) === p ? 'btn' : 'btn-line', text: name, onclick: () => { S.prov[k] = p; render(); } })));
+const keysSay = (list) => {
+  const live = (list || []).filter((x) => x.status === 'active');
+  return live.length ? '넣어 둔 키: ' + live.map((x) => (AI_CO[x.provider] || x.provider) + ' ' + x.keyHint).join(' · ') : '아직 없습니다';
+};
+
 // ---------------------------------------------------------------- 내 AI 키(누구나 — 쓰기 전용). 내 개인 작품의 AI 는 이 키로.
 function myKeyBox() {
   const k = 'mykey';
   if (!S.open[k] && PAGE !== 'account') return h('button', { class: 'btn-text', text: '내 AI 키', onclick: async () => { S.myKeys = (await edu('me.key.list')).credentials || []; S.open[k] = true; render(); } });
-  const have = (S.myKeys || []).filter((x) => x.status === 'active');
   const save = async () => {
-    const r = await edu('me.key.set', { provider: 'anthropic', apiKey: val('mk-key') });
+    const r = await edu('me.key.set', { provider: provOf(k), apiKey: val('mk-key') });
     if ($('mk-key')) $('mk-key').value = '';
     if (!r.ok) return tell(r.error);
     S.myKeys = (await edu('me.key.list')).credentials || [];
     tell('저장했습니다');
   };
   return section('내 AI 키',
-    h('div', { class: 'when', text: have.length ? '넣어 둔 키: ' + have.map((x) => x.keyHint).join(', ') : '아직 없습니다' }),
-    h('div', { class: 'when', style: 'margin-top:4px', text: '내 개인 작품의 AI 는 이 키로 돌고 비용은 키 주인에게 나갑니다. 수업 작품은 기관 키로 돕니다. 만 14세 이상만 넣어 주세요.' }),
+    h('div', { class: 'when', text: keysSay(S.myKeys) }),
+    h('div', { class: 'when', style: 'margin-top:4px', text: '내 개인 작품의 AI 는 이 키로 돌고 비용은 키 주인에게 나갑니다. 여럿 넣으면 Claude → ChatGPT → Gemini 차례로 씁니다. 수업 작품은 기관 키로 돕니다. 만 14세 이상만 넣어 주세요.' }),
+    providerPick(k),
     h('div', { class: 'line', style: 'align-items:flex-end;margin-top:10px' },
-      field('Anthropic API 키', 'mk-key', 'password', { autocomplete: 'off', spellcheck: 'false' }),
+      field(AI_KEY_LABEL[provOf(k)], 'mk-key', 'password', { autocomplete: 'off', spellcheck: 'false' }),
       h('button', { class: 'btn-red', text: '저장', onclick: save })));
 }
 
@@ -229,7 +241,7 @@ function orgBox(id) {
   const live = (lic.licenses || []).find((l) => l.status === 'active' && (!l.ends_at || new Date(l.ends_at) > new Date()));
   const addClass = async () => { const r = await edu('class.create', { orgId: id, name: val('nc-' + id) }); if (!r.ok) return tell(r.error); await load(); };
   const saveKey = async () => {
-    const r = await edu('org.key.set', { orgId: id, provider: 'anthropic', apiKey: val('ok-' + id) });
+    const r = await edu('org.key.set', { orgId: id, provider: provOf('ok-' + id), apiKey: val('ok-' + id) });
     $('ok-' + id).value = '';
     if (!r.ok) return tell(r.error);
     S.say = 'AI 키를 저장했습니다(다시 보이지 않습니다)';
@@ -258,9 +270,10 @@ function orgBox(id) {
     h('div', { class: 'lab', style: 'margin-top:16px', text: '초대 코드' }),
     inviteList('o-' + id, id, null),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '기관 AI 키(학생 작업이 이 키로 돕니다)' }),
-    h('div', { class: 'when', text: keys.filter((k) => k.status === 'active').map((k) => k.provider + ' ' + k.keyHint).join(' · ') || '아직 없습니다' }),
+    h('div', { class: 'when', text: keysSay(keys) + ' — 여럿이면 Claude → ChatGPT → Gemini 차례로 씁니다' }),
+    providerPick('ok-' + id),
     h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
-      field('Anthropic API 키', 'ok-' + id, 'password', { autocomplete: 'off', spellcheck: 'false' }), h('button', { class: 'btn-line', text: '저장', onclick: saveKey })),
+      field(AI_KEY_LABEL[provOf('ok-' + id)], 'ok-' + id, 'password', { autocomplete: 'off', spellcheck: 'false' }), h('button', { class: 'btn-line', text: '저장', onclick: saveKey })),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '사용자' }),
     h('div', { class: 'line', style: 'margin-bottom:8px' }, makeMemberBox(id)),
     codeBox('mk-' + id),

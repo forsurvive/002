@@ -1,5 +1,9 @@
 # AI Provider 추상화 설계
 
+> 결정(2026-10-05, 사용자): **Claude · ChatGPT · Gemini 세 회사를 모두 지원**한다. 카탈로그(`config/models.json`)에 세 회사 × 세 등급이 있고,
+> 회사를 정하지 않은 호출은 비용 주체(기관 · 본인)가 키를 넣어 둔 회사로 간다 — Claude → ChatGPT → Gemini 차례(`ai/router.mjs`). 키는 «내 계정» · «관리 → 기관 AI 키»에서 회사를 골라 넣는다.
+> OpenAI 가격은 공식 페이지에 닿지 못해 2차 자료 기준 — 운영자가 맞춰 볼 것. 실제 키 연기 시험은 아직(사용자 확인 대기).
+
 > 상태: **설계 v1 (2026-10-04)**. 구현: 계약 `ai/provider.mjs` · CLI `ai/local-cli.mjs` · Anthropic `ai/anthropic.mjs` · OpenAI `ai/openai.mjs`(공식 OpenAPI 명세 확인) · Gemini `ai/gemini.mjs`(공식 API 문서 확인). 모두 가짜 API 로만 시험 — 실제 키 연기 시험과 앱 연결(카탈로그 · credential)은 다음.
 > 각 Provider 의 요청/응답 모양은 설계용 요약이다. **어댑터를 쓰는 시점에 공식 최신 문서로 다시 확인한다**(명세 부록 AD) —
 > 모델 id·가격·폐기 일정은 바뀐다. 그래서 이 문서와 코드에는 실제 model id 를 박지 않고 **설정 데이터**로 둔다.

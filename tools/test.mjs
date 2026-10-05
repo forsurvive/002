@@ -2423,6 +2423,23 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('라우터: 키가 없으면 «연결 필요»로 멈춘다', rr.reason === 'credential' && rr.routing.ownerType === 'organization');
   rr = await router.generate({ userPrompt: '써라', metadata: { project: { organizationId: 'org_A' }, policy: { providers: ['anthropic'], allowPick: false }, model: { pick: { provider: 'openai', tier: 'fast' }, project: { tier: 'balanced' } } } });
   ok('라우터: 기관 정책이 학생의 선택을 막는다', rr.ok && rr.routing.provider === 'anthropic' && rr.routing.source.provider !== 'pick');
+  // 회사를 정하지 않으면 — 비용 주체가 키를 넣어 둔 회사로(Claude → ChatGPT → Gemini 차례)
+  const C3 = cat.createCatalog([
+    { provider: 'anthropic', tier: 'balanced', modelId: 'claude-test-b' },
+    { provider: 'openai', tier: 'balanced', modelId: 'gpt-test-b' },
+    { provider: 'google', tier: 'balanced', modelId: 'gemini-test-b' },
+  ]);
+  const router3 = createProviderRouter({ catalog: C3, credentials: creds, providers: { anthropic: fakeAdapter('anthropic'), openai: fakeAdapter('openai'), google: fakeAdapter('google') } });
+  await creds.set({ ownerType: 'user', ownerId: 'u_gem', provider: 'google', apiKey: 'AIza-only-gemini-key-000' });
+  rr = await router3.generate({ userPrompt: '써라', metadata: { project: { ownerUserId: 'u_gem' } } });
+  ok('**라우터: Gemini 키만 있는 사람은 Gemini 로 간다**', rr.ok && rr.routing.provider === 'google' && rr.routing.modelId === 'gemini-test-b', JSON.stringify(rr.routing));
+  await creds.set({ ownerType: 'user', ownerId: 'u_gem', provider: 'openai', apiKey: 'sk-openai-key-0000000000' });
+  rr = await router3.generate({ userPrompt: '써라', metadata: { project: { ownerUserId: 'u_gem' } } });
+  ok('라우터: 키가 여럿이면 Claude → ChatGPT → Gemini 차례', rr.ok && rr.routing.provider === 'openai');
+  rr = await router3.generate({ userPrompt: '써라', metadata: { project: { ownerUserId: 'u_none' } } });
+  ok('라우터: 키가 하나도 없으면 «연결 필요»', rr.reason === 'credential');
+  rr = await router3.generate({ userPrompt: '써라', metadata: { project: { ownerUserId: 'u_gem' }, model: { project: { provider: 'google' } } } });
+  ok('라우터: 정해 둔 회사가 있으면 그 회사', rr.ok && rr.routing.provider === 'google');
 }
 
 // ---------------------------------------------------------------- 호스팅 실행 — 포트 · 주소 · 허용 호스트 · 출입 열쇠

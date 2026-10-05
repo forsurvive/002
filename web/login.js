@@ -160,7 +160,7 @@ const setupForm = (ai, code) => h('form', { onsubmit: setup },
   field('이름', 'st-name', 'text'),
   field('비밀번호(10자 이상)', 'st-pw', 'password', { autocomplete: 'new-password' }),
   field('비밀번호 한 번 더', 'st-pw2', 'password', { autocomplete: 'new-password' }),
-  ai ? field('Anthropic API 키(나중에 넣어도 됩니다)', 'st-key', 'password', { autocomplete: 'off', spellcheck: 'false' }) : h('input', { id: 'st-key', type: 'hidden' }),
+  ai ? field('Claude(Anthropic) API 키(나중에 — ChatGPT · Gemini 키는 «내 계정»에서)', 'st-key', 'password', { autocomplete: 'off', spellcheck: 'false' }) : h('input', { id: 'st-key', type: 'hidden' }),
   sayLine(),
   h('button', { class: 'btn-red', type: 'submit', text: '만들고 들어가기' }));
 

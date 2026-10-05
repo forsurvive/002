@@ -6,7 +6,7 @@
 // 를 하고, 무엇을 골랐는지(routing)를 결과에 붙인다 — 생성 기록(generation_runs)이 그대로 받는다.
 // 키는 이 함수 안에서만 산다. routing 에는 credentialId 만 싣는다.
 
-import { chooseModel } from './catalog.mjs';
+import { chooseModel, PROVIDERS } from './catalog.mjs';
 import { failure, estimateCost } from './provider.mjs';
 import { SAY } from './http.mjs';
 
@@ -28,13 +28,24 @@ export function createProviderRouter({ catalog, credentials, providers }) {
         ...(pol.providers ? { providers: pol.providers } : {}),
         ...(pol.tiers ? { tiers: pol.tiers } : {}),
       });
+      // 회사를 아무도 정하지 않았으면(기본) — 비용을 내는 쪽(기관 · 본인)이 키를 넣어 둔 회사로 간다.
+      // Claude → ChatGPT → Gemini 차례로, 그 tier 가 카탈로그에 있고 키가 열리는 첫 회사. 아무 키도 없으면 첫 회사로(«연결 필요»).
+      let pre = null;
+      if (choice.source.provider === 'default') {
+        const order = (pol.providers || Object.keys(PROVIDERS)).filter((p) => providers[p]);
+        for (const p of order) {
+          if (!catalog.resolve(p, choice.tier)) continue;
+          const c = await credentials.resolve(meta.project || {}, p, { managedAi: !!pol.managedAi });
+          if (c.ok) { choice.provider = p; pre = c; break; }
+        }
+      }
       const routing = { provider: choice.provider, tier: choice.tier, source: choice.source, modelId: '', credentialId: '', ownerType: '' };
       const entry = catalog.resolve(choice.provider, choice.tier);
       if (!entry) return { ...failure('model', SAY.model), routing };
       routing.modelId = entry.modelId;
       const adapter = providers[choice.provider];
       if (!adapter) return { ...failure('model', SAY.model), routing };
-      const cred = await credentials.resolve(meta.project || {}, choice.provider, { managedAi: !!pol.managedAi });
+      const cred = pre || await credentials.resolve(meta.project || {}, choice.provider, { managedAi: !!pol.managedAi });
       routing.ownerType = cred.ownerType || '';
       if (!cred.ok) return { ...failure('credential', 'AI 연결이 필요합니다'), routing };
       routing.credentialId = cred.credentialId;

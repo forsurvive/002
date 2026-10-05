@@ -168,6 +168,10 @@ export async function run({ pool, ok, eq }) {
 
     // ---------------- 수업이 끝난 뒤 개인으로 이어 쓰기 — 내 AI 키 · 수업 작품을 개인 작품으로 복사
     const MY_KEY = 'fake-my-key-' + randomBytes(5).toString('hex');
+    ok('**세 회사 키를 넣을 수 있다 — ChatGPT · Gemini 도**', (await edu('edu-s2', 'me.key.set', { provider: 'openai', apiKey: 'sk-fake-openai-0001' })).ok
+      && (await edu('edu-s2', 'me.key.set', { provider: 'google', apiKey: 'AIza-fake-gemini-0001' })).ok
+      && (await edu('edu-s2', 'me.key.list')).credentials.filter((c) => c.status === 'active').map((c) => c.provider).sort().join() === 'google,openai');
+    eq('모르는 회사는 받지 않는다', (await edu('edu-s2', 'me.key.set', { provider: 'mystery', apiKey: 'x-0000000000' })).status, 422);
     const mk = await edu('edu-s1', 'me.key.set', { apiKey: MY_KEY });
     ok('**누구나 내 AI 키를 넣는다 — 돌려받는 것은 끝 네 자리뿐**', mk.ok && !JSON.stringify(mk).includes(MY_KEY) && !JSON.stringify(await edu('edu-s1', 'me.key.list')).includes(MY_KEY)
       && (await edu('edu-s1', 'me.key.list')).credentials.length === 1);
