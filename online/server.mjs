@@ -333,7 +333,12 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
             WHERE m.user_id = $1 AND c.status = 'active' AND o.status = 'active' ORDER BY c.name`, [user.id])).rows;
         const places = [];
         for (const c of open) if ((await tenancy.licenseOf(c.organization_id)).ok) places.push({ classId: c.id, name: c.name, orgName: c.org_name });
-        return { ...me, manage: !!(user.isPlatformAdmin || r.org_admin), platformAdmin: !!user.isPlatformAdmin, classes, member: r.n > 0, places };
+        // 신분 — 화면 위쪽에 «아이디 · 신분»으로 보인다(여럿이면 모두). 막는 것은 문마다 서버가 다시 본다.
+        const held = new Set((await pool.query(
+          `SELECT role FROM organization_members WHERE user_id = $1 AND status = 'active'
+            UNION SELECT role FROM class_members WHERE user_id = $1`, [user.id])).rows.map((x) => x.role));
+        const roles = [...(user.isPlatformAdmin ? ['platform_admin'] : []), ...['organization_admin', 'instructor', 'student'].filter((x) => held.has(x))];
+        return { ...me, manage: !!(user.isPlatformAdmin || r.org_admin), platformAdmin: !!user.isPlatformAdmin, classes, member: r.n > 0, places, roles };
       };
 
       if (req.method === 'GET' && (url.pathname === '/login' || url.pathname === '/login.html')) {

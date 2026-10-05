@@ -65,14 +65,17 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
            FROM projects p JOIN organizations o ON o.id = p.organization_id
           WHERE p.owner_user_id = $1 AND p.class_id IS NOT NULL AND p.deleted_at IS NULL ORDER BY p.updated_at DESC`, [user.id])).rows;
       for (const c of classes) c.works = works.filter((w) => w.class_id === c.id).map((w) => ({ id: w.id, name: w.name, canCopy: w.can_copy }));
-      return ok({ platformAdmin: !!user.isPlatformAdmin, organizations: orgs, classes });
+      return ok({ loginId: user.loginId, displayName: user.displayName, platformAdmin: !!user.isPlatformAdmin, organizations: orgs, classes });
     },
 
     // ---------------- 기관 · 라이선스(플랫폼 관리자)
     async 'org.create'(user, b, ip) {
       if (!user.isPlatformAdmin) return FORBIDDEN;
-      const name = String(b.name || '').trim(); const slug = String(b.slug || '').trim().toLowerCase();
-      if (!name || !SLUG_RE.test(slug)) return no(422, '이름과 주소 이름(영문 소문자 · 숫자 · -)이 필요합니다', 'validation');
+      // 영문 약칭(slug) — 기관을 안에서 가르는 짧은 이름(비밀번호가 아니다). 비워 두면 서버가 지어 붙인다.
+      const name = String(b.name || '').trim();
+      const slug = String(b.slug || '').trim().toLowerCase() || 'org-' + newInviteCode().replace(/-/g, '').slice(0, 6).toLowerCase();
+      if (!name) return no(422, '기관 이름이 필요합니다', 'validation');
+      if (!SLUG_RE.test(slug)) return no(422, '영문 약칭은 영문 소문자 · 숫자 · - 로 2~63자입니다(비워 두면 자동)', 'validation');
       try {
         const o = await one('INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING id, name, slug, status', [name, slug]);
         await log(user, o.id, 'org.create', 'organization', o.id, { slug }, ip);

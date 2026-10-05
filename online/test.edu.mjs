@@ -44,6 +44,9 @@ export async function run({ pool, ok, eq }) {
     const org = (await edu('edu-root', 'org.create', { name: '스토리 학교', slug: 'story-school' })).organization;
     ok('기관을 만든다', org && org.id && org.status === 'active');
     eq('같은 주소 이름은 둘이 될 수 없다', (await edu('edu-root', 'org.create', { name: '또', slug: 'story-school' })).status, 409);
+    const auto = await edu('edu-root', 'org.create', { name: '약칭 없는 학교' });
+    ok('**영문 약칭을 비우면 서버가 지어 붙인다**', auto.ok && /^org-[a-z0-9]{6}$/.test(auto.organization.slug), JSON.stringify(auto));
+    eq('기관 이름은 있어야 한다', (await edu('edu-root', 'org.create', { name: ' ', slug: 'x-school' })).status, 422);
     eq('**보통 사람은 라이선스를 못 낸다**', (await edu('edu-plain', 'license.issue', { orgId: org.id, days: 30 })).status, 403);
     const lic = (await edu('edu-root', 'license.issue', { orgId: org.id, plan: 'education_standard', days: 90, seatLimit: 2 })).license;
     ok('라이선스(학생 자리 2)', lic && lic.status === 'active' && lic.seat_limit === 2);
@@ -224,6 +227,10 @@ export async function run({ pool, ok, eq }) {
     ok('**운영자 · 기관 관리자에게만 «관리»**', (await meOf('edu-root')).manage === true && (await meOf('edu-oa')).manage === true
       && (await meOf('edu-in')).manage === false && (await meOf('edu-s1')).manage === false);
     ok('학생은 수업이 있다고 안다', (await meOf('edu-s1')).classes === 1);
+    const rolesOf = async (who) => ((await meOf(who)).roles || []).join(',');
+    ok('**화면 위쪽에 보일 신분 — 최상위 · 기관 관리자 · 강사 · 학생 · 개인**', (await rolesOf('edu-root')).includes('platform_admin') && (await rolesOf('edu-oa')).includes('organization_admin')
+      && (await rolesOf('edu-in')).includes('instructor') && (await rolesOf('edu-s1')) === 'student' && (await rolesOf('edu-plain')) === '', [await rolesOf('edu-root'), await rolesOf('edu-s1')].join(' | '));
+    ok('신분과 함께 아이디가 온다', (await meOf('edu-s1')).loginId === 'edu-s1' && (await edu('edu-s1', 'me.memberships')).loginId === 'edu-s1');
     const ml = await edu('edu-oa', 'org.members', { orgId: org.id });
     const s1row = ml.members && ml.members.find((m) => m.loginId === 'edu-s1');
     ok('기관 관리자는 사람 목록을 본다(아이디 · 이름 · 역할 · 수업)', ml.ok && s1row && s1row.name === '학생 하나' && s1row.roles.includes('student') && s1row.classes.includes('웹소설 1반'));
