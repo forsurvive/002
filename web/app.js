@@ -717,7 +717,7 @@ function settings() {
       (p.crew || []).map((a) => h('div', { class: 'mat' },
         h('div', { class: 'name', text: a.name }),
         h('div', { class: 'when', text: a.role }),
-        a.model ? h('span', { class: 'mark', text: a.model }) : null,
+        a.model ? h('span', { class: 'mark', text: modelName(a.model) }) : null,
         h('button', { class: 'btn-text', text: '고치기', onclick: () => openAgent(a.id) }),
         h('button', { class: 'btn-text red', text: '삭제', onclick: () => api('agent.delete', { ids: [a.id] }) }))),
       h('div', { class: 'line', style: 'margin-top:8px' },
@@ -791,6 +791,11 @@ function authRow(a) {
 }
 
 // follow 를 주면 맨 앞에 «따르기» 칸(빈 값)이 선다 — 지어진 에이전트가 작품의 모델을 따르는 자리.
+// 화면에 보이는 모델 이름 — 온라인판은 등급(High Reasoning / Balanced)만 보인다(CLAUDE.md 원칙 4 — 실제 모델은 회사 · 설정이 정한다).
+// 개인판은 지금처럼 별칭(opus · sonnet · fable) 그대로.
+const TIER_NAME = { opus: 'High Reasoning', sonnet: 'Balanced', fable: 'High Reasoning' };
+const modelName = (m) => (S.me && !S.tour ? TIER_NAME[m] || m : m);
+
 function modelRow(list, cur, pick, follow) {
   const opts = (follow ? [''] : []).concat(list || []);
   return h('div', { class: 'line' }, opts.map((m) => h('div', {
@@ -798,7 +803,7 @@ function modelRow(list, cur, pick, follow) {
     onmousedown: () => pick(m),
   },
   h('button', { class: 'ck' + (cur === m ? ' on' : '') }),
-  h('span', { text: m || follow }))));
+  h('span', { text: m ? modelName(m) : follow }))));
 }
 
 // 작가가 짓는 에이전트 — 이름·역할·프롬프트 셋. 새로 지을 때만 단추가 있고, 고칠 때는 치는 대로 들어간다.
@@ -875,7 +880,7 @@ function agentList(p) {
     },
     h('span', { class: 'mark', text: pr.code }),
     h('div', { class: 'name', text: pr.name }),
-    pr.model ? h('span', { class: 'mark', text: pr.model }) : null,
+    pr.model ? h('span', { class: 'mark', text: modelName(pr.model) }) : null,
     pr.made ? h('span', { class: 'when', text: '지음' }) : null,
     pr.edited ? h('span', { class: 'when', style: 'color:var(--red)', text: '고침' }) : null)));
 }
@@ -1184,7 +1189,7 @@ function pickOneModel(agentIds) {
     S.confirm = {
       text: '쓰는 모델이 서로 다릅니다',
       acts: split.map((m) => ({
-        label: m, class: 'btn-line',
+        label: modelName(m), class: 'btn-line',
         run: () => { S.confirm = null; render(); resolve(m); },
       })),
       onClose: () => resolve(null),

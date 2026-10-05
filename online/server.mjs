@@ -423,6 +423,8 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
                      AND ((p.organization_id IS NOT NULL AND c.owner_type = 'organization' AND c.owner_id = p.organization_id::text)
                        OR (p.organization_id IS NULL AND c.owner_type = 'user' AND c.owner_id = p.owner_user_id::text))) AS keys
              FROM projects p LEFT JOIN organizations o ON o.id = p.organization_id LEFT JOIN users u ON u.id = p.owner_user_id WHERE p.id = $1`, [pid])).rows[0];
+        // 온라인 화면은 등급만 보인다 — fable 은 opus 와 같은 High Reasoning 이라 고르는 칸에서 뺀다(이미 고른 작품은 남긴다).
+        if (Array.isArray(st.models)) st.models = st.models.filter((m) => m !== 'fable' || st.model === 'fable');
         if (ar) st.ai = { provider: ar.provider || '', classWork: !!ar.organization_id, ownerDefault: ar.organization_id ? ar.org_provider : ar.user_provider, keys: ar.keys || [] };
         return json(res, 200, { ok: true, project: st, projects, me }, cache);
       }

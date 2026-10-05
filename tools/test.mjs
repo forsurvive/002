@@ -1650,7 +1650,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('자료만 따로 여는 창은 없다(문서 창으로 연다)', !/function openMaterial\(/.test(app) && !app.includes("'material'"));
   ok('고르기 창에 따로 선 «자료» 칸이 없다(카테고리로 선다)', !app.includes('p.materials'));
   ok('지어진 에이전트 창에 모델 칸이 있다', app.includes("api('prompt.model'") && app.includes("'작품 모델 따름 ('"));
-  ok('목록에 자리의 모델이 보인다', app.includes("pr.model ? h('span', { class: 'mark', text: pr.model })"));
+  ok('목록에 자리의 모델이 보인다', app.includes("pr.model ? h('span', { class: 'mark', text: modelName(pr.model) })"));
+  ok('온라인 화면은 모델 별칭 대신 등급 이름을 보인다', app.includes("opus: 'High Reasoning', sonnet: 'Balanced'") && app.includes('const modelName = (m) => (S.me && !S.tour'));
 }
 
 // ---------------------------------------------------------------- 화면-서버 배선
