@@ -129,6 +129,7 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
   } : null;
   return {
     importProject: importOne,
+    who: () => user.loginId || '',   // 단계 승인에 «누가»를 남긴다
     state, jobs, engine: pick, auth: { view, write: view }, limit: () => null,
     // 단계 흐름 — 템플릿은 운영자 · 기관이 고쳐 쓴 것까지. 강의 카드는 기관 프로젝트면 기관 설정(기본 켬), 개인 프로젝트면 그 사람의 설정(기본 끔).
     workflow: (pid) => (wfs ? wfs.templateFor(pid) : null),

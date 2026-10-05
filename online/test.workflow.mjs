@@ -67,6 +67,7 @@ export async function run({ pool, ok, eq }) {
     ok('**생성 기록에 단계 · 이번 요청사항이 남는다(문서에는 없다)**', run && run.status === 'succeeded' && run.request_once_text === '이번엔 바다 무역 중심으로' && wd.request === '');
     ok('«이번 단계에 할 일»이 프롬프트에 실린다', seen[seen.length - 1].userPrompt.includes('세계의 규칙'));
     ok('승인 · 확정본 제안', (await api('wf-writer', 'stage.approve', { pid, key: 'world', final: true })).ok && (await state('wf-writer', pid)).docs.find((d) => d.id === w.docId).isFinal);
+    eq('**온라인은 누가 승인했는지 남긴다**', (await state('wf-writer', pid)).workflow.stages.find((x) => x.key === 'world').approvedBy, 'wf-writer');
     const reload = await store.get(pid);
     ok('**단계 상태가 표에 남는다(다시 지어도)**', reload.stages.world && reload.stages.world.status === 'approved');
 

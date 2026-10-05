@@ -92,19 +92,26 @@ export function createOps(d) {
       const had = cur && wf.docOf(cur, t, b.key, ep);
       if (had && await jobs.isTargetRunning(b.pid, had.id)) return bad('이미 도는 중입니다');
       let made = null;
-      const r = await state.update(b.pid, (p) => { made = wf.startStage(p, t, b.key, { episode: ep, refIds: Array.isArray(b.refIds) ? b.refIds : null }); });
+      // keepRequest — 이번 요청사항을 문서의 요청사항(지속)으로도 남긴다. 그러면 이번 작업에는 문서 쪽으로만 실린다(두 번 싣지 않게).
+      const once = String(b.requestOnce || '');
+      const keep = !!b.keepRequest && !!once.trim();
+      const r = await state.update(b.pid, (p) => {
+        made = wf.startStage(p, t, b.key, { episode: ep, refIds: Array.isArray(b.refIds) ? b.refIds : null });
+        const dd = made && made.ok && keep ? model.findDoc(p, made.docId) : null;
+        if (dd) model.docWrite(p, dd.id, { request: [dd.request, once].filter((x) => String(x || '').trim()).join('\n\n') });
+      });
       if (r && r.ok === false) return r;
       if (!made || !made.ok) return bad((made && made.error) || '시작하지 못했습니다');
       const p2 = await state.get(b.pid);
       const d = model.findDoc(p2, made.docId);
       return jobs.start(b.pid, { kind: 'stage', title: d ? d.title : s.title, targetId: made.docId,
-        params: { stageKey: s.key, episode: ep, requestOnce: String(b.requestOnce || ''), modelPick: pickModel(b.model, '') } });
+        params: { stageKey: s.key, episode: ep, requestOnce: keep ? '' : once, modelPick: pickModel(b.model, '') } });
     },
     'stage.approve': async (b) => {
       const t = await workflow(b.pid);
       if (!t) return bad('단계 흐름을 쓸 수 없습니다');
       let r = null;
-      await state.update(b.pid, (p) => { r = wf.approveStage(p, t, b.key, { episode: Number(b.episode) || 0, final: !!b.final }); });
+      await state.update(b.pid, (p) => { r = wf.approveStage(p, t, b.key, { episode: Number(b.episode) || 0, final: !!b.final, by: d.who ? d.who() : '' }); });
       return r && r.ok ? ok() : bad((r && r.error) || '승인하지 못했습니다');
     },
     'stage.reopen': async (b) => {

@@ -458,7 +458,21 @@ function stagesView() {
     st.upstreamChanged ? h('span', { class: 'mark', text: '⚠ 앞 단계가 바뀜' }) : null,
     (st.episodes || []).length ? h('span', { class: 'mark', text: st.episodes.length + '화' }) : null,
     h('div', { class: 'when', text: stageSay(st) }));
+  // 지금 할 단계 · 다음 단계 — 승인 · 건너뜀이 아닌 첫 단계(꺼진 단계는 건너 센다). 강제가 아니라 길잡이다.
+  const live = w.stages.filter((x) => !x.off);
+  const at = live.findIndex((x) => x.status !== 'approved' && x.status !== 'skipped');
+  const now = at >= 0 ? live[at] : null;
+  const next = at >= 0 ? live[at + 1] : null;
+  const banner = h('div', { class: 'card-box', style: 'margin-bottom:12px' },
+    now ? [
+      h('div', { class: 'line' },
+        h('div', { class: 'name', style: 'flex:1;font-weight:700', text: '지금: ' + now.n + '  ' + now.title }),
+        h('div', { class: 'when', text: stageSay(now) }),
+        h('button', { class: 'btn-line', text: '열기', onclick: () => openStage(now.key) })),
+      next ? h('div', { class: 'when', text: '다음: ' + next.n + '  ' + next.title }) : null,
+    ] : h('div', { class: 'name', text: '모든 단계를 승인했습니다' }));
   return h('div', null,
+    banner,
     h('div', { class: 'sec' },
       h('div', { class: 'sec-head' },
         h('div', { class: 'name', text: w.title || '단계' }),
@@ -483,9 +497,9 @@ function stagePanel(close) {
   const readOnly = !!S.project.readOnly;
   const go = async () => {
     const episode = per ? (S.open.episode || Number(($('st-ep') || {}).value) || 0) : 0;
-    const r = await api('stage.start', { key: st.key, episode, refIds: S.open.refIds, requestOnce: ($('st-once') || {}).value || '' });
+    const r = await api('stage.start', { key: st.key, episode, refIds: S.open.refIds, requestOnce: ($('st-once') || {}).value || '', keepRequest: !!S.open.keepReq });
     if (!r.ok) { S.open.err = r.error; render(); return; }
-    S.open.err = ''; S.open.episode = episode; clearTyped('st-once');
+    S.open.err = ''; S.open.episode = episode; S.open.keepReq = false; clearTyped('st-once');
     render();
   };
   const approve = async () => {
@@ -515,7 +529,14 @@ function stagePanel(close) {
       st.output !== 'input' && st.output !== 'final' ? [
         refLine('참조(앞 단계에서 추천 — 빼거나 더할 수 있습니다)', S.open.refIds, byId, (ids) => { S.open.refIds = ids; render(); }, docId),
         h('div', null, h('div', { class: 'lab', text: '이번 요청사항(이번 한 번만 — 저장되지 않습니다)' }), area('st-once', '이번 생성에만 덧붙일 말')),
+        readOnly ? null : h('div', { class: 'line', style: 'gap:6px;cursor:pointer', onmousedown: () => { S.open.keepReq = !S.open.keepReq; render(); } },
+          h('button', { class: 'ck' + (S.open.keepReq ? ' on' : '') }), h('span', { text: '이 요청을 문서의 요청사항으로도 남기기(다음 생성에도 계속)' })),
+        // 문서의 요청사항(지속) — 일회성과 갈라 보인다. 고치는 곳은 문서 창이다.
+        doc ? h('div', null, h('div', { class: 'lab', text: '이 문서의 요청사항(계속 적용 — 문서에 남습니다)' }),
+          h('div', { class: 'line' }, h('div', { class: 'when', style: 'flex:1;white-space:pre-wrap', text: String(doc.request || '').trim() || '없음' }),
+            readOnly ? null : h('button', { class: 'btn-text', text: '문서에서 고치기', onclick: () => { S.open = { type: 'doc', id: doc.id }; render(); } }))) : null,
       ] : null,
+      status === 'approved' && cur && cur.approvedAt ? h('div', { class: 'when', text: '승인됨 · ' + new Date(cur.approvedAt).toLocaleString() + (cur.approvedBy ? ' · ' + cur.approvedBy : '') }) : null,
       S.open.err ? h('div', { class: 'notice', text: S.open.err }) : null,
       job ? h('div', { class: 'when', text: '생성 중 — ' + jobLine(job) }) : null,
       readOnly ? null : h('div', { class: 'line' },

@@ -108,7 +108,8 @@ export function view(p, t, { bodyOn = true } = {}) {
       const st = stateOf(p, slotKey(s.key, s.output === 'perEpisode' ? episode : 0)) || {};
       // 승인한 뒤 앞 단계 문서가 바뀌었는가(문서가 마지막으로 손댄 시각으로 잰다)
       const changed = status === 'approved' && !!st.approvedAt && inputDocs(p, t, s, episode).some((x) => (x.updatedAt || 0) > st.approvedAt);
-      return { status, docId: d ? d.id : '', docTitle: d ? d.title : (s.output === 'revision' ? '' : docTitle(s, episode)), upstreamChanged: changed };
+      return { status, docId: d ? d.id : '', docTitle: d ? d.title : (s.output === 'revision' ? '' : docTitle(s, episode)), upstreamChanged: changed,
+        ...(status === 'approved' ? { approvedAt: st.approvedAt || 0, approvedBy: st.approvedBy || '' } : {}) };
     };
     const base = { key: s.key, n: s.n, title: s.title, output: s.output, optional: !!s.optional, off, prevPending };
     if (s.output !== 'perEpisode') return { ...base, ...one(0), refs: recommendRefs(p, t, s.key, 0) };
@@ -153,7 +154,8 @@ export function markGenerated(p, slot, { now = Date.now() } = {}) {
 }
 
 // 승인 — 이 단계의 산출물로 인정. final 이면 확정본도 켠다(부르는 쪽이 사람에게 물어 고른 경우에만).
-export function approveStage(p, t, key, { episode = 0, final = false, now = Date.now() } = {}) {
+// by — 누가 승인했나(온라인은 아이디, 개인판은 비움). 승인 ≠ 확정본: final 은 고를 때만 켠다.
+export function approveStage(p, t, key, { episode = 0, final = false, now = Date.now(), by = '' } = {}) {
   const s = stageOf(t, key);
   if (!s) return { ok: false, error: '없는 단계입니다' };
   if (s.output === 'input') return { ok: false, error: '이 단계는 작품을 만들 때 끝납니다' };
@@ -162,7 +164,7 @@ export function approveStage(p, t, key, { episode = 0, final = false, now = Date
   const d = docOf(p, t, key, ep);
   if (s.output !== 'final' && !d) return { ok: false, error: '아직 만든 글이 없습니다' };
   p.stages = p.stages || {};
-  p.stages[slot] = { ...(p.stages[slot] || {}), status: 'approved', docId: d ? d.id : '', approvedAt: now };
+  p.stages[slot] = { ...(p.stages[slot] || {}), status: 'approved', docId: d ? d.id : '', approvedAt: now, approvedBy: String(by || '') };
   if (final && d) model.docSetFinal(p, d.id, true);
   return { ok: true };
 }
@@ -171,7 +173,7 @@ export function reopenStage(p, t, key, { episode = 0 } = {}) {
   const s = stageOf(t, key);
   const slot = slotKey(key, s && s.output === 'perEpisode' ? episode : 0);
   if (!s || !p.stages || !p.stages[slot]) return { ok: false, error: '없는 단계입니다' };
-  p.stages[slot] = { ...p.stages[slot], status: 'draft', approvedAt: 0 };
+  p.stages[slot] = { ...p.stages[slot], status: 'draft', approvedAt: 0, approvedBy: '' };
   return { ok: true };
 }
 

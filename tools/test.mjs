@@ -2186,6 +2186,13 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     eq('같은 문서가 도는 중이면 다시 시작하지 못한다(끝난 뒤에는 된다)', (await post('stage.approve', { pid: pj, key: 'plan' })).ok, true);
     const s2 = (await stateOf(pj)).project;
     ok('**승인 ≠ 확정본**', s2.workflow.stages.find((x) => x.key === 'plan').status === 'approved' && !s2.docs.find((x) => x.id === pd.id).isFinal);
+    ok('승인한 때가 남는다(개인판은 «누가»를 비운다)', s2.workflow.stages.find((x) => x.key === 'plan').approvedAt > 0 && s2.workflow.stages.find((x) => x.key === 'plan').approvedBy === '');
+    // 이번 요청사항을 문서의 요청사항으로도 남기기 — 작업에는 한 번만(문서 쪽으로) 실린다
+    const rk = await post('stage.start', { pid: pj, key: 'world', requestOnce: '바다 무역 중심', keepRequest: true });
+    const sk = await settle(pj);
+    const wv = sk.workflow.stages.find((x) => x.key === 'world');
+    ok('**고르면 이번 요청이 문서의 요청사항(지속)으로 남는다 — 작업에는 두 번 싣지 않는다**', rk.ok && sk.docs.find((x) => x.id === wv.docId).request === '바다 무역 중심'
+      && sk.jobs.find((j) => j.id === rk.jobId).params.requestOnce === '');
     await post('stage.start', { pid: pj, key: 'plan_rev' });
     const s3 = await settle(pj);
     const pd3 = s3.docs.find((x) => x.id === pd.id);
