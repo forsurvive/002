@@ -315,6 +315,11 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const dlc = await fetch(base + '/api/download?pid=' + pid + '&kind=cat&id=' + catId);
   ok('카테고리 내려받기', (await dlc.text()).includes('설정'));
 
+  // 업로드는 글만(명세 §63) — 바이너리(NUL)는 자료 · 문서로 받지 않는다. 화면은 txt · md · 2MB 로 먼저 거른다.
+  eq('**글이 아닌 것은 문서로 받지 않는다**', (await post('doc.create', { pid, title: 'x', body: 'PK\u0003\u0004\u0000\u0000' })).ok, false);
+  eq('**글이 아닌 자료도 받지 않는다**', (await post('project.create', { name: 'x', spec: { form: '단편' }, materials: [{ name: 'a.hwp', text: 'HWP\u0000\u0000' }] })).ok, false);
+  ok('화면은 txt · md · 2MB 만 고른다', src(join(ROOT, 'web', 'app.js')).includes("accept: '.txt,.md,.markdown,.text,text/plain,text/markdown'") && src(join(ROOT, 'web', 'app.js')).includes('const FILE_MAX = 2 * 1024 * 1024;'));
+
   // 작품 통째로 — 내려받은 파일을 가져오면 새 작품(새 id)으로 문서 · 판 · 참조 · 논의가 그대로
   const dlp = await fetch(base + '/api/download?pid=' + pid + '&kind=project&id=');
   ok('작품 파일 내려받기(JSON · 이름)', dlp.status === 200 && /application\/json/.test(dlp.headers.get('content-type')) && /story-project\.json/.test(decodeURIComponent(dlp.headers.get('content-disposition'))));

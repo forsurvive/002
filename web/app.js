@@ -981,13 +981,23 @@ function promptPanel(close) {
       h('div', null, h('div', { class: 'lab', text: '프롬프트' }), area('pr-craft', '프롬프트', one.craft, { class: 'body-edit', onblur: save }))));
 }
 
-function fileButton(onRead) {
+// 글 파일만(txt · md) · 한 파일 2MB 까지 — 그림 · 문서 파일(hwp · docx · pdf)은 글로 읽히지 않는다. 서버도 다시 거른다.
+const FILE_MAX = 2 * 1024 * 1024;
+const TEXT_EXT = /\.(txt|md|markdown|text)$/i;
+function fileButton(onRead, onBad = (m) => { S.open.err = m; render(); }) {
   const input = h('input', {
-    type: 'file', style: 'display:none', multiple: true,
+    type: 'file', style: 'display:none', multiple: true, accept: '.txt,.md,.markdown,.text,text/plain,text/markdown',
     onchange: (e) => {
       for (const f of e.target.files) {
+        if (!TEXT_EXT.test(f.name) && !/^text\//.test(f.type || '')) { onBad(f.name + ' — txt · md 파일만 넣을 수 있습니다'); continue; }
+        if (f.size > FILE_MAX) { onBad(f.name + ' — 파일이 너무 큽니다(2MB 까지)'); continue; }
         const rd = new FileReader();
-        rd.onload = () => onRead(f.name, String(rd.result || ''));
+        rd.onload = () => {
+          const t = String(rd.result || '');
+          // 깨진 글자(�)가 많거나 NUL 이 있으면 글 파일이 아니다(인코딩이 다르거나 바이너리)
+          if (t.includes('\u0000') || (t.match(/\uFFFD/g) || []).length > Math.max(3, t.length / 100)) return onBad(f.name + ' — 글로 읽을 수 없습니다(UTF-8 txt · md 로 저장해 주세요)');
+          onRead(f.name, t);
+        };
         rd.readAsText(f, 'utf-8');
       }
       e.target.value = '';

@@ -14,6 +14,9 @@ const ok = (extra = {}) => ({ ok: true, ...extra });
 const bad = (error) => ({ ok: false, error: String(error) });
 const arr = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
 // 실행기가 아는 이름만 받는다. 모르는 것이 오면 지금 값을 지킨다.
+// 글이 아닌 것(바이너리 — NUL 글자)은 자료 · 문서로 받지 않는다(명세 §63 — 업로드는 txt · md 먼저). 화면도 먼저 거른다.
+const NOT_TEXT = '글이 아닌 파일은 넣을 수 없습니다 — txt · md 파일을 넣어 주세요';
+const binary = (s) => String(s || '').includes('\u0000');
 const pickModel = (v, fallback) => (MODELS.includes(String(v || '')) ? String(v || '') : fallback);
 
 /**
@@ -55,6 +58,7 @@ export function createOps(d) {
       if (!String(spec.form || '').trim()) miss.push('형식');
       if (!materials.length) miss.push('자료');
       if (miss.length) return bad('필수 항목 누락 — ' + miss.join(' · '));
+      if (materials.some((m) => binary(m.text))) return bad(NOT_TEXT);
       const p = await state.create({ name, spec, standard: b.standard, request: b.request, materials });
       // 작법서를 문서로 세워 둔다 — 본문은 베끼지 않고 가리키기만 한다. 걸고 싶을 때 참조로 걸고, 필요 없으면 지운다.
       const books = bookList();
@@ -187,7 +191,7 @@ export function createOps(d) {
     },
 
     // ---------------- 자료 — 작업실 «자료» 카테고리의 문서로 들고 난다(지우면 휴지통)
-    'material.add': async (b) => state.update(b.pid, (p) => { model.materialAdd(p, b.name || model.firstLineName(b.text), b.text); }),
+    'material.add': async (b) => (binary(b.text) ? bad(NOT_TEXT) : state.update(b.pid, (p) => { model.materialAdd(p, b.name || model.firstLineName(b.text), b.text); })),
     'material.delete': async (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.materialDelete(p, id); }),
 
     // ---------------- 에이전트 (작가가 짓는다)
@@ -205,6 +209,7 @@ export function createOps(d) {
 
     // ---------------- 문서 · 모순 검사 · 합평회
     'doc.create': async (b) => {
+      if (binary(b.body)) return bad(NOT_TEXT);
       let id = null;
       const r = await state.update(b.pid, (p) => {
         id = model.docCreate(p, { kind: b.kind, title: b.title, body: b.body, categoryId: b.categoryId }).id;
