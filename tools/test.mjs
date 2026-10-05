@@ -2560,6 +2560,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('갈래 고르기는 pg 를 미리 부르지 않는다(개인판은 의존성 0)', !/^import .*['"]pg['"]/m.test(startSrc) && !/^import .*server\.mjs/m.test(startSrc));
   ok('**.replit 에 열쇠를 적지 않는다**', !/SE2_ACCESS_KEY\s*=/.test(replit) && !/sk-ant-|sk-[A-Za-z0-9]{20}|AIza/.test(replit));
   ok('.replit 에 포트를 박지 않는다(플랫폼의 PORT 를 따른다)', !/SE2_PORT=/.test(replit));
+  ok('**Replit 작업 공간의 기본 포트는 미리보기가 기다리는 5000 — .replit [[ports]] 와 같다**', hosting.resolveHosting({ REPL_ID: 'x' }).port === 5000
+    && hosting.resolveHosting({ REPL_ID: 'x', PORT: '3000' }).port === 3000 && hosting.resolveHosting({ REPL_ID: 'x', SE2_PORT: '8801' }).port === 8801
+    && new RegExp('localPort = ' + hosting.REPLIT_PORT + '\\b').test(replit));
 }
 
 server.close();

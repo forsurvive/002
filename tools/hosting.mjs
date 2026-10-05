@@ -4,7 +4,7 @@
 // 폰 동반 프로그램이 8801 로 붙으므로 실행기(launch.mjs)는 SE2_PORT 를 못박아 띄운다 — PORT 가 끼어들 틈이 없다.
 //
 // 호스팅(Replit 같은 플랫폼)에 올릴 때만 달라진다:
-//   · 포트 — SE2_PORT 가 먼저, 없으면 플랫폼이 주는 PORT, 그도 없으면 8801.
+//   · 포트 — SE2_PORT 가 먼저, 없으면 플랫폼이 주는 PORT, 그도 없으면 Replit 작업 공간은 5000(미리보기), 나머지는 8801.
 //   · 붙을 주소 — SE2_HOST(예: 0.0.0.0). 적지 않으면 127.0.0.1 — 저절로 바깥에 열리는 일은 없다.
 //   · 받아 줄 호스트 이름 — 루프백 이름 + SE2_ALLOWED_HOSTS + 플랫폼이 알려 준 도메인(REPLIT_DOMAINS·REPLIT_DEV_DOMAIN).
 //     그 밖의 이름으로 온 요청은 문지기가 돌려보낸다(DNS 재바인딩 방어는 바깥에서도 그대로).
@@ -18,6 +18,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 
 export const LOCAL_NAMES = ['127.0.0.1', 'localhost'];
 export const DEFAULT_PORT = 8801;
+export const REPLIT_PORT = 5000;   // .replit 의 [[ports]] localPort 와 같아야 한다
 export const MIN_KEY_LENGTH = 16;
 
 const list = (v) => String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -54,8 +55,8 @@ export function resolveHosting(env = process.env) {
   const problems = [];
   const notes = [];
 
-  // 포트 — SE2_PORT > PORT > 8801
-  let port = DEFAULT_PORT;
+  // 포트 — SE2_PORT > PORT > (Replit 작업 공간이면 5000 — 미리보기가 기다리는 포트) > 8801
+  let port = (env.REPL_ID || env.REPLIT_DEV_DOMAIN) ? REPLIT_PORT : DEFAULT_PORT;
   for (const name of ['SE2_PORT', 'PORT']) {
     if (env[name] == null || String(env[name]).trim() === '') continue;
     const n = portOf(env[name]);

@@ -3,7 +3,8 @@
 # · 갈래는 online/start.mjs 가 고른다: 데이터베이스(DATABASE_URL)가 없으면 개인판(호스팅 꼴),
 #   있으면 온라인판(로그인 · PostgreSQL · AI 작업). 온라인판 의존성 설치(npm ci)도 스스로 한다.
 #
-# · 포트 — Replit 이 PORT 를 주면 그것을, 없으면 8801. 서버가 연 그 포트가 아래 [[ports]] 로 외부 80 에 붙는다.
+# · 포트 — Replit 이 PORT 를 주면 그것을, 없으면 5000(Replit 미리보기가 기다리는 포트 — tools/hosting.mjs REPLIT_PORT).
+#   서버가 연 그 포트가 아래 [[ports]] 로 외부 80 에 붙는다.
 #   실행 명령에는 포트를 박지 않는다.
 # · 주소 — 0.0.0.0. 온라인판은 계정(아이디 · 비밀번호)이 문을 지킨다 — 출입 열쇠를 쓰지 않는다.
 #   처음 설정(계정이 없을 때)은 Console 에 찍힌 설정 코드를 넣어야 한다.
@@ -21,7 +22,7 @@ run = ["sh", "-c", "SE2_HOST=0.0.0.0 node online/start.mjs"]
 channel = "stable-24_11"
 
 [[ports]]
-localPort = 8801
+localPort = 5000
 externalPort = 80
 
 [deployment]
