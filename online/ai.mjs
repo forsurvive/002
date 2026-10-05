@@ -33,5 +33,20 @@ export function buildAi(pool, env = process.env, { providers = { anthropic: anth
   if (!keys.current) problems.push('CREDENTIALS_KEY_V1 is not set - stored AI keys cannot be opened');
   problems.push(...keys.problems);
   const credentials = createCredentialService({ store: pgCredentialStore(pool), keys });
-  return { generator: createProviderRouter({ catalog, credentials, providers }), credentials, catalog, aliasTiers, problems };
+  return { generator: createProviderRouter({ catalog, credentials, providers }), credentials, catalog, aliasTiers, problems, keyTester: createKeyTester({ catalog, credentials, providers }) };
+}
+
+// 키 연결 시험 — 그 회사의 가장 싼 등급(fast, 없으면 balanced)으로 아주 짧게 한 번 부른다. 결과는 키 행에 적는다(markVerified).
+// owner = { ownerUserId } | { organizationId } — credentials.resolve 가 비용 주체를 가리는 꼴 그대로. 키 원문은 이 함수 밖으로 나가지 않는다.
+export function createKeyTester({ catalog, credentials, providers }) {
+  return async (owner, provider) => {
+    const adapter = providers[provider];
+    const entry = catalog.resolve(provider, 'fast') || catalog.resolve(provider, 'balanced');
+    if (!adapter || !adapter.validateCredential || !entry) return { ok: false, reason: 'model' };
+    const cred = await credentials.resolve(owner, provider);
+    if (!cred.ok) return { ok: false, reason: cred.reason };
+    const r = await adapter.validateCredential(cred.credential, { model: entry.modelId });
+    await credentials.markVerified(cred.credentialId, { ok: r.ok, reason: r.reason || '' });
+    return { ok: !!r.ok, reason: r.reason || '' };
+  };
 }

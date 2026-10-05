@@ -2440,6 +2440,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('라우터: 키가 하나도 없으면 «연결 필요»', rr.reason === 'credential');
   rr = await router3.generate({ userPrompt: '써라', metadata: { project: { ownerUserId: 'u_gem' }, model: { project: { provider: 'google' } } } });
   ok('라우터: 정해 둔 회사가 있으면 그 회사', rr.ok && rr.routing.provider === 'google');
+  rr = await router3.generate({ userPrompt: '써라', metadata: { project: { ownerUserId: 'u_gem' }, model: { org: { provider: 'google' } } } });
+  ok('**라우터: 비용 주체가 고른 회사(기본)로 간다**', rr.ok && rr.routing.provider === 'google' && rr.routing.source.provider === 'org');
+  rr = await router3.generate({ userPrompt: '써라', metadata: { project: { ownerUserId: 'u_gem' }, model: { project: { provider: 'openai' }, org: { provider: 'google' } } } });
+  ok('라우터: 작품이 고른 회사가 기본보다 앞선다', rr.ok && rr.routing.provider === 'openai');
 }
 
 // ---------------------------------------------------------------- 호스팅 실행 — 포트 · 주소 · 허용 호스트 · 출입 열쇠

@@ -139,11 +139,11 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
  *   credentials : 자격증명 서비스(ai/credentials.mjs) — 처음 설정에서 AI 키를 봉해 넣을 때 쓴다
  *   denyFrames : 남의 페이지 안(iframe)에 싣지 못하게 한다 — 운영에서만 켠다(작업 공간의 미리보기 창이 iframe 이다, docs/SECURITY.md §6)
  */
-export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null } = {}) {
+export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null, keyTester = null } = {}) {
   const store = createProjectStore(pool);
   const tenancy = createTenancy(pool);
   const wfs = createWorkflowSource(pool);
-  const edu = createEdu({ pool, credentials, wfs });
+  const edu = createEdu({ pool, credentials, wfs, keyTester });
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
 
   // 화면은 제 자리의 파일만 부른다 — 스크립트는 외부 파일만, 꾸밈은 style 속성을 쓰므로 인라인 꾸밈만 허락
@@ -416,6 +416,14 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const st = acc.read ? await stateOf(pid) : null;
         if (st && !acc.write) st.readOnly = true;   // 강사 · 기관 관리자의 열람 — 화면이 고치기 단추를 숨길 근거(막는 것은 서버다)
         if (!st) return json(res, 200, { ok: false, error: '없음', projects, me });
+        // 이 작품의 AI 회사 — 작품이 정한 것 · 비용 주체의 기본 · 키가 있는 회사들(화면의 «AI 회사» 칸)
+        const ar = (await pool.query(
+          `SELECT p.model_policy->>'provider' AS provider, p.organization_id, coalesce(o.settings->>'ai_provider', '') AS org_provider, coalesce(u.settings->>'ai_provider', '') AS user_provider,
+                  (SELECT coalesce(array_agg(DISTINCT c.provider), '{}') FROM provider_credentials c WHERE c.status = 'active'
+                     AND ((p.organization_id IS NOT NULL AND c.owner_type = 'organization' AND c.owner_id = p.organization_id::text)
+                       OR (p.organization_id IS NULL AND c.owner_type = 'user' AND c.owner_id = p.owner_user_id::text))) AS keys
+             FROM projects p LEFT JOIN organizations o ON o.id = p.organization_id LEFT JOIN users u ON u.id = p.owner_user_id WHERE p.id = $1`, [pid])).rows[0];
+        if (ar) st.ai = { provider: ar.provider || '', classWork: !!ar.organization_id, ownerDefault: ar.organization_id ? ar.org_provider : ar.user_provider, keys: ar.keys || [] };
         return json(res, 200, { ok: true, project: st, projects, me }, cache);
       }
 
@@ -470,7 +478,7 @@ export async function main(env = process.env) {
   const wfsW = createWorkflowSource(pool);
   const worker = env.SE_WORKER === '0' ? null : createWorker({ queue, store, call, allowed: (row) => tenancyW.aiAllowed(row.project_id), workflow: (pid) => wfsW.templateFor(pid) }, { log: (m) => console.log('  [worker] ' + m) });
   if (worker) await worker.start();
-  const srv = createOnlineServer({ pool, plan, queue, worker, credentials: ai.credentials, trustProxy: env.SE_TRUST_PROXY === '1', denyFrames: env.NODE_ENV === 'production' });
+  const srv = createOnlineServer({ pool, plan, queue, worker, credentials: ai.credentials, keyTester: ai.keyTester, trustProxy: env.SE_TRUST_PROXY === '1', denyFrames: env.NODE_ENV === 'production' });
   await new Promise((resolve) => srv.listen(plan.port, plan.host, resolve));
   console.log('  Story Engine (online) : listening on ' + plan.host + ':' + plan.port);
   console.log('  Host names   : ' + plan.allowedHosts.join(', '));

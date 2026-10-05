@@ -7,6 +7,8 @@ import { createUser, resetThrottle } from './auth.mjs';
 import { resetInviteThrottle } from './edu.mjs';
 import { createCredentialService } from '../ai/credentials.mjs';
 import { pgCredentialStore } from './credentials.mjs';
+import { createKeyTester } from './ai.mjs';
+import { createCatalog } from '../ai/catalog.mjs';
 
 const FAKE_ORG_KEY = 'fake-org-key-' + randomBytes(5).toString('hex');
 
@@ -15,7 +17,10 @@ export async function run({ pool, ok, eq }) {
   await createUser(pool, { loginId: 'edu-root', password: 'long-enough-root', isPlatformAdmin: true });
   await createUser(pool, { loginId: 'edu-plain', password: 'long-enough-plain' });
   const credentials = createCredentialService({ store: pgCredentialStore(pool), keys: { keys: new Map([[1, randomBytes(32)]]), current: 1 } });
-  const srv = createOnlineServer({ pool, plan: onlinePlan({}), credentials });
+  // 키 연결 시험 — 가짜 회사: «sk-good» 으로 시작하는 키만 맞다
+  const fakeCo = { validateCredential: async (c) => (c.apiKey.startsWith('sk-good') ? { ok: true } : { ok: false, reason: 'auth' }) };
+  const keyTester = createKeyTester({ catalog: createCatalog([{ provider: 'openai', tier: 'fast', modelId: 'gpt-fake' }]), credentials, providers: { openai: fakeCo } });
+  const srv = createOnlineServer({ pool, plan: onlinePlan({}), credentials, keyTester });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const base = 'http://127.0.0.1:' + srv.address().port;
   const jar = {};
@@ -172,6 +177,24 @@ export async function run({ pool, ok, eq }) {
       && (await edu('edu-s2', 'me.key.set', { provider: 'google', apiKey: 'AIza-fake-gemini-0001' })).ok
       && (await edu('edu-s2', 'me.key.list')).credentials.filter((c) => c.status === 'active').map((c) => c.provider).sort().join() === 'google,openai');
     eq('모르는 회사는 받지 않는다', (await edu('edu-s2', 'me.key.set', { provider: 'mystery', apiKey: 'x-0000000000' })).status, 422);
+    const bad = await edu('edu-s2', 'me.key.test', { provider: 'openai' });
+    ok('**연결 확인 — 틀린 키는 «키가 맞지 않습니다»**', bad.ok && bad.verified === false && bad.say === '키가 맞지 않습니다', JSON.stringify(bad));
+    await edu('edu-s2', 'me.key.set', { provider: 'openai', apiKey: 'sk-good-openai-0001' });
+    const good = await edu('edu-s2', 'me.key.test', { provider: 'openai' });
+    ok('**연결 확인 — 맞는 키는 «연결됩니다», 확인한 때가 남는다**', good.verified === true && (await edu('edu-s2', 'me.key.list')).credentials.find((c) => c.provider === 'openai' && c.status === 'active').lastVerifiedAt > 0);
+    ok('**키 지우기 — 그 회사 키가 끊긴다**', (await edu('edu-s2', 'me.key.revoke', { provider: 'openai' })).ok
+      && !(await edu('edu-s2', 'me.key.list')).credentials.some((c) => c.provider === 'openai' && c.status === 'active'));
+    // ---------------- AI 회사 고르기 — 사람 기본 · 작품마다 · 기관
+    ok('사람마다 기본 회사를 고른다', (await edu('edu-s2', 'me.ai.set', { provider: 'google' })).ok && (await edu('edu-s2', 'me.memberships')).aiProvider === 'google');
+    eq('모르는 회사는 고르지 못한다', (await edu('edu-s2', 'me.ai.set', { provider: 'mystery' })).status, 422);
+    const mine2 = await api('edu-s2', 'project.create', { name: '개인 것', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }] });
+    ok('**작품마다 회사를 고른다(개인 작품)**', (await edu('edu-s2', 'project.ai.set', { pid: mine2.pid, provider: 'openai' })).ok);
+    const st2 = (await (await fetch(base + '/api/state?pid=' + mine2.pid, { headers: { cookie: jar['edu-s2'] } })).json()).project;
+    ok('작품 화면에 고른 회사 · 내 기본 · 키 있는 회사가 실린다', st2.ai && st2.ai.provider === 'openai' && st2.ai.ownerDefault === 'google' && !st2.ai.classWork, JSON.stringify(st2.ai));
+    eq('**남의 작품 회사는 못 바꾼다**', (await edu('edu-s1', 'project.ai.set', { pid: mine2.pid, provider: 'google' })).status, 404);
+    eq('**수업 작품 회사는 학생이 못 바꾼다(기관이 정한다)**', (await edu('edu-s1', 'project.ai.set', { pid: proj.pid, provider: 'google' })).status, 403);
+    ok('기관이 회사를 고른다', (await edu('edu-oa', 'org.settings', { orgId: org.id, aiProvider: 'anthropic' })).settings.ai_provider === 'anthropic');
+    eq('**남의 기관 키는 확인 · 지우기 못 한다**', (await edu('edu-s2', 'org.key.revoke', { orgId: org.id, provider: 'anthropic' })).status, 404);
     const mk = await edu('edu-s1', 'me.key.set', { apiKey: MY_KEY });
     ok('**누구나 내 AI 키를 넣는다 — 돌려받는 것은 끝 네 자리뿐**', mk.ok && !JSON.stringify(mk).includes(MY_KEY) && !JSON.stringify(await edu('edu-s1', 'me.key.list')).includes(MY_KEY)
       && (await edu('edu-s1', 'me.key.list')).credentials.length === 1);

@@ -193,10 +193,41 @@ S.prov = {};
 const provOf = (k) => S.prov[k] || 'anthropic';
 const providerPick = (k) => h('div', { class: 'line', style: 'margin-top:10px' },
   Object.entries(AI_CO).map(([p, name]) => h('button', { class: provOf(k) === p ? 'btn' : 'btn-line', text: name, onclick: () => { S.prov[k] = p; render(); } })));
-const keysSay = (list) => {
-  const live = (list || []).filter((x) => x.status === 'active');
-  return live.length ? '넣어 둔 키: ' + live.map((x) => (AI_CO[x.provider] || x.provider) + ' ' + x.keyHint).join(' · ') : '아직 없습니다';
-};
+// 쓸 AI 회사 고르기 — 키가 없는 회사는 «키 없음»을 단다(골라도 키를 넣기 전에는 «연결 필요»로 멈춘다)
+function aiChoice(label, current, keys, save) {
+  const have = new Set((keys || []).filter((x) => x.status === 'active').map((x) => x.provider));
+  return h('div', { style: 'margin-top:12px' },
+    h('div', { class: 'lab', text: label }),
+    h('div', { class: 'line' }, Object.entries(AI_CO).map(([p, name]) => h('button', {
+      class: current === p ? 'btn' : 'btn-line', text: name + (have.has(p) ? '' : ' (키 없음)'), onclick: () => save(p),
+    }))),
+    current ? null : h('div', { class: 'when', style: 'margin-top:4px', text: '아직 고르지 않았습니다 — 고르기 전에는 키를 넣어 둔 회사 가운데 하나를 씁니다.' }));
+}
+
+// 넣어 둔 키 — 회사 · 끝 네 자리 · 확인 상태, 그리고 [연결 확인] [지우기]
+const KEY_ERR = { auth: '키가 맞지 않음', credit: '잔액 없음', rate: '요청 많음', model: '모델 표 없음', overloaded: '회사 서버 바쁨', timeout: '응답 늦음' };
+function keyRows(list, op, extra, reload) {
+  const live = (list || []).filter((x) => x.status === 'active' || x.status === 'invalid');
+  if (!live.length) return h('div', { class: 'when', text: '아직 없습니다' });
+  const test = async (x) => {
+    tell('확인하는 중…');
+    const r = await edu(op + '.test', { ...extra, provider: x.provider });
+    tell(r.ok ? (AI_CO[x.provider] + ' — ' + r.say) : r.error);
+    await reload();
+  };
+  const revoke = async (x) => {
+    if (!confirm(AI_CO[x.provider] + ' 키를 지울까요? 이 키로 돌던 AI 작업은 «연결 필요»로 멈춥니다.')) return;
+    const r = await edu(op + '.revoke', { ...extra, provider: x.provider });
+    if (!r.ok) return tell(r.error);
+    tell('지웠습니다');
+    await reload();
+  };
+  return live.map((x) => h('div', { class: 'row', style: 'cursor:default' },
+    h('div', { class: 'name', text: (AI_CO[x.provider] || x.provider) + ' ' + x.keyHint }),
+    h('span', { class: 'mark', text: x.status === 'invalid' ? '키가 맞지 않음' : x.lastErrorCode ? (KEY_ERR[x.lastErrorCode] || '연결 안 됨') : x.lastVerifiedAt ? '확인됨 ' + day(x.lastVerifiedAt) : '확인 전' }),
+    h('button', { class: 'btn-text', text: '연결 확인', onclick: () => test(x) }),
+    h('button', { class: 'btn-text red', text: '지우기', onclick: () => revoke(x) })));
+}
 
 // ---------------------------------------------------------------- 내 AI 키(누구나 — 쓰기 전용). 내 개인 작품의 AI 는 이 키로.
 function myKeyBox() {
@@ -210,8 +241,13 @@ function myKeyBox() {
     tell('저장했습니다');
   };
   return section('내 AI 키',
-    h('div', { class: 'when', text: keysSay(S.myKeys) }),
-    h('div', { class: 'when', style: 'margin-top:4px', text: '내 개인 작품의 AI 는 이 키로 돌고 비용은 키 주인에게 나갑니다. 여럿 넣으면 Claude → ChatGPT → Gemini 차례로 씁니다. 수업 작품은 기관 키로 돕니다. 만 14세 이상만 넣어 주세요.' }),
+    keyRows(S.myKeys, 'me.key', {}, async () => { S.myKeys = (await edu('me.key.list')).credentials || []; render(); }),
+    h('div', { class: 'when', style: 'margin-top:4px', text: '내 개인 작품의 AI 는 이 키로 돌고 비용은 키 주인에게 나갑니다. 수업 작품은 기관 키로 돕니다. 만 14세 이상만 넣어 주세요.' }),
+    aiChoice('개인 작품에 쓸 AI 회사(작품마다 설정 탭에서 바꿀 수 있습니다)', (S.me && S.me.aiProvider) || '', S.myKeys, async (p) => {
+      const r = await edu('me.ai.set', { provider: p });
+      if (!r.ok) return tell(r.error);
+      S.me.aiProvider = r.provider; tell(AI_CO[p] + '를 씁니다');
+    }),
     providerPick(k),
     h('div', { class: 'line', style: 'align-items:flex-end;margin-top:10px' },
       field(AI_KEY_LABEL[provOf(k)], 'mk-key', 'password', { autocomplete: 'off', spellcheck: 'false' }),
@@ -270,7 +306,13 @@ function orgBox(id) {
     h('div', { class: 'lab', style: 'margin-top:16px', text: '초대 코드' }),
     inviteList('o-' + id, id, null),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '기관 AI 키(학생 작업이 이 키로 돕니다)' }),
-    h('div', { class: 'when', text: keysSay(keys) + ' — 여럿이면 Claude → ChatGPT → Gemini 차례로 씁니다' }),
+    keyRows(keys, 'org.key', { orgId: id }, load),
+    aiChoice('이 기관 작품에 쓸 AI 회사', (org.settings && org.settings.ai_provider) || '', keys, async (p) => {
+      const r = await edu('org.settings', { orgId: id, aiProvider: p });
+      if (!r.ok) return tell(r.error);
+      S.say = AI_CO[p] + '를 씁니다';
+      await load();
+    }),
     providerPick('ok-' + id),
     h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
       field(AI_KEY_LABEL[provOf('ok-' + id)], 'ok-' + id, 'password', { autocomplete: 'off', spellcheck: 'false' }), h('button', { class: 'btn-line', text: '저장', onclick: saveKey })),

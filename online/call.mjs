@@ -27,7 +27,12 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
 
   // 공통 — 기록을 남기고 · 라우터로 부르고 · 결과를 적는다
   async function send(pid, project, { systemPrompt, userPrompt, alias, modelSource = '', code, inputs = [], request = '', requestOnce = '', stageKey = '', target = '', signal = null }, ctx) {
-    const row = (await pool.query('SELECT owner_user_id, organization_id FROM projects WHERE id = $1', [pid])).rows[0];
+    // 고른 AI 회사 — 작품이 정했으면 그것, 아니면 비용 주체의 기본(기관 작품은 기관, 개인 작품은 그 사람)
+    const row = (await pool.query(
+      `SELECT p.owner_user_id, p.organization_id, p.model_policy->>'provider' AS project_provider,
+              coalesce(o.settings->>'ai_provider', '') AS org_provider, coalesce(u.settings->>'ai_provider', '') AS user_provider
+         FROM projects p LEFT JOIN organizations o ON o.id = p.organization_id LEFT JOIN users u ON u.id = p.owner_user_id
+        WHERE p.id = $1`, [pid])).rows[0];
     const tdoc = await ids(pid, 'documents', target);
     const thread = ctx.threadId ? await ids(pid, 'threads', ctx.threadId) : null;
     const run = (await pool.query(
@@ -50,7 +55,10 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
       metadata: {
         project: { id: pid, ownerUserId: row.owner_user_id, organizationId: row.organization_id },
         policy: policyOf(row),
-        model: { project: tier ? { tier } : null },
+        model: {
+          project: tier || row.project_provider ? { ...(tier ? { tier } : {}), ...(row.project_provider ? { provider: row.project_provider } : {}) } : null,
+          org: (row.organization_id ? row.org_provider : row.user_provider) ? { provider: row.organization_id ? row.org_provider : row.user_provider } : null,
+        },
       },
     });
     const text = r.ok ? cleanResponse(r.text) : '';

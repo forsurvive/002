@@ -37,7 +37,7 @@ const tries = new Map();
 const TRY_LIMIT = 10; const TRY_WINDOW = 15 * 60 * 1000;
 export function resetInviteThrottle() { tries.clear(); }
 
-export function createEdu({ pool, credentials = null, wfs = null }) {
+export function createEdu({ pool, credentials = null, wfs = null, keyTester = null }) {
   const one = async (sql, args) => (await pool.query(sql, args)).rows[0] || null;
   const rolesIn = async (userId, orgId) => new Set((await pool.query(
     `SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2 AND status = 'active'`, [orgId, userId])).rows.map((r) => r.role));
@@ -65,7 +65,8 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
            FROM projects p JOIN organizations o ON o.id = p.organization_id
           WHERE p.owner_user_id = $1 AND p.class_id IS NOT NULL AND p.deleted_at IS NULL ORDER BY p.updated_at DESC`, [user.id])).rows;
       for (const c of classes) c.works = works.filter((w) => w.class_id === c.id).map((w) => ({ id: w.id, name: w.name, canCopy: w.can_copy }));
-      return ok({ loginId: user.loginId, displayName: user.displayName, platformAdmin: !!user.isPlatformAdmin, organizations: orgs, classes });
+      const mine = await one('SELECT settings FROM users WHERE id = $1', [user.id]);
+      return ok({ loginId: user.loginId, displayName: user.displayName, platformAdmin: !!user.isPlatformAdmin, organizations: orgs, classes, aiProvider: (mine && mine.settings && mine.settings.ai_provider) || '' });
     },
 
     // ---------------- 기관 · 라이선스(플랫폼 관리자)
@@ -105,6 +106,11 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
       if (typeof b.studentCards === 'boolean') patch.student_cards = b.studentCards;
       // 학생이 수업 작품을 개인 작품으로 복사해 갈 수 있는가(기본 허용)
       if (typeof b.allowCopy === 'boolean') patch.allow_copy = b.allowCopy;
+      // 이 기관 작품에 쓸 AI 회사(''이면 고르지 않음 — 키를 넣은 회사 가운데 하나)
+      if (typeof b.aiProvider === 'string') {
+        if (b.aiProvider && !PROVIDER_IDS.includes(b.aiProvider)) return no(422, '모르는 AI 회사입니다', 'validation');
+        patch.ai_provider = b.aiProvider;
+      }
       const o = await one('UPDATE organizations SET settings = settings || $2::jsonb, updated_at = now() WHERE id = $1 RETURNING settings', [b.orgId, JSON.stringify(patch)]);
       await log(user, b.orgId, 'org.settings', 'organization', b.orgId, patch, ip);
       return ok({ settings: o.settings });
@@ -348,8 +354,38 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
       await log(user, null, 'credential.set', 'user', user.id, { provider, ownerType: 'user', credentialId: r.credential.id }, ip);
       return ok({ credential: r.credential });
     },
+    // 쓸 AI 회사 고르기 — 사람마다 기본(개인 작품에 쓴다). '' 는 «고르지 않음»(키를 넣은 회사 가운데 하나).
+    async 'me.ai.set'(user, b, ip) {
+      const p = String(b.provider || '');
+      if (p && !PROVIDER_IDS.includes(p)) return no(422, '모르는 AI 회사입니다', 'validation');
+      await pool.query(`UPDATE users SET settings = settings || jsonb_build_object('ai_provider', $2::text), updated_at = now() WHERE id = $1`, [user.id, p]);
+      await log(user, null, 'ai.choose', 'user', user.id, { provider: p }, ip);
+      return ok({ provider: p });
+    },
+    // 작품마다 회사 — 개인 작품의 주인만. 수업 작품은 기관이 정한다(학생은 고르지 않는다).
+    async 'project.ai.set'(user, b, ip) {
+      const p = String(b.provider || '');
+      if (p && !PROVIDER_IDS.includes(p)) return no(422, '모르는 AI 회사입니다', 'validation');
+      const row = isUuid(b.pid) ? await one('SELECT owner_user_id, organization_id FROM projects WHERE id = $1 AND deleted_at IS NULL', [b.pid]) : null;
+      if (!row || row.owner_user_id !== user.id) return NOT_FOUND;
+      if (row.organization_id) return no(403, '수업 작품의 AI 회사는 기관이 정합니다', 'forbidden');
+      await pool.query(`UPDATE projects SET model_policy = model_policy || jsonb_build_object('provider', $2::text), updated_at = now() WHERE id = $1`, [b.pid, p]);
+      await log(user, null, 'ai.choose', 'project', b.pid, { provider: p }, ip);
+      return ok({ provider: p });
+    },
     async 'me.key.list'(user) {
       return ok({ credentials: credentials ? await credentials.list('user', user.id) : [] });
+    },
+    // 연결 확인 — 그 회사에 아주 짧게 한 번 묻는다(비용은 거의 없다). 결과(확인한 때 · 실패 갈래)는 키 목록에 보인다.
+    async 'me.key.test'(user, b) { return testKey({ ownerUserId: user.id }, b.provider); },
+    async 'me.key.revoke'(user, b, ip) { return revokeKey(user, 'user', user.id, null, b.provider, ip); },
+    async 'org.key.test'(user, b) {
+      if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
+      return testKey({ organizationId: b.orgId }, b.provider);
+    },
+    async 'org.key.revoke'(user, b, ip) {
+      if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
+      return revokeKey(user, 'organization', b.orgId, b.orgId, b.provider, ip);
     },
 
     // ---------------- 수업 작품 → 내 개인 작품으로 복사(원본은 기관에 그대로). 문서 · 판 이력 · 확정본 · 논의가 따라간다.
@@ -386,6 +422,22 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
       return ok({ credentials: await credentials.list('organization', b.orgId) });
     },
   };
+
+  const KEY_SAY = { auth: '키가 맞지 않습니다', credit: '잔액(크레딧)이 없습니다', rate: '잠시 뒤에 다시 해 보세요(요청이 많습니다)', model: '이 회사의 모델 표가 없습니다', credential_missing: '넣어 둔 키가 없습니다', credential_unreadable: '키를 열 수 없습니다(마스터 키가 바뀌었나요?)', overloaded: '그 회사 서버가 바쁩니다 — 잠시 뒤에', timeout: '응답이 늦습니다 — 잠시 뒤에' };
+  async function testKey(owner, provider) {
+    if (!credentials || !keyTester) return no(503, '지금은 확인할 수 없습니다', 'unavailable');
+    if (!PROVIDER_IDS.includes(provider)) return no(422, '모르는 AI 회사입니다', 'validation');
+    const r = await keyTester(owner, provider);
+    return ok({ verified: !!r.ok, reason: r.reason || '', say: r.ok ? '연결됩니다' : (KEY_SAY[r.reason] || '연결되지 않습니다') });
+  }
+  async function revokeKey(user, ownerType, ownerId, orgId, provider, ip) {
+    if (!credentials) return no(503, '지금은 할 수 없습니다', 'unavailable');
+    const live = (await credentials.list(ownerType, ownerId)).filter((c) => c.status === 'active' && c.provider === provider);
+    if (!live.length) return NOT_FOUND;
+    for (const c of live) await credentials.revoke(c.id);
+    await log(user, orgId, 'credential.revoke', ownerType, ownerId, { provider, ownerType }, ip);
+    return ok();
+  }
 
   // 초대 코드 확인 — 맞고, 기관이 살아 있고, (학생이면) 이용 기간 · 자리가 남았는가. 틀리면 맞히기 횟수에 센다.
   async function findInvite(user, b, ip) {

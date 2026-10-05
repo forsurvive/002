@@ -119,5 +119,5 @@
       }
     }
   ],
-  "_provider_note": "회사를 정하지 않으면 비용 주체(기관 · 본인)가 키를 넣어 둔 회사로 간다 — Claude → ChatGPT → Gemini 차례(ai/router.mjs)."
+  "_provider_note": "회사는 작품 → 비용 주체의 기본(사람 · 기관) 차례로 고른 것을 쓴다. 아무도 고르지 않았을 때만 키를 넣어 둔 회사 가운데 하나(ai/router.mjs)."
 }

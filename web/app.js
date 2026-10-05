@@ -658,6 +658,30 @@ function threadSection() {
 
 // ---------------------------------------------------------------- 설정
 
+// 온라인판 — 이 작품에 쓸 AI 회사. 개인 작품은 주인이 고르고, 수업 작품은 기관이 정한 것을 보여 준다(개인판에는 없다).
+const AI_CO = { anthropic: 'Claude', openai: 'ChatGPT', google: 'Gemini' };
+function aiCompany(p) {
+  if (!p.ai || S.tour) return null;
+  const a = p.ai;
+  const keys = new Set(a.keys || []);
+  const name = (x) => AI_CO[x] || '';
+  if (a.classWork) {
+    return h('div', null, h('div', { class: 'lab', text: 'AI 회사' }),
+      h('div', { class: 'when', text: a.ownerDefault ? '기관이 정한 회사: ' + name(a.ownerDefault) : '기관이 아직 회사를 고르지 않았습니다' }));
+  }
+  const set = async (provider) => {
+    const r = await fetch('/api/edu', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'project.ai.set', pid: S.pid, provider }) })
+      .then((x) => x.json()).catch(() => ({ ok: false }));
+    if (r.ok) { a.provider = r.provider; render(); }
+  };
+  return h('div', null,
+    h('div', { class: 'lab', text: '이 작품에 쓸 AI 회사' }),
+    h('div', { class: 'line' },
+      h('button', { class: !a.provider ? 'btn' : 'btn-line', text: '내 기본' + (a.ownerDefault ? '(' + name(a.ownerDefault) + ')' : ''), onclick: () => set('') }),
+      Object.keys(AI_CO).map((x) => h('button', { class: a.provider === x ? 'btn' : 'btn-line', text: name(x) + (keys.has(x) ? '' : ' (키 없음)'), onclick: () => set(x) }))),
+    !keys.size ? h('div', { class: 'when', style: 'margin-top:4px', text: '키는 «내 계정 → 내 AI 키»에서 넣습니다' }) : null);
+}
+
 function settings() {
   const p = S.project;
   const save = async () => {
@@ -683,6 +707,7 @@ function settings() {
     h('div', { class: 'grid2' }, field('set-length', '분량', p.spec.length), h('div')),
     field('set-standard', '집필 기준', p.standard, true),
     field('set-request', '요청사항', p.request, true),
+    aiCompany(p),
     // 자료는 작업실 «자료» 카테고리의 보통 문서다(사용자 지시, 2026-09-28) — 여기에는 어디 있는지만 이른다.
     h('div', null,
       h('div', { class: 'lab', text: '자료' }),

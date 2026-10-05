@@ -1,7 +1,10 @@
 # AI Provider 추상화 설계
 
 > 결정(2026-10-05, 사용자): **Claude · ChatGPT · Gemini 세 회사를 모두 지원**한다. 카탈로그(`config/models.json`)에 세 회사 × 세 등급이 있고,
-> 회사를 정하지 않은 호출은 비용 주체(기관 · 본인)가 키를 넣어 둔 회사로 간다 — Claude → ChatGPT → Gemini 차례(`ai/router.mjs`). 키는 «내 계정» · «관리 → 기관 AI 키»에서 회사를 골라 넣는다.
+> **회사는 사람이 고른다**(사용자 지시 2026-10-05 — «차례로 쓰지 말고 고르게»): 작품마다(«설정 → 이 작품에 쓸 AI 회사», 개인 작품만) > 비용 주체의 기본
+> («내 계정 → 개인 작품에 쓸 AI 회사» · «관리 → 이 기관 작품에 쓸 AI 회사»). 수업 작품은 기관이 정한다(학생은 고르지 않는다). 아무도 고르지 않았을 때만
+> 키를 넣어 둔 회사 가운데 하나로 간다(`ai/router.mjs`). 저장: `projects.model_policy.provider` · `users.settings.ai_provider`(migrations/006) · `organizations.settings.ai_provider`.
+> 키마다 «연결 확인»(가장 싼 등급으로 아주 짧게 한 번) · «지우기».
 > OpenAI 가격은 공식 페이지에 닿지 못해 2차 자료 기준 — 운영자가 맞춰 볼 것. 실제 키 연기 시험은 아직(사용자 확인 대기).
 
 > 상태: **설계 v1 (2026-10-04)**. 구현: 계약 `ai/provider.mjs` · CLI `ai/local-cli.mjs` · Anthropic `ai/anthropic.mjs` · OpenAI `ai/openai.mjs`(공식 OpenAPI 명세 확인) · Gemini `ai/gemini.mjs`(공식 API 문서 확인). 모두 가짜 API 로만 시험 — 실제 키 연기 시험과 앱 연결(카탈로그 · credential)은 다음.
