@@ -98,7 +98,8 @@
 | 묶음 | op | 누가 | 메모 |
 |---|---|---|---|
 | 인증 | `auth.signup` `auth.login` `auth.logout` `auth.me` `auth.password` | 누구나/본인 | `auth.signup` 은 **닫혀 있다**(결정: 지금은 운영자 발급, 자유 가입은 BYOK + 월 이용료 — 결제 결정 후, SECURITY §7-0). 로그인 실패는 같은 문구, 속도 제한 |
-| 초대 | `invite.create` `invite.accept` | 기관 관리자·강사 / 학생 | 코드 원문은 만들 때 한 번만 보여 준다 |
+| 초대 | `invite.create` `invite.accept` `invite.list` `invite.revoke` | 기관 관리자·강사 / 학생 | 코드 원문은 만들 때 한 번만 보여 준다 |
+<!-- invite.list: 아직 쓸 수 있는 코드(원문 없이) — 기관 관리자 · 최상위는 기관 것 모두, 강사는 맡은 수업 것만. 관리 · 내 수업 화면의 «초대 코드 목록»에서 취소한다. -->
 | 기관 | `org.create` `org.update` `org.list` `org.members` `org.member.add/remove/role` | 플랫폼 관리자 / 기관 관리자 | 감사 로그 |
 | 라이선스 | `license.issue` `license.update` `license.revoke` `license.read` | 플랫폼 관리자 / 기관 관리자(읽기) | 감사 로그 |
 | 수업 | `class.create` `class.update` `class.list` `class.members` `class.enroll` `class.progress` | 기관 관리자·강사 | `class.progress` = 학생별 현재 단계·최근 작업 상태 |

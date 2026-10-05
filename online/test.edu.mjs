@@ -108,7 +108,12 @@ export async function run({ pool, ok, eq }) {
     await pool.query("UPDATE invites SET expires_at = now() - interval '1 second' WHERE id = $1", [old.id]);
     eq('기한이 지난 코드', (await edu(null, 'invite.accept', { code: old.code, loginId: 'edu-late', password: 'long-enough-late' })).status, 404);
     const rv = (await edu('edu-oa', 'invite.create', { orgId: org.id, classId: c2.id, role: 'student' })).invite;
+    const il = await edu('edu-oa', 'invite.list', { orgId: org.id });
+    ok('**기관 관리자는 쓸 수 있는 초대 코드 목록을 본다(코드 원문 없이)**', il.ok && il.invites.some((x) => x.id === rv.id) && !JSON.stringify(il).includes(rv.code));
+    eq('**학생은 초대 코드 목록을 못 본다**', (await edu('edu-s1', 'invite.list', { orgId: org.id })).status, 404);
+    ok('강사는 제 수업 것만 본다', (await edu('edu-in', 'invite.list', { orgId: org.id })).invites.every((x) => x.classId === c1.id));
     await edu('edu-oa', 'invite.revoke', { inviteId: rv.id });
+    ok('취소한 코드는 목록에서 빠진다', !(await edu('edu-oa', 'invite.list', { orgId: org.id })).invites.some((x) => x.id === rv.id));
     eq('거둔 코드', (await edu(null, 'invite.accept', { code: rv.code, loginId: 'edu-revoked', password: 'long-enough-rv' })).status, 404);
 
     // ---------------- 수업 프로젝트 → 수업 현황

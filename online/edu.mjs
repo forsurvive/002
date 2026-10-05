@@ -213,6 +213,21 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
       await log(user, b.orgId, 'invite.create', 'invite', inv.id, { role, classId, days, maxUses }, ip);
       return ok({ invite: { ...inv, code } });   // 원문은 이번 한 번뿐
     },
+    // 아직 쓸 수 있는 초대 코드 — 코드 원문은 없다(만들 때 한 번만 보였다). 새어 나갔으면 여기서 취소한다.
+    // 기관 관리자 · 최상위는 그 기관 것 모두, 강사는 제가 맡은 수업 것만.
+    async 'invite.list'(user, b) {
+      if (!isUuid(b.orgId)) return NOT_FOUND;
+      const admin = await isAdmin(user, b.orgId);
+      if (!admin && !(await one(`SELECT 1 FROM class_members WHERE organization_id = $1 AND user_id = $2 AND role = 'instructor' LIMIT 1`, [b.orgId, user.id]))) return NOT_FOUND;
+      const rows = (await pool.query(
+        `SELECT i.id, i.role, i.class_id, c.name AS class_name, i.used_count, i.max_uses, i.expires_at, i.created_at, u.login_id AS made_by
+           FROM invites i LEFT JOIN classes c ON c.id = i.class_id LEFT JOIN users u ON u.id = i.created_by
+          WHERE i.organization_id = $1 AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses
+            AND ($2::boolean OR i.class_id IN (SELECT class_id FROM class_members WHERE user_id = $3 AND role = 'instructor'))
+          ORDER BY i.created_at DESC`, [b.orgId, !!admin, user.id])).rows;
+      return ok({ invites: rows.map((r) => ({ id: r.id, role: r.role, classId: r.class_id, className: r.class_name || '', used: r.used_count, max: r.max_uses,
+        expiresAt: new Date(r.expires_at).getTime(), createdAt: new Date(r.created_at).getTime(), madeBy: r.made_by || '' })) });
+    },
     async 'invite.revoke'(user, b, ip) {
       const inv = isUuid(b.inviteId) ? await one('SELECT id, organization_id, class_id FROM invites WHERE id = $1', [b.inviteId]) : null;
       if (!inv || !((await isAdmin(user, inv.organization_id)) || (inv.class_id && await teaches(user.id, inv.class_id)))) return NOT_FOUND;

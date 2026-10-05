@@ -6,12 +6,12 @@ try { if (localStorage.getItem('se-theme') === 'light') document.documentElement
 // 온라인판의 세 화면이 이 한 파일을 쓴다(<body data-page>로 가른다).
 //   school.html  «내 수업»  — 들어가 있는 수업 · 내 수업 작품(열기 · 개인 작품으로 복사) · 수업 현황 · 학생 초대 코드(강사) · 새 수업 코드 넣기
 //   account.html «내 계정»  — 새 수업 코드 넣기 · 내 AI 키 · 내 비밀번호 바꾸기(누구나)
-//   manage.html «관리»  — 운영자(플랫폼 관리자)와 기관 관리자만: 기관 · 이용 기간 · 수업 · 초대 · 사람(비밀번호 재설정 · 내보내기) · 기관 키 · 사용량
+//   manage.html «관리»  — 운영자(플랫폼 관리자)와 기관 관리자만: 기관 · 이용 기간 · 수업 · 초대 · 사용자(비밀번호 재설정 · 내보내기) · 기관 키 · 사용량
 // 모든 판정은 서버(online/edu.mjs · tenancy)가 한다. 이 화면은 서버가 허락한 것을 보여 줄 뿐이다.
 // 학생에게 비용 · 횟수 · 키를 보이지 않는다. 초대 코드는 만든 그 자리에서 한 번만 보인다.
 
 const PAGE = ['manage', 'account'].includes(document.body.dataset.page) ? document.body.dataset.page : 'school';
-const S = { me: null, loggedIn: false, orgs: {}, progress: {}, shown: {}, say: '', open: {}, usage: {}, members: {}, wf: {}, wfOpen: {} };
+const S = { me: null, loggedIn: false, orgs: {}, progress: {}, shown: {}, say: '', open: {}, usage: {}, members: {}, wf: {}, wfOpen: {}, invites: {} };
 
 function h(tag, attrs, ...kids) {
   const n = document.createElement(tag);
@@ -71,10 +71,41 @@ const codeBox = (key) => (S.shown[key] ? h('div', { class: 'line', style: 'margi
   h('div', { class: 'mark', style: 'font-size:15px;padding:6px 10px', text: S.shown[key] }),
   h('div', { class: 'when', text: '지금만 보입니다 — 적어서 전해 주세요' })) : null);
 
+// 아직 쓸 수 있는 초대 코드 — 열고 닫는다. 코드 원문은 없다(만들 때 한 번만 보였다). 새어 나갔으면 취소한다.
+async function toggleInvites(key, orgId) {
+  if (S.invites[key]) { delete S.invites[key]; render(); return; }
+  const r = await edu('invite.list', { orgId });
+  if (!r.ok) return tell(r.error);
+  S.invites[key] = r.invites;
+  render();
+}
+function inviteList(key, orgId, classId) {
+  const list = S.invites[key];
+  const btn = h('button', { class: 'btn-line', text: list ? '초대 코드 목록 닫기' : '초대 코드 목록', onclick: () => toggleInvites(key, orgId) });
+  if (!list) return btn;
+  const rows = list.filter((x) => !classId || x.classId === classId);
+  const revoke = async (x) => {
+    if (!confirm('이 초대 코드를 취소할까요? 이미 들어온 사람은 그대로이고, 앞으로 이 코드로는 들어올 수 없습니다.')) return;
+    const r = await edu('invite.revoke', { inviteId: x.id });
+    if (!r.ok) return tell(r.error);
+    delete S.invites[key];
+    await toggleInvites(key, orgId);
+  };
+  return h('div', { style: 'width:100%' }, btn,
+    rows.length ? rows.map((x) => h('div', { class: 'row', style: 'cursor:default' },
+      h('div', { class: 'name', text: (ROLE_SAY[x.role] || x.role) + (x.className ? ' · ' + x.className : '') }),
+      h('span', { class: 'mark', text: x.used + ' / ' + x.max + '명' }),
+      h('div', { class: 'when', text: '~ ' + day(x.expiresAt) + (x.madeBy ? ' · ' + x.madeBy : '') }),
+      h('button', { class: 'btn-text red', text: '취소', onclick: () => revoke(x) })))
+      : h('div', { class: 'when', style: 'margin-top:6px', text: '쓸 수 있는 초대 코드가 없습니다' }));
+}
+
 async function makeInvite(key, orgId, classId, role) {
   const r = await edu('invite.create', { orgId, classId, role });
   if (!r.ok) return tell(r.error);
   S.shown[key] = r.invite.code;
+  // 열려 있는 초대 코드 목록에도 새 코드가 서게 다시 받는다
+  for (const k of ['o-' + orgId, 'c-' + classId]) if (S.invites[k]) { delete S.invites[k]; await toggleInvites(k, orgId); }
   render();
 }
 
@@ -118,6 +149,7 @@ function progressBox(c) {
 }
 
 async function showProgress(c) {
+  if (S.progress[c.id]) { delete S.progress[c.id]; render(); return; }   // 열려 있으면 닫는다
   const r = await edu('class.progress', { classId: c.id });
   if (!r.ok) return tell(r.error);
   S.progress[c.id] = r;
@@ -134,10 +166,11 @@ function myClasses() {
       c.status !== 'active' ? h('span', { class: 'mark', text: '닫힘' }) : null),
     h('div', { class: 'line', style: 'margin-top:8px' },
       c.role === 'instructor' ? [
-        h('button', { class: 'btn-line', text: '수업 현황', onclick: () => showProgress(c) }),
+        h('button', { class: 'btn-line', text: S.progress[c.id] ? '현황 닫기' : '수업 현황', onclick: () => showProgress(c) }),
         h('button', { class: 'btn-line', text: '학생 초대 코드', onclick: () => makeInvite('s-' + c.id, c.organization_id, c.id, 'student') }),
       ] : null),
     codeBox('s-' + c.id),
+    c.role === 'instructor' ? h('div', { style: 'margin-top:8px' }, inviteList('c-' + c.id, c.organization_id, c.id)) : null,
     (c.works || []).map((w) => h('div', { class: 'row', style: 'cursor:default' },
       h('div', { class: 'name', style: 'flex:1', text: w.name }),
       h('a', { class: 'btn-text', href: '/?pid=' + encodeURIComponent(w.id), text: '열기' }),
@@ -212,7 +245,7 @@ function orgBox(id) {
         h('div', { class: 'name', style: 'flex:1', text: c.name }),
         h('span', { class: 'mark', text: '학생 ' + (c.students || 0) }),
         c.status !== 'active' ? h('span', { class: 'mark', text: '닫힘' }) : null,
-        h('button', { class: 'btn-text', text: '현황', onclick: () => showProgress(c) }),
+        h('button', { class: 'btn-text', text: S.progress[c.id] ? '현황 닫기' : '현황', onclick: () => showProgress(c) }),
         h('button', { class: 'btn-text', text: '학생 초대', onclick: () => makeInvite('s-' + c.id, id, c.id, 'student') }),
         h('button', { class: 'btn-text', text: '강사 초대', onclick: () => makeInvite('i-' + c.id, id, c.id, 'instructor') }),
         h('button', { class: 'btn-text' + (c.status === 'active' ? ' red' : ''), text: c.status === 'active' ? '닫기' : '다시 열기',
@@ -222,16 +255,19 @@ function orgBox(id) {
     h('div', { class: 'lab', style: 'margin-top:16px', text: '기관 관리자' }),
     h('div', { class: 'line' }, h('button', { class: 'btn-line', text: '기관 관리자 초대 코드', onclick: () => makeInvite('a-' + id, id, null, 'organization_admin') })),
     codeBox('a-' + id),
+    h('div', { class: 'lab', style: 'margin-top:16px', text: '초대 코드' }),
+    inviteList('o-' + id, id, null),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '기관 AI 키(학생 작업이 이 키로 돕니다)' }),
     h('div', { class: 'when', text: keys.filter((k) => k.status === 'active').map((k) => k.provider + ' ' + k.keyHint).join(' · ') || '아직 없습니다' }),
     h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
       field('Anthropic API 키', 'ok-' + id, 'password', { autocomplete: 'off', spellcheck: 'false' }), h('button', { class: 'btn-line', text: '저장', onclick: saveKey })),
-    h('div', { class: 'lab', style: 'margin-top:16px', text: '사람' }),
+    h('div', { class: 'lab', style: 'margin-top:16px', text: '사용자' }),
     h('div', { class: 'line', style: 'margin-bottom:8px' }, makeMemberBox(id)),
     codeBox('mk-' + id),
     membersBox(id),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '사용량(기관 키)' }),
-    h('button', { class: 'btn-line', text: '사용량 보기', onclick: () => showUsage('o-' + id, id) }),
+    S.usage['o-' + id] ? h('button', { class: 'btn-line', text: '사용량 닫기', onclick: () => { delete S.usage['o-' + id]; render(); } })
+      : h('button', { class: 'btn-line', text: '사용량 보기', onclick: () => showUsage('o-' + id, id) }),
     usageRows('o-' + id),
     h('div', { class: 'line', style: 'margin-top:16px' },
       h('div', { class: 'lab', style: 'margin:0', text: '학생에게 작업 중 강의 카드 보이기' }),
@@ -249,7 +285,7 @@ function orgBox(id) {
       S.me && S.me.platformAdmin ? h('button', { class: 'tg' + (readable ? ' on' : ''), onclick: async () => { await edu('org.settings', { orgId: id, adminCanReadProjects: !readable }); await load(); } }) : null));
 }
 
-// ---------------------------------------------------------------- 사람(기관 관리자) — 한 사람 한 계정
+// ---------------------------------------------------------------- 사용자(기관 관리자) — 한 사람 한 계정
 
 async function showMembers(orgId) {
   const r = await edu('org.members', { orgId });
@@ -316,7 +352,7 @@ function makeMemberBox(orgId) {
 
 function membersBox(orgId) {
   const list = S.members[orgId];
-  if (!list) return h('button', { class: 'btn-line', text: '사람 목록', onclick: () => showMembers(orgId) });
+  if (!list) return h('button', { class: 'btn-line', text: '사용자 목록', onclick: () => showMembers(orgId) });
   const reset = async (m) => {
     if (!confirm(m.name + '(' + m.loginId + ')의 비밀번호를 임시 비밀번호로 바꿀까요? 그 사람은 다시 로그인해야 합니다.')) return;
     const r = await edu('member.reset_password', { orgId, userId: m.userId });
@@ -331,7 +367,8 @@ function membersBox(orgId) {
     await showMembers(orgId);
   };
   return h('div', null,
-    h('div', { class: 'when', text: '학생 · 강사는 저마다 제 아이디로 들어옵니다(초대 코드는 수업에 들어오는 열쇠일 뿐 계정이 아닙니다).' }),
+    h('button', { class: 'btn-line', text: '사용자 목록 닫기', onclick: () => { delete S.members[orgId]; render(); } }),
+    h('div', { class: 'when', style: 'margin-top:8px', text: '학생 · 강사는 저마다 제 아이디로 들어옵니다(초대 코드는 수업에 들어오는 열쇠일 뿐 계정이 아닙니다).' }),
     list.map((m) => h('div', { style: 'padding:6px 0;border-bottom:1px solid var(--line-soft)' },
       h('div', { class: 'line' },
         h('div', { class: 'name', style: 'flex:1', text: (m.name || m.loginId) + ' · ' + m.loginId }),
