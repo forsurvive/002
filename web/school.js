@@ -72,9 +72,14 @@ const section = (title, ...body) => h('div', { class: 'sec' },
 // 만든 그 자리에서 한 번만 보이는 초대 코드
 const codeBox = (key) => (S.shown[key] ? h('div', { class: 'line', style: 'margin-top:10px' },
   h('div', { class: 'mark', style: 'font-size:15px;padding:6px 10px', text: S.shown[key] }),
-  h('div', { class: 'when', text: '지금만 보입니다 — 적어서 전해 주세요' })) : null);
+  copyBtn(S.shown[key]),
+  h('div', { class: 'when', text: '«초대 코드 목록»에서도 다시 볼 수 있습니다' })) : null);
+// 복사 — 안 되는 브라우저(보안 연결이 아닌 곳 등)에서는 조용히 넘어간다(코드는 화면에 그대로 있다)
+const copyBtn = (code) => h('button', { class: 'btn-text', text: '복사', onclick: async () => {
+  try { await navigator.clipboard.writeText(code); tell('복사했습니다'); } catch { tell('복사하지 못했습니다 — 화면의 코드를 적어 주세요'); }
+} });
 
-// 아직 쓸 수 있는 초대 코드 — 열고 닫는다. 코드 원문은 없다(만들 때 한 번만 보였다). 새어 나갔으면 취소한다.
+// 아직 쓸 수 있는 초대 코드 — 열고 닫는다. 코드도 함께 보인다(서버가 봉해 둔 것을 열어 준다 — 옛 코드는 빈칸). 새어 나갔으면 취소한다.
 async function toggleInvites(key, orgId) {
   if (S.invites[key]) { delete S.invites[key]; render(); return; }
   const r = await edu('invite.list', { orgId });
@@ -96,6 +101,8 @@ function inviteList(key, orgId, classId) {
   };
   return h('div', { style: 'width:100%' }, btn,
     rows.length ? rows.map((x) => h('div', { class: 'row', style: 'cursor:default' },
+      x.code ? h('div', { class: 'mark', style: 'font-size:14px;padding:4px 8px', text: x.code }) : h('span', { class: 'when', text: '(코드를 다시 보일 수 없는 옛 코드)' }),
+      x.code ? copyBtn(x.code) : null,
       h('div', { class: 'name', text: (ROLE_SAY[x.role] || x.role) + (x.className ? ' · ' + x.className : '') }),
       h('span', { class: 'mark', text: x.used + ' / ' + x.max + '명' }),
       h('div', { class: 'when', text: '~ ' + day(x.expiresAt) + (x.madeBy ? ' · ' + x.madeBy : '') }),
@@ -373,7 +380,13 @@ function orgBox(id) {
         h('button', { class: 'btn-text', text: '학생 초대', onclick: () => makeInvite('s-' + c.id, id, c.id, 'student') }),
         h('button', { class: 'btn-text', text: '강사 초대', onclick: () => makeInvite('i-' + c.id, id, c.id, 'instructor') }),
         h('button', { class: 'btn-text' + (c.status === 'active' ? ' red' : ''), text: c.status === 'active' ? '닫기' : '다시 열기',
-          onclick: async () => { await edu('class.archive', { classId: c.id, reopen: c.status !== 'active' }); await load(); } })),
+          onclick: async () => {
+            const closing = c.status === 'active';
+            if (closing && !confirm('«' + c.name + '» 수업을 닫을까요?\n닫으면 이 수업에 새 작품을 만들거나 초대 코드로 새로 들어올 수 없습니다.\n이미 든 학생과 작품은 그대로 남고, «다시 열기»로 되돌릴 수 있습니다.')) return;
+            const r = await edu('class.archive', { classId: c.id, reopen: !closing });
+            if (!r.ok) return tell(r.error);
+            S.say = '«' + c.name + '» ' + (closing ? '수업을 닫았습니다' : '수업을 다시 열었습니다'); await load();
+          } })),
       S.dates[c.id] ? h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
         field('시작하는 날', 'cds-' + c.id, 'date', { value: ymd(c.starts_at) }), field('끝나는 날', 'cde-' + c.id, 'date', { value: ymd(c.ends_at, true) }),
         h('button', { class: 'btn-line', text: '저장', onclick: () => saveDates(c) })) : null,
@@ -650,8 +663,12 @@ function platformBox() {
   const flip = (xs, x) => { const i = xs.indexOf(x); if (i < 0) xs.push(x); else xs.splice(i, 1); render(); };
   const issue = async (orgId) => {
     const lim = limOf(orgId);
-    const r = await edu('license.issue', { orgId, days: Number(val('ld-' + orgId)) || 30, seatLimit: Number(val('ls-' + orgId)) || null, allowedProviders: lim.p, allowedTiers: lim.t });
+    const days = Number(val('ld-' + orgId)) || 30;
+    // 이미 이용 기간이 있으면 새 기간을 하나 더 연다(가장 늦게 끝나는 것이 쓰인다) — 늘리기로 쓰인다
+    if (liveOf(orgId) && !confirm('이미 이용 기간이 있습니다. 오늘부터 ' + days + '일짜리 이용 기간을 새로 열까요?')) return;
+    const r = await edu('license.issue', { orgId, days, seatLimit: Number(val('ls-' + orgId)) || null, allowedProviders: lim.p, allowedTiers: lim.t });
     if (!r.ok) return tell(r.error);
+    S.say = (S.orgs[orgId].org.name) + ' — 이용 기간을 열었습니다(~ ' + day(r.license.ends_at) + ' · 학생 ' + (r.license.seat_limit || '제한 없음') + '자리)';
     await load();
   };
   const saveLimits = async (orgId) => {
@@ -708,11 +725,12 @@ function platformBox() {
     Object.values(S.orgs).map(({ org }) => [h('div', { class: 'line', style: 'margin-top:10px;align-items:flex-end' },
       h('div', { class: 'name', style: 'flex:1;font-weight:600', text: org.name }),
       org.status !== 'active' ? h('span', { class: 'mark', style: 'color:var(--red)', text: '멈춤' }) : null,
+      h('span', { class: 'when', text: liveOf(org.id) ? '이용 중 ~ ' + (liveOf(org.id).ends_at ? day(liveOf(org.id).ends_at) : '기한 없음') : '이용 기간 없음' }),
       h('button', { class: 'btn-text' + (org.status === 'active' ? ' red' : ''), text: org.status === 'active' ? '기관 멈추기' : '기관 다시 열기', onclick: () => orgStatus(org) }),
       liveOf(org.id) ? h('button', { class: 'btn-text red', text: '이용 기간 멈추기', onclick: () => licStatus(org, liveOf(org.id), 'suspended') })
         : pausedLic(org.id) ? h('button', { class: 'btn-text', text: '이용 기간 다시 열기', onclick: () => licStatus(org, pausedLic(org.id), 'active') }) : null,
       field('이용 일수', 'ld-' + org.id, 'text', { value: '90' }), field('학생 자리', 'ls-' + org.id, 'text', { value: '40' }),
-      h('button', { class: 'btn-line', text: '이용 기간 열기', onclick: () => issue(org.id) })), limRow(org.id)]));
+      h('button', { class: 'btn-line', text: liveOf(org.id) ? '새 이용 기간 열기' : '이용 기간 열기', onclick: () => issue(org.id) })), limRow(org.id)]));
 }
 
 // 화면 밝기 — 기본은 어둡게, 고르면 이 브라우저가 기억한다

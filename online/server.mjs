@@ -33,6 +33,7 @@ import { createWorker } from './worker.mjs';
 import { createOnlineCall, DEFAULT_ALIAS_TIERS } from './call.mjs';
 import { importProject } from './import.mjs';
 import { guardConsole } from './log.mjs';
+import { keysFromEnv } from '../ai/credentials.mjs';
 import { buildAi } from './ai.mjs';
 import { resolveHosting, hostOf, originOk, gateOk } from '../tools/hosting.mjs';
 
@@ -160,11 +161,11 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
  *   credentials : 자격증명 서비스(ai/credentials.mjs) — 처음 설정에서 AI 키를 봉해 넣을 때 쓴다
  *   denyFrames : 남의 페이지 안(iframe)에 싣지 못하게 한다 — 운영에서만 켠다(작업 공간의 미리보기 창이 iframe 이다, docs/SECURITY.md §6)
  */
-export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null, keyTester = null } = {}) {
+export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null, keyTester = null, codeKeys = keysFromEnv(process.env) } = {}) {
   const store = createProjectStore(pool);
   const tenancy = createTenancy(pool);
   const wfs = createWorkflowSource(pool);
-  const edu = createEdu({ pool, credentials, wfs, keyTester });
+  const edu = createEdu({ pool, credentials, wfs, keyTester, codeKeys });
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
 
   // 화면은 제 자리의 파일만 부른다 — 스크립트는 외부 파일만, 꾸밈은 style 속성을 쓰므로 인라인 꾸밈만 허락

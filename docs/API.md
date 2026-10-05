@@ -152,7 +152,7 @@
 | `class.create` `{orgId, name, startsAt?, endsAt?}` · `class.list` · `class.archive` `{…, reopen}` | 기관 관리자(목록은 멤버도) | 수업 — 이용 기간(라이선스)이 없으면 403 `license_inactive` |
 | `class.dates` `{classId, startsAt?, endsAt?}` | 기관 관리자 | 수업 기간(`YYYY-MM-DD`, 한국 날짜 · 끝 날 24시까지, 비우면 기한 없음). 시작 전 · 끝난 뒤에는 그 수업에 새 작품을 만들지 않는다(`class_not_started`/`class_ended`) — 만든 작품은 계속 쓴다 |
 | `class.progress` `{classId}` | 맡은 강사 · 기관 관리자 | 학생마다 프로젝트 · 문서 수 · 최근 작업 상태(비용 칸 없음) |
-| `invite.create` `{orgId, classId?, role, days, maxUses}` | 기관 관리자(모든 역할) · 강사(맡은 수업 학생만) | 코드 원문은 이번 응답에만(`ABCD-EFGH-JKLM`) |
+| `invite.create` `{orgId, classId?, role, days, maxUses}` | 기관 관리자(모든 역할) · 강사(맡은 수업 학생만) | 코드(`ABCD-EFGH-JKLM`). `invite.list` 가 봉해 둔 코드를 열어 다시 보인다(2026-10-05) · 닫은 수업의 코드는 `class_closed` |
 | `invite.revoke` `{inviteId}` | 만든 쪽 | |
 | `invite.accept` `{code, loginId?, password?, displayName?}` | **로그인 없이도** | 새 계정을 만들며(또는 지금 계정에) 기관 · 수업에 더한다 · 학생 자리 상한 · 틀린 코드 고삐(429) |
 | `invite.check` `{code}` | **로그인 없이도** | 첫 화면에서 코드만 확인(쓰지 않는다) → `{role, organizationName, className}` · 틀리면 같은 고삐에 센다 |

@@ -12,6 +12,8 @@ import * as auth from './auth.mjs';
 import { isUuid, createTenancy } from './tenancy.mjs';
 import { PROVIDER_IDS } from '../ai/credentials.mjs';
 import { TIERS } from '../ai/catalog.mjs';
+import { seal, open as unseal } from '../ai/credentials.mjs';
+import { randomUUID } from 'node:crypto';
 import { importProject } from './import.mjs';
 import { loadAggregate } from './store.mjs';
 
@@ -42,7 +44,11 @@ export function resetInviteThrottle() { tries.clear(); }
 const CLASS_TZ = 'Asia/Seoul';
 const LIC_COLS = 'id, plan, status, starts_at, ends_at, seat_limit, allowed_providers, allowed_model_tiers';
 
-export function createEdu({ pool, credentials = null, wfs = null, keyTester = null }) {
+export function createEdu({ pool, credentials = null, wfs = null, keyTester = null, codeKeys = null }) {
+  // 초대 코드 봉하기 — 마스터 키가 있을 때만(없으면 지금처럼 만들 때 한 번만 보인다). 붙임 정보로 그 기관 · 그 초대에만 열린다.
+  const codeMeta = (orgId, id) => ({ ownerType: 'invite', ownerId: orgId, provider: 'code', id });
+  const sealCode = (code, orgId, id) => { try { return codeKeys && codeKeys.current ? seal(code, codeKeys, codeMeta(orgId, id)) : null; } catch { return null; } };
+  const openCode = (sealed, orgId, id) => { try { return sealed && codeKeys ? unseal(sealed, codeKeys, codeMeta(orgId, id)) : ''; } catch { return ''; } };
   const one = async (sql, args) => (await pool.query(sql, args)).rows[0] || null;
   const rolesIn = async (userId, orgId) => new Set((await pool.query(
     `SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2 AND status = 'active'`, [orgId, userId])).rows.map((r) => r.role));
@@ -367,24 +373,26 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       const days = Math.max(1, Math.min(30, Number(b.days) || 7));
       const maxUses = Math.max(1, Math.min(500, Number(b.maxUses) || (role === 'student' ? 40 : 1)));
       const code = newInviteCode();
-      const inv = await one(`INSERT INTO invites (organization_id, class_id, role, code_hash, expires_at, max_uses, created_by)
-        VALUES ($1,$2,$3,$4, now() + make_interval(days => $5), $6, $7) RETURNING id, role, expires_at, max_uses`, [b.orgId, classId, role, codeHash(code), days, maxUses, user.id]);
+      const iid = randomUUID();
+      const inv = await one(`INSERT INTO invites (id, organization_id, class_id, role, code_hash, expires_at, max_uses, created_by, code_sealed)
+        VALUES ($8,$1,$2,$3,$4, now() + make_interval(days => $5), $6, $7, $9) RETURNING id, role, expires_at, max_uses`,
+      [b.orgId, classId, role, codeHash(code), days, maxUses, user.id, iid, sealCode(code, b.orgId, iid)]);
       await log(user, b.orgId, 'invite.create', 'invite', inv.id, { role, classId, days, maxUses }, ip);
-      return ok({ invite: { ...inv, code } });   // 원문은 이번 한 번뿐
+      return ok({ invite: { ...inv, code } });
     },
-    // 아직 쓸 수 있는 초대 코드 — 코드 원문은 없다(만들 때 한 번만 보였다). 새어 나갔으면 여기서 취소한다.
+    // 아직 쓸 수 있는 초대 코드 — 봉해 둔 코드를 열어 보인다(옛 코드 · 마스터 키가 없으면 빈칸). 새어 나갔으면 여기서 취소한다.
     // 기관 관리자 · 최상위는 그 기관 것 모두, 강사는 제가 맡은 수업 것만.
     async 'invite.list'(user, b) {
       if (!isUuid(b.orgId)) return NOT_FOUND;
       const admin = await isAdmin(user, b.orgId);
       if (!admin && !(await one(`SELECT 1 FROM class_members WHERE organization_id = $1 AND user_id = $2 AND role = 'instructor' LIMIT 1`, [b.orgId, user.id]))) return NOT_FOUND;
       const rows = (await pool.query(
-        `SELECT i.id, i.role, i.class_id, c.name AS class_name, i.used_count, i.max_uses, i.expires_at, i.created_at, u.login_id AS made_by
+        `SELECT i.id, i.role, i.class_id, c.name AS class_name, i.used_count, i.max_uses, i.expires_at, i.created_at, u.login_id AS made_by, i.code_sealed
            FROM invites i LEFT JOIN classes c ON c.id = i.class_id LEFT JOIN users u ON u.id = i.created_by
           WHERE i.organization_id = $1 AND i.revoked_at IS NULL AND i.expires_at > now() AND i.used_count < i.max_uses
             AND ($2::boolean OR i.class_id IN (SELECT class_id FROM class_members WHERE user_id = $3 AND role = 'instructor'))
           ORDER BY i.created_at DESC`, [b.orgId, !!admin, user.id])).rows;
-      return ok({ invites: rows.map((r) => ({ id: r.id, role: r.role, classId: r.class_id, className: r.class_name || '', used: r.used_count, max: r.max_uses,
+      return ok({ invites: rows.map((r) => ({ id: r.id, code: openCode(r.code_sealed, b.orgId, r.id), role: r.role, classId: r.class_id, className: r.class_name || '', used: r.used_count, max: r.max_uses,
         expiresAt: new Date(r.expires_at).getTime(), createdAt: new Date(r.created_at).getTime(), madeBy: r.made_by || '' })) });
     },
     async 'invite.revoke'(user, b, ip) {
@@ -606,6 +614,8 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     if (!inv) return miss();
     const org = await one('SELECT id, status FROM organizations WHERE id = $1', [inv.organization_id]);
     if (!org || org.status !== 'active') return miss();
+    // 닫은 수업에는 새로 들어오지 못한다(이미 든 사람 · 작품은 그대로)
+    if (inv.class_id && (await one('SELECT status FROM classes WHERE id = $1', [inv.class_id]) || {}).status !== 'active') return no(403, '닫힌 수업입니다 — 선생님(기관)께 문의해 주세요', 'class_closed');
     // 학생 자리 — 유효한 라이선스의 seat_limit 안에서만
     if (inv.role === 'student') {
       const lic = await liveLicense(inv.organization_id);

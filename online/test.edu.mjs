@@ -20,7 +20,8 @@ export async function run({ pool, ok, eq }) {
   // 키 연결 시험 — 가짜 회사: «sk-good» 으로 시작하는 키만 맞다
   const fakeCo = { validateCredential: async (c) => (c.apiKey.startsWith('sk-good') ? { ok: true } : { ok: false, reason: 'auth' }) };
   const keyTester = createKeyTester({ catalog: createCatalog([{ provider: 'openai', tier: 'fast', modelId: 'gpt-fake' }]), credentials, providers: { openai: fakeCo } });
-  const srv = createOnlineServer({ pool, plan: onlinePlan({}), credentials, keyTester });
+  const codeKeys = { keys: new Map([[1, randomBytes(32)]]), current: 1 };
+  const srv = createOnlineServer({ pool, plan: onlinePlan({}), credentials, keyTester, codeKeys });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const base = 'http://127.0.0.1:' + srv.address().port;
   const jar = {};
@@ -114,7 +115,11 @@ export async function run({ pool, ok, eq }) {
     eq('기한이 지난 코드', (await edu(null, 'invite.accept', { code: old.code, loginId: 'edu-late', password: 'long-enough-late' })).status, 404);
     const rv = (await edu('edu-oa', 'invite.create', { orgId: org.id, classId: c2.id, role: 'student' })).invite;
     const il = await edu('edu-oa', 'invite.list', { orgId: org.id });
-    ok('**기관 관리자는 쓸 수 있는 초대 코드 목록을 본다(코드 원문 없이)**', il.ok && il.invites.some((x) => x.id === rv.id) && !JSON.stringify(il).includes(rv.code));
+    // 2026-10-05 사용자 지시 — 목록에 코드 자체를 보인다(DB 에는 봉해 둔 것만 — 위의 «DB 에는 코드 원문이 없다»는 그대로 지킨다)
+    ok('**기관 관리자는 쓸 수 있는 초대 코드 목록을 코드와 함께 본다**', il.ok && il.invites.find((x) => x.id === rv.id).code === rv.code);
+    ok('**DB 에는 봉한 것만 — 원문은 여전히 없다**', !JSON.stringify((await pool.query('SELECT * FROM invites WHERE id = $1', [rv.id])).rows).includes(rv.code.replace(/-/g, '')) && !JSON.stringify((await pool.query('SELECT * FROM invites WHERE id = $1', [rv.id])).rows).includes(rv.code));
+    await pool.query("UPDATE invites SET code_sealed = jsonb_set(code_sealed, '{tag}', '\"AAAAAAAAAAAAAAAAAAAAAA==\"') WHERE id = $1", [rv.id]);
+    ok('봉한 것이 깨졌으면 빈칸(목록은 그대로 선다)', (await edu('edu-oa', 'invite.list', { orgId: org.id })).invites.find((x) => x.id === rv.id).code === '');
     eq('**학생은 초대 코드 목록을 못 본다**', (await edu('edu-s1', 'invite.list', { orgId: org.id })).status, 404);
     ok('강사는 제 수업 것만 본다', (await edu('edu-in', 'invite.list', { orgId: org.id })).invites.every((x) => x.classId === c1.id));
     await edu('edu-oa', 'invite.revoke', { inviteId: rv.id });
@@ -142,6 +147,8 @@ export async function run({ pool, ok, eq }) {
     ok('수업 목록(학생 수)', (await edu('edu-oa', 'class.list', { orgId: org.id })).classes.find((c) => c.id === c1.id).students === 2);
     await edu('edu-oa', 'class.archive', { classId: c1.id });
     eq('닫은 수업에는 새로 만들 수 없다', (await api('edu-s1', 'project.create', { classId: c1.id, name: 'x', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }] })).status, 403);
+    const invClosed = (await edu('edu-oa', 'invite.create', { orgId: org.id, classId: c1.id, role: 'student' })).invite;
+    eq('**닫은 수업의 초대 코드로는 새로 들어오지 못한다**', (await edu(null, 'invite.check', { code: invClosed.code })).code, 'class_closed');
     await edu('edu-oa', 'class.archive', { classId: c1.id, reopen: true });
     // ---------------- 수업 기간 · 이용 기간 없는 기관
     const mkIn = (b) => api('edu-s1', 'project.create', { classId: c1.id, name: 'x', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }], ...b });
