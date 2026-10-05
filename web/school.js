@@ -78,13 +78,20 @@ const section = (title, ...body) => h('div', { class: 'sec' },
   h('div', { class: 'sec-head' }, h('div', { class: 'name', text: title })),
   h('div', { style: 'padding:14px 16px' }, ...body));
 
-// 만든 그 자리에서 한 번만 보이는 초대 코드
-const codeBox = (key, note = '«초대 코드 목록»에서도 다시 볼 수 있습니다') => (S.shown[key] ? h('div', { class: 'line', style: 'margin-top:10px' },
-  h('div', { class: 'mark', style: 'font-size:15px;padding:6px 10px', text: S.shown[key] }),
-  copyBtn(S.shown[key]),
-  // 초대 코드면 링크로도 보낸다(누르면 코드가 채워진 «계정 만들기»가 열린다). 계정 · 비밀번호(mk-)는 링크로 보내지 않는다.
-  key.startsWith('mk-') ? null : linkBtns(inviteUrl(S.shown[key]), '스토리 엔진 초대'),
-  h('div', { class: 'when', text: note })) : null);
+// 만든 그 자리에 보이는 것 — 초대는 «링크»가 주인공(누르면 가입 화면이 열린다, 코드는 링크 안에 들어 있다).
+// 계정 · 비밀번호(mk-)는 링크로 보내지 않고 글로 보인다.
+const codeBox = (key, note) => {
+  const v = S.shown[key];
+  if (!v) return null;
+  if (key.startsWith('mk-')) {
+    return h('div', { class: 'line', style: 'margin-top:10px' },
+      h('div', { class: 'mark', style: 'font-size:15px;padding:6px 10px', text: v }), copyBtn(v), h('div', { class: 'when', text: note || '' }));
+  }
+  return h('div', { class: 'line', style: 'margin-top:10px' },
+    h('div', { class: 'mark', style: 'font-size:13px;padding:6px 10px;word-break:break-all;white-space:normal', text: inviteUrl(v) }),
+    linkBtns(inviteUrl(v), '스토리 엔진 초대'),
+    h('div', { class: 'when', text: note || '이 링크를 보내면 받은 사람이 눌러서 바로 가입합니다(코드 ' + v + ') · «초대 링크 목록»에서도 다시 볼 수 있습니다' }));
+};
 // 링크로 보내기 — 코드를 손으로 옮기지 않게. [링크 복사]는 어디서나, [보내기]는 휴대폰의 공유 창(카카오톡 · 문자 …)이 있을 때만.
 const inviteUrl = (code) => location.origin + '/login?invite=' + encodeURIComponent(code);
 const resetUrl = (code, loginId) => location.origin + '/login?reset=' + encodeURIComponent(code) + '&id=' + encodeURIComponent(loginId || '');
@@ -109,11 +116,11 @@ async function toggleInvites(key, orgId) {
 }
 function inviteList(key, orgId, classId) {
   const list = S.invites[key];
-  const btn = h('button', { class: 'btn-line', text: list ? '초대 코드 목록 닫기' : '초대 코드 목록', onclick: () => toggleInvites(key, orgId) });
+  const btn = h('button', { class: 'btn-line', text: list ? '초대 링크 목록 닫기' : '초대 링크 목록', onclick: () => toggleInvites(key, orgId) });
   if (!list) return btn;
   const rows = list.filter((x) => !classId || x.classId === classId);
   const revoke = async (x) => {
-    if (!confirm('이 초대 코드를 취소할까요? 이미 들어온 사람은 그대로이고, 앞으로 이 코드로는 들어올 수 없습니다.')) return;
+    if (!confirm('이 초대 링크를 취소할까요? 이미 들어온 사람은 그대로이고, 앞으로 이 링크(코드)로는 들어올 수 없습니다.')) return;
     const r = await edu('invite.revoke', { inviteId: x.id });
     if (!r.ok) return tell(r.error);
     delete S.invites[key];
@@ -121,14 +128,13 @@ function inviteList(key, orgId, classId) {
   };
   return h('div', { style: 'width:100%' }, btn,
     rows.length ? rows.map((x) => h('div', { class: 'row', style: 'cursor:default' },
-      x.code ? h('div', { class: 'mark', style: 'font-size:14px;padding:4px 8px', text: x.code }) : h('span', { class: 'when', text: '(코드를 다시 보일 수 없는 옛 코드)' }),
-      x.code ? copyBtn(x.code) : null,
-      x.code ? linkBtns(inviteUrl(x.code), '스토리 엔진 초대') : null,
-      h('div', { class: 'name', text: (ROLE_SAY[x.role] || x.role) + (x.className ? ' · ' + x.className : '') }),
+      h('div', { class: 'name', text: (ROLE_SAY[x.role] || x.role) + ' 초대' + (x.className ? ' · ' + x.className : '') }),
+      x.code ? linkBtns(inviteUrl(x.code), '스토리 엔진 초대') : h('span', { class: 'when', text: '(다시 보일 수 없는 옛 초대)' }),
+      x.code ? h('span', { class: 'when', text: '코드 ' + x.code }) : null,
       h('span', { class: 'mark', text: x.used + ' / ' + x.max + '명' }),
       h('div', { class: 'when', text: '~ ' + day(x.expiresAt) + (x.madeBy ? ' · ' + x.madeBy : '') }),
       h('button', { class: 'btn-text red', text: '취소', onclick: () => revoke(x) })))
-      : h('div', { class: 'when', style: 'margin-top:6px', text: '쓸 수 있는 초대 코드가 없습니다' }));
+      : h('div', { class: 'when', style: 'margin-top:6px', text: '쓸 수 있는 초대 링크가 없습니다' }));
 }
 
 async function makeInvite(key, orgId, classId, role) {
@@ -155,7 +161,7 @@ function joinBox() {
   };
   return section('새 수업 코드 넣기',
     h('div', { class: 'line', style: 'align-items:flex-end' },
-      field('초대 코드', 'j-code', 'text', { placeholder: 'ABCD-EFGH-JKLM', autocapitalize: 'characters', spellcheck: 'false', value: S.linkInvite || '' }),
+      field('초대 코드(초대 링크를 받았으면 링크를 누르면 저절로 채워집니다)', 'j-code', 'text', { placeholder: 'ABCD-EFGH-JKLM', autocapitalize: 'characters', spellcheck: 'false', value: S.linkInvite || '' }),
       h('button', { class: 'btn-red', text: '들어가기', onclick: go })));
 }
 
@@ -204,7 +210,7 @@ function myClasses() {
     h('div', { class: 'line', style: 'margin-top:8px' },
       c.role === 'instructor' ? [
         h('button', { class: 'btn-line', text: S.progress[c.id] ? '현황 닫기' : '수업 현황', onclick: () => showProgress(c) }),
-        h('button', { class: 'btn-line', text: '학생 초대 코드', onclick: () => makeInvite('s-' + c.id, c.organization_id, c.id, 'student') }),
+        h('button', { class: 'btn-line', text: '학생 초대 링크', onclick: () => makeInvite('s-' + c.id, c.organization_id, c.id, 'student') }),
       ] : null),
     codeBox('s-' + c.id),
     c.role === 'instructor' ? h('div', { style: 'margin-top:8px' }, inviteList('c-' + c.id, c.organization_id, c.id)) : null,
@@ -482,7 +488,7 @@ function classesTab(id) {
   const addClass = async () => {
     const r = await edu('class.create', { orgId: id, name: val('nc-' + id), startsAt: val('ncs-' + id), endsAt: val('nce-' + id) });
     if (!r.ok) return tell(r.error);
-    S.open[nk] = false; S.sayGood = true; S.say = '«' + r.class.name + '» 수업을 만들었습니다 — [학생 초대 코드]로 학생을 부르세요'; await load();
+    S.open[nk] = false; S.sayGood = true; S.say = '«' + r.class.name + '» 수업을 만들었습니다 — [학생 초대 링크]를 보내 학생을 부르세요'; await load();
   };
   const saveDates = async (c) => {
     const r = await edu('class.dates', { classId: c.id, startsAt: val('cds-' + c.id), endsAt: val('cde-' + c.id) });
@@ -491,7 +497,7 @@ function classesTab(id) {
   };
   const archive = async (c) => {
     const closing = c.status === 'active';
-    if (closing && !confirm('«' + c.name + '» 수업을 닫을까요?\n닫으면 이 수업에 새 작품을 만들거나 초대 코드로 새로 들어올 수 없습니다.\n이미 든 학생과 작품은 그대로 남고, «다시 열기»로 되돌릴 수 있습니다.')) return;
+    if (closing && !confirm('«' + c.name + '» 수업을 닫을까요?\n닫으면 이 수업에 새 작품을 만들거나 초대 링크로 새로 들어올 수 없습니다.\n이미 든 학생과 작품은 그대로 남고, «다시 열기»로 되돌릴 수 있습니다.')) return;
     const r = await edu('class.archive', { classId: c.id, reopen: !closing });
     if (!r.ok) return tell(r.error);
     S.sayGood = true; S.say = '«' + c.name + '» ' + (closing ? '수업을 닫았습니다' : '수업을 다시 열었습니다'); await load();
@@ -511,11 +517,11 @@ function classesTab(id) {
           h('div', { class: 'name', style: 'flex:1;font-weight:600', text: c.name + (c.status === 'active' ? '' : ' (닫힘)') }),
           period(c) ? h('span', { class: 'when', text: period(c) }) : null,
           h('span', { class: 'mark', text: '학생 ' + (c.students || 0) }),
-          c.status === 'active' ? h('button', { class: 'btn-text', text: '학생 초대 코드', onclick: () => makeInvite('s-' + c.id, id, c.id, 'student') }) : null,
+          c.status === 'active' ? h('button', { class: 'btn-text', text: '학생 초대 링크', onclick: () => makeInvite('s-' + c.id, id, c.id, 'student') }) : null,
           h('button', { class: 'btn-text', text: S.progress[c.id] ? '현황 닫기' : '현황', onclick: () => showProgress(c) }),
           h('button', { class: 'btn-text', text: more ? '접기' : '더보기', onclick: () => { S.open['more-' + c.id] = !more; render(); } })),
         more ? h('div', { class: 'line', style: 'margin-top:6px' },
-          c.status === 'active' ? h('button', { class: 'btn-line', text: '강사 초대 코드', onclick: () => makeInvite('i-' + c.id, id, c.id, 'instructor') }) : null,
+          c.status === 'active' ? h('button', { class: 'btn-line', text: '강사 초대 링크', onclick: () => makeInvite('i-' + c.id, id, c.id, 'instructor') }) : null,
           h('button', { class: 'btn-line', text: S.dates[c.id] ? '기간 닫기' : '수업 기간', onclick: () => { S.dates[c.id] = !S.dates[c.id]; render(); } }),
           inviteList('c-' + c.id, id, c.id),
           h('button', { class: 'btn-text' + (c.status === 'active' ? ' red' : ''), text: c.status === 'active' ? '수업 닫기' : '다시 열기', onclick: () => archive(c) })) : null,
@@ -532,8 +538,8 @@ function usersTab(id) {
   return h('div', null,
     // 사람을 부르는 길은 초대 코드(본인이 비밀번호를 정한다). 운영자만 계정을 직접 만든다.
     h('div', { class: 'line', style: 'margin-bottom:10px' },
-      h('button', { class: 'btn-line', text: '+ 강사 초대 코드', onclick: () => makeInvite('ti-' + id, id, null, 'instructor') }),
-      h('button', { class: 'btn-line', text: '+ 기관 관리자 초대 코드', onclick: () => makeInvite('a-' + id, id, null, 'organization_admin') })),
+      h('button', { class: 'btn-line', text: '+ 강사 초대 링크', onclick: () => makeInvite('ti-' + id, id, null, 'instructor') }),
+      h('button', { class: 'btn-line', text: '+ 기관 관리자 초대 링크', onclick: () => makeInvite('a-' + id, id, null, 'organization_admin') })),
     codeBox('ti-' + id), codeBox('a-' + id),
     makeMemberBox(id),
     codeBox('mk-' + id, '아이디 / 비밀번호 — 본인에게 전해 주세요(본인이 바꾸기 전까지 아래 목록에서도 다시 보입니다)'),
@@ -664,11 +670,12 @@ function makeMemberBox(orgId) {
         st.role === 'student' ? null : h('button', { class: st.classId === '' ? 'btn' : 'btn-line', text: '아직 없음', onclick: () => pick({ classId: '' }) }),
         classes.map((c) => h('button', { class: st.classId === c.id ? 'btn' : 'btn-line', text: c.name, onclick: () => pick({ classId: c.id }) })))) : null,
     st.role === 'student' && !classes.length ? h('div', { class: 'notice', text: '학생은 수업에 들어갑니다 — [수업] 탭에서 수업을 먼저 만드세요' }) : null,
-    h('div', { class: 'line', style: 'align-items:flex-end;margin-top:8px' },
+    // 위쪽 맞춤 — 아이디 칸 아래에 «쓸 수 있는지» 한 줄이 붙어도 다른 칸이 밀리지 않게
+    h('div', { class: 'line', style: 'align-items:flex-start;margin-top:8px' },
       field('아이디(영문 소문자 · 숫자, 3자 이상)', k + '-id', 'text', { autocapitalize: 'none', spellcheck: 'false' }),
       field('이름', k + '-name'),
       field('비밀번호(10자 이상)', k + '-pw', 'text', { autocomplete: 'off', spellcheck: 'false' }),
-      h('button', { class: 'btn-text', text: '자동으로', onclick: gen })),
+      h('button', { class: 'btn-text', style: 'margin-top:30px', text: '자동으로', onclick: gen })),
     h('div', { class: 'line', style: 'margin-top:10px' },
       h('button', { class: 'btn-red', text: '만들기', onclick: go }),
       h('button', { class: 'btn-text', text: '닫기', onclick: () => { S.open[k] = null; render(); } })),
@@ -699,8 +706,8 @@ function membersBox(orgId, { fixed = false } = {}) {
   };
   return h('div', null,
     fixed ? null : h('button', { class: 'btn-line', text: '사용자 목록 닫기', onclick: () => { delete S.members[orgId]; render(); } }),
-    h('div', { class: 'when', style: 'margin-top:8px', text: '학생 · 강사는 저마다 제 아이디로 들어옵니다(초대 코드는 수업에 들어오는 열쇠일 뿐 계정이 아닙니다).' }),
-    list.length ? null : h('div', { class: 'when', style: 'margin-top:8px', text: '아직 사용자가 없습니다 — 학생은 [수업] 탭의 «학생 초대 코드»로, 강사는 [+ 강사 초대 코드]로 부르세요' }),
+    h('div', { class: 'when', style: 'margin-top:8px', text: '학생 · 강사는 저마다 제 아이디로 들어옵니다(초대 링크는 수업에 들어오는 열쇠일 뿐 계정이 아닙니다).' }),
+    list.length ? null : h('div', { class: 'when', style: 'margin-top:8px', text: '아직 사용자가 없습니다 — 학생은 [수업] 탭의 «학생 초대 링크»로, 강사는 [+ 강사 초대 링크]로 부르세요' }),
     list.map((m) => h('div', { style: 'padding:6px 0;border-bottom:1px solid var(--line-soft)' },
       h('div', { class: 'line' },
         h('div', { class: 'name', style: 'flex:1', text: (m.name || m.loginId) + ' · ' + m.loginId }),

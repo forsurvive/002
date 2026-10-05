@@ -148,7 +148,7 @@ function mainForms() {
       h('div', { class: 'line', style: 'margin-top:14px' }, h('button', { class: 'btn-red', type: 'submit', text: '새 비밀번호로 들어가기' }))) : null,
     sayLine(),
     h('div', { style: 'margin-top:18px;padding-top:18px;border-top:1px solid var(--line-soft)' },
-      h('div', { class: 'lab', text: '처음 오셨나요? 초대 코드' }),
+      h('div', { class: 'lab', text: '처음 오셨나요? 초대 링크를 받았으면 그 링크를 누르면 됩니다 — 코드만 받았으면 여기에' }),
       inv && S.invite.have ? h('form', { onsubmit: joinWithAccount },
         h('div', { class: 'top-name', style: 'font-size:19px;margin-top:6px', text: '내 계정으로 참여' }),
         h('div', { class: 'when', style: 'margin-top:4px', text: [inv.organizationName, inv.className, ROLE[inv.role] || ''].filter(Boolean).join(' · ') }),
