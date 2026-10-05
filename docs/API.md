@@ -146,6 +146,7 @@
 | `license.read` `{orgId}` | 기관 관리자 | 라이선스 · 쓰는 학생 자리 |
 | `org.status` `{orgId, status: active\|suspended}` | 플랫폼 관리자 | 기관 멈추기 · 다시 열기 — 멈추면 새 작품 · AI 작업이 서지 않는다(`org_suspended`), 작품 · 읽기는 그대로 |
 | `ops.overview` | 플랫폼 관리자 | 운영 현황 — 작업 상태 수(진행 중 + 24시간) · 응답 없는 작업 · 최근 실패 20(가린 까닭만) · 24시간 AI 호출(회사 · 결과) · 석 달 사용량(기관/개인 · 추정 $). 원고 · 키 없음 |
+| `run.list` `{pid, docId}` | 그 작품을 읽을 수 있는 사람 | 만든 기록 — 이 문서를 지은 부르기(최근 20)마다 때 · 결과 판 · 등급 이름 · 이번 요청 · 본 것(역할 · 제목 · **그때의 판 번호**) · 잘렸을 수 있음. 비용 · 모델 id · 키 없음. 문서 창 [만든 기록](온라인) |
 | `audit.list` `{orgId?, action?, limit?}` | 플랫폼 관리자(전체) · 기관 관리자(제 기관) | 감사 기록 — 언제 · 누가(아이디) · 무엇을. IP 는 내주지 않는다 · details 는 처음부터 가린 값 |
 | `class.create` `{orgId, name, startsAt?, endsAt?}` · `class.list` · `class.archive` `{…, reopen}` | 기관 관리자(목록은 멤버도) | 수업 — 이용 기간(라이선스)이 없으면 403 `license_inactive` |
 | `class.dates` `{classId, startsAt?, endsAt?}` | 기관 관리자 | 수업 기간(`YYYY-MM-DD`, 한국 날짜 · 끝 날 24시까지, 비우면 기한 없음). 시작 전 · 끝난 뒤에는 그 수업에 새 작품을 만들지 않는다(`class_not_started`/`class_ended`) — 만든 작품은 계속 쓴다 |

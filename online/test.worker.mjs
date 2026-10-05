@@ -177,6 +177,16 @@ export async function run({ pool, ok, eq }) {
     eq('**남의 프로젝트 작업을 치울 수 없다(404)**', other.status, 404);
     ok('그 작업은 그대로 목록에', (await state(pid)).jobs.some((j) => j.id === j1));
 
+    // ---------------- 만든 기록 — 무엇을 보고(그때의 판) 만들었나
+    {
+      const edu = async (ck, b) => (await fetch(base + '/api/edu', { method: 'POST', headers: { 'content-type': 'application/json', cookie: ck }, body: JSON.stringify(b) })).json();
+      const rl = await edu(cookie, { op: 'run.list', pid, docId: doc });
+      ok('**만든 기록 — 부르기마다 등급 · 결과 판 · 본 것(판 번호)**', rl.ok && rl.runs.length >= 2 && rl.runs.some((r) => r.status === 'succeeded' && r.resultSeq > 0 && r.tier)
+        && rl.runs.every((r) => Array.isArray(r.inputs)), JSON.stringify(rl).slice(0, 400));
+      ok('만든 기록에 비용 · 모델 id · 키가 없다', !/cost|model_id|modelId|fake-worker-key/.test(JSON.stringify(rl)));
+      eq('**남의 작품 기록은 못 본다**', (await fetch(base + '/api/edu', { method: 'POST', headers: { 'content-type': 'application/json', cookie: ckb }, body: JSON.stringify({ op: 'run.list', pid, docId: doc }) })).status, 404);
+    }
+
     // ---------------- 두 곳에서 고치기 — 온라인도 같은 셈(표에서 다시 읽은 시각으로 견준다)
     {
       const seen = (await state(pid)).docs.find((x) => x.id === doc).updatedAt;

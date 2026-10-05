@@ -9,7 +9,7 @@
 
 import { randomBytes, createHash } from 'node:crypto';
 import * as auth from './auth.mjs';
-import { isUuid } from './tenancy.mjs';
+import { isUuid, createTenancy } from './tenancy.mjs';
 import { PROVIDER_IDS } from '../ai/credentials.mjs';
 import { TIERS } from '../ai/catalog.mjs';
 import { importProject } from './import.mjs';
@@ -78,7 +78,35 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     return { start, end };
   };
 
+  const tenancy = createTenancy(pool);
+  const TIER_NAME = { high_reasoning: 'High Reasoning', balanced: 'Balanced', fast: 'Fast' };
+  const ROLE_NAME = { material: '자료', final: '확정본', target: '대상', reference: '참조', extra: '덧붙임', talk: '논의', agent: '에이전트' };
+
   const OPS = {
+    // ---------------- 만든 기록 — «이 글은 무엇을 보고 만들었나»(그때의 판 번호). 읽을 수 있는 사람만, 비용 · 모델 id · 키는 싣지 않는다.
+    async 'run.list'(user, b) {
+      if (!isUuid(b.pid) || !(await tenancy.access(user, b.pid)).read) return NOT_FOUND;
+      const doc = await one('SELECT id FROM documents WHERE project_id = $1 AND legacy_id = $2', [b.pid, String(b.docId || '')]);
+      if (!doc) return NOT_FOUND;
+      const runs = (await pool.query(
+        `SELECT r.id, r.started_at, r.status, r.model_tier, r.workflow_stage, r.request_once_text, r.finish_reason,
+                v.seq AS result_seq
+           FROM generation_runs r LEFT JOIN document_versions v ON v.id = r.result_version_id
+          WHERE r.project_id = $1 AND (r.target_document_id = $2 OR v.document_id = $2)
+          ORDER BY r.started_at DESC LIMIT 20`, [b.pid, doc.id])).rows;
+      const ins = runs.length ? (await pool.query(
+        `SELECT i.run_id, i.role, i.title, i.char_count, d.legacy_id AS doc_id, v.seq
+           FROM generation_run_inputs i LEFT JOIN documents d ON d.id = i.document_id LEFT JOIN document_versions v ON v.id = i.document_version_id
+          WHERE i.run_id = ANY($1) ORDER BY i.run_id, i.sort_order`, [runs.map((r) => r.id)])).rows : [];
+      return ok({
+        runs: runs.map((r) => ({
+          at: r.started_at, status: r.status, tier: TIER_NAME[r.model_tier] || '', stage: r.workflow_stage || '', once: r.request_once_text || '',
+          truncated: r.finish_reason === 'length', resultSeq: r.result_seq || null,
+          inputs: ins.filter((i) => i.run_id === r.id).map((i) => ({ role: ROLE_NAME[i.role] || i.role, title: i.title, docId: i.doc_id || '', seq: i.seq || null, chars: i.char_count })),
+        })),
+      });
+    },
+
     // ---------------- 나
     async 'me.memberships'(user) {
       const orgs = (await pool.query(

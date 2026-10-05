@@ -162,6 +162,30 @@ function toLogin(out) { location.href = '/login'; return out; }
 // 출입 열쇠가 풀렸으면 페이지를 다시 연다 — 그때 브라우저가 열쇠를 묻는다(단추마다 창이 뜨지 않게)
 function regate(out) { location.reload(); return out; }
 
+// 만든 기록(온라인) — 이 글을 지은 부르기마다 «무엇을 보고(그때의 판)» · 등급 · 이번 요청. 비용 · 모델 id 는 없다.
+async function toggleRuns(docId) {
+  if (S.open.runs) { S.open.runs = null; return render(); }
+  const r = await fetch('/api/edu', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'run.list', pid: S.pid, docId }) })
+    .then((x) => x.json()).catch(() => ({ ok: false, error: '응답 없음' }));
+  if (!r.ok) { S.open.err = r.error; return render(); }
+  S.open.runs = r.runs; render();
+}
+const RUN_ST = { succeeded: '완료', failed: '실패', cancelled: '취소', running: '도는 중' };
+function runsBox() {
+  const runs = S.open && S.open.runs;
+  if (!runs) return null;
+  return h('div', { class: 'card-box' },
+    h('div', { class: 'lab', text: '만든 기록(최근 20)' }),
+    runs.length ? runs.map((r) => h('div', { style: 'padding:6px 0;border-bottom:1px solid var(--line-soft)' },
+      h('div', { class: 'line' },
+        h('div', { class: 'name', style: 'flex:1', text: when(r.at) + (r.resultSeq ? ' → ' + r.resultSeq + '판' : '') }),
+        r.tier ? h('span', { class: 'mark', text: r.tier }) : null,
+        h('span', { class: 'when', text: (RUN_ST[r.status] || r.status) + (r.truncated ? ' · 잘렸을 수 있음' : '') })),
+      r.inputs.length ? h('div', { class: 'when', style: 'white-space:normal', text: '본 것: ' + r.inputs.map((i) => i.role + ' «' + i.title + '»' + (i.seq ? ' ' + i.seq + '판' : '')).join(' · ') }) : null,
+      r.once ? h('div', { class: 'when', style: 'white-space:normal', text: '이번 요청: ' + r.once }) : null))
+      : h('div', { class: 'when', text: '아직 AI 로 만든 기록이 없습니다' }));
+}
+
 // 작품 파일(.story-project.json · 개인판 project.json) → 새 작품. 온라인판은 큰 파일을 받는 문(/api/import)으로.
 function importProjectFile() {
   if (S.tour) return;
@@ -1163,10 +1187,12 @@ function docPanel(close) {
       h('span', { class: 'lab', style: 'margin:0', text: '확정본' }),
       h('button', { class: 'tg' + (d.isFinal ? ' on' : ''), onclick: () => api('doc.final', { ids: [d.id], on: !d.isFinal }) }),
       h('button', { class: 'btn-text', text: '다운로드', onclick: () => download('doc', d.id) }),
+      S.me && !S.tour ? h('button', { class: 'btn-text', text: S.open.runs ? '만든 기록 닫기' : '만든 기록', onclick: () => toggleRuns(d.id) }) : null,
       h('button', { class: 'btn-text red', text: '삭제', onclick: async () => { await api('doc.delete', { ids: [d.id] }); close(); } }),
       h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
       // 지금 판을 지은 AI 가 출력 상한에 닿았다(온라인 — 서버가 truncated 를 실을 때만). 저장은 됐고, 끝이 잘렸을 수 있다.
+      runsBox(),
       d.truncated && !peeking ? h('div', { class: 'notice', text: '이 글은 길이 한도에 닿아 끝이 잘렸을 수 있습니다 — 끝부분을 확인하고, 필요하면 나눠서 다시 생성하세요' }) : null,
       // 모순 검사는 견주는 자리이지 치는 자리가 아니다 — 결과만 보인다(사용자 지시).
       // 옛 판 펼쳐보기도 같은 읽기 칸을 쓴다. 치는 칸과 id 를 갈라 두어야
