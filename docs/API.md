@@ -143,7 +143,8 @@
 | `license.issue` `{orgId, plan, days, seatLimit, allowedProviders?, allowedTiers?}` · `license.status` `{licenseId, status}` | 플랫폼 관리자 | 사용권 발급 · 정지/해지 |
 | `license.limits` `{licenseId, allowedProviders, allowedTiers}` | 플랫폼 관리자 | 그 이용 기간에 쓸 수 있는 AI 회사 · 등급(빈 목록 = 모두). 기관 작품의 부르기는 이 안으로 잘린다(`online/call.mjs` `licensePolicy`) |
 | `license.read` `{orgId}` | 기관 관리자 | 라이선스 · 쓰는 학생 자리 |
-| `class.create` · `class.list` · `class.archive` `{…, reopen}` | 기관 관리자(목록은 멤버도) | 수업 |
+| `class.create` `{orgId, name, startsAt?, endsAt?}` · `class.list` · `class.archive` `{…, reopen}` | 기관 관리자(목록은 멤버도) | 수업 — 이용 기간(라이선스)이 없으면 403 `license_inactive` |
+| `class.dates` `{classId, startsAt?, endsAt?}` | 기관 관리자 | 수업 기간(`YYYY-MM-DD`, 한국 날짜 · 끝 날 24시까지, 비우면 기한 없음). 시작 전 · 끝난 뒤에는 그 수업에 새 작품을 만들지 않는다(`class_not_started`/`class_ended`) — 만든 작품은 계속 쓴다 |
 | `class.progress` `{classId}` | 맡은 강사 · 기관 관리자 | 학생마다 프로젝트 · 문서 수 · 최근 작업 상태(비용 칸 없음) |
 | `invite.create` `{orgId, classId?, role, days, maxUses}` | 기관 관리자(모든 역할) · 강사(맡은 수업 학생만) | 코드 원문은 이번 응답에만(`ABCD-EFGH-JKLM`) |
 | `invite.revoke` `{inviteId}` | 만든 쪽 | |

@@ -333,7 +333,8 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const open = (await pool.query(
           `SELECT c.id, c.name, c.organization_id, o.name AS org_name FROM class_members m JOIN classes c ON c.id = m.class_id
              JOIN organizations o ON o.id = c.organization_id
-            WHERE m.user_id = $1 AND c.status = 'active' AND o.status = 'active' ORDER BY c.name`, [user.id])).rows;
+            WHERE m.user_id = $1 AND c.status = 'active' AND o.status = 'active'
+              AND (c.starts_at IS NULL OR c.starts_at <= now()) AND (c.ends_at IS NULL OR c.ends_at > now()) ORDER BY c.name`, [user.id])).rows;
         const places = [];
         for (const c of open) if ((await tenancy.licenseOf(c.organization_id)).ok) places.push({ classId: c.id, name: c.name, orgName: c.org_name });
         // 신분 — 화면 위쪽에 «아이디 · 신분»으로 보인다(여럿이면 모두). 막는 것은 문마다 서버가 다시 본다.

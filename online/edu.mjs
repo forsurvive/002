@@ -38,6 +38,8 @@ const tries = new Map();
 const TRY_LIMIT = 10; const TRY_WINDOW = 15 * 60 * 1000;
 export function resetInviteThrottle() { tries.clear(); }
 
+// 수업 날짜는 한국 시각으로 센다(수업은 그날 0시에 열리고 끝 날 24시에 닫힌다)
+const CLASS_TZ = 'Asia/Seoul';
 const LIC_COLS = 'id, plan, status, starts_at, ends_at, seat_limit, allowed_providers, allowed_model_tiers';
 
 export function createEdu({ pool, credentials = null, wfs = null, keyTester = null }) {
@@ -65,6 +67,15 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     const tiers = list(b.allowedTiers, Object.keys(TIERS));
     if ((providers && providers.bad) || (tiers && tiers.bad)) return { error: '모르는 AI 회사 · 등급입니다' };
     return { providers, tiers };
+  };
+
+  // 수업 기간 — 'YYYY-MM-DD' 둘(비우면 기한 없음). 끝 날은 그날 하루를 다 쓴다(저장은 다음 날 0시).
+  const classDates = (b) => {
+    const d = (v) => { const s = String(v || '').trim(); return !s ? null : /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s)) ? s : undefined; };
+    const start = d(b.startsAt); const end = d(b.endsAt);
+    if (start === undefined || end === undefined) return { error: '날짜는 2026-03-02 꼴로 적어 주세요' };
+    if (start && end && end < start) return { error: '끝나는 날이 시작하는 날보다 앞입니다' };
+    return { start, end };
   };
 
   const OPS = {
@@ -182,17 +193,32 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
       const name = String(b.name || '').trim();
       if (!name) return no(422, '수업 이름이 필요합니다', 'validation');
-      const c = await one('INSERT INTO classes (organization_id, name, created_by) VALUES ($1, $2, $3) RETURNING id, name, status', [b.orgId, name, user.id]);
-      await log(user, b.orgId, 'class.create', 'class', c.id, { name }, ip);
+      // 이용 기간 안에서만 수업을 연다 — 기간이 없으면 학생이 들어와도 작품 · AI 가 멈춘다
+      if (!(await liveLicense(b.orgId))) return no(403, '이용 기간이 없어 수업을 만들 수 없습니다 — 운영자에게 이용 기간을 요청해 주세요', 'license_inactive');
+      const when = classDates(b);
+      if (when.error) return no(422, when.error, 'validation');
+      const c = await one(`INSERT INTO classes (organization_id, name, created_by, starts_at, ends_at) VALUES ($1, $2, $3, $4::date::timestamp AT TIME ZONE '${CLASS_TZ}', ($5::date + 1)::timestamp AT TIME ZONE '${CLASS_TZ}')
+        RETURNING id, name, status, starts_at, ends_at`, [b.orgId, name, user.id, when.start, when.end]);
+      await log(user, b.orgId, 'class.create', 'class', c.id, { name, startsAt: when.start, endsAt: when.end }, ip);
       return ok({ class: c });
+    },
+    // 수업 기간 고치기 — 비우면 기한 없음
+    async 'class.dates'(user, b, ip) {
+      const c = isUuid(b.classId) ? await one('SELECT id, organization_id FROM classes WHERE id = $1', [b.classId]) : null;
+      if (!c || !(await isAdmin(user, c.organization_id))) return NOT_FOUND;
+      const when = classDates(b);
+      if (when.error) return no(422, when.error, 'validation');
+      const r = await one(`UPDATE classes SET starts_at = $2::date::timestamp AT TIME ZONE '${CLASS_TZ}', ends_at = ($3::date + 1)::timestamp AT TIME ZONE '${CLASS_TZ}' WHERE id = $1 RETURNING id, name, status, starts_at, ends_at`, [c.id, when.start, when.end]);
+      await log(user, c.organization_id, 'class.dates', 'class', c.id, { startsAt: when.start, endsAt: when.end }, ip);
+      return ok({ class: r });
     },
     async 'class.list'(user, b) {
       if (!isUuid(b.orgId)) return NOT_FOUND;
       if (await isAdmin(user, b.orgId)) {
-        return ok({ classes: (await pool.query(`SELECT c.id, c.name, c.status, (SELECT count(*)::int FROM class_members m WHERE m.class_id = c.id AND m.role = 'student') AS students
+        return ok({ classes: (await pool.query(`SELECT c.id, c.name, c.status, c.starts_at, c.ends_at, (SELECT count(*)::int FROM class_members m WHERE m.class_id = c.id AND m.role = 'student') AS students
           FROM classes c WHERE c.organization_id = $1 ORDER BY c.name`, [b.orgId])).rows });
       }
-      return ok({ classes: (await pool.query(`SELECT c.id, c.name, c.status, m.role FROM classes c JOIN class_members m ON m.class_id = c.id
+      return ok({ classes: (await pool.query(`SELECT c.id, c.name, c.status, c.starts_at, c.ends_at, m.role FROM classes c JOIN class_members m ON m.class_id = c.id
         WHERE c.organization_id = $1 AND m.user_id = $2 ORDER BY c.name`, [b.orgId, user.id])).rows });
     },
     async 'class.archive'(user, b, ip) {

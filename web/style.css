@@ -228,13 +228,13 @@ a.btn-line, a.btn-text { text-decoration: none; display: inline-block; }
 }
 .x:hover { background: var(--group-on); color: var(--ink); }
 
-input[type=text], input[type=password], textarea, .field {
+input[type=text], input[type=password], input[type=date], textarea, .field {
   width: 100%; background: var(--group); border: 1px solid transparent;
   border-radius: var(--r-m); padding: 11px 13px; outline: none; font-size: 15px;
   transition: background .12s, border-color .12s, box-shadow .12s;
 }
-input[type=text]:hover, input[type=password]:hover, textarea:hover { background: var(--group-on); }
-input[type=text]:focus, input[type=password]:focus, textarea:focus {
+input[type=text]:hover, input[type=password]:hover, input[type=date]:hover, textarea:hover { background: var(--group-on); }
+input[type=text]:focus, input[type=password]:focus, input[type=date]:focus, textarea:focus {
   background: var(--paper); border-color: var(--blue); box-shadow: var(--focus);
 }
 textarea { resize: vertical; min-height: 88px; line-height: 1.65; }

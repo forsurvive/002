@@ -143,6 +143,22 @@ export async function run({ pool, ok, eq }) {
     await edu('edu-oa', 'class.archive', { classId: c1.id });
     eq('닫은 수업에는 새로 만들 수 없다', (await api('edu-s1', 'project.create', { classId: c1.id, name: 'x', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }] })).status, 403);
     await edu('edu-oa', 'class.archive', { classId: c1.id, reopen: true });
+    // ---------------- 수업 기간 · 이용 기간 없는 기관
+    const mkIn = (b) => api('edu-s1', 'project.create', { classId: c1.id, name: 'x', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }], ...b });
+    eq('날짜 꼴이 틀리면 422', (await edu('edu-oa', 'class.dates', { classId: c1.id, startsAt: '3월 2일' })).status, 422);
+    eq('끝이 시작보다 앞이면 422', (await edu('edu-oa', 'class.dates', { classId: c1.id, startsAt: '2030-03-02', endsAt: '2030-03-01' })).status, 422);
+    eq('**강사는 수업 기간을 못 고친다**', (await edu('edu-in', 'class.dates', { classId: c1.id, startsAt: '2030-03-02' })).status, 404);
+    const fut = await edu('edu-oa', 'class.dates', { classId: c1.id, startsAt: '2099-03-02', endsAt: '2099-06-30' });
+    ok('기관 관리자가 수업 기간을 정한다', fut.ok && !!fut.class.starts_at && !!fut.class.ends_at);
+    const early = await mkIn();
+    ok('**시작 전 수업에는 새 작품을 만들지 않는다**', early.status === 403 && early.error === '아직 수업 기간이 아닙니다', JSON.stringify(early));
+    ok('시작 전 수업은 «어디에 만들까요?»에 없다', !(await (await fetch(base + '/api/state', { headers: { cookie: jar['edu-s1'] } })).json()).me.places.some((x) => x.classId === c1.id));
+    await edu('edu-oa', 'class.dates', { classId: c1.id, startsAt: '2020-03-02', endsAt: '2020-06-30' });
+    eq('**끝난 수업에도 새로 만들지 않는다**', (await mkIn()).error, '수업 기간이 끝났습니다');
+    ok('기간을 비우면 다시 만든다', (await edu('edu-oa', 'class.dates', { classId: c1.id })).class.ends_at === null && (await mkIn({ name: '기간 시험' })).ok);
+    const bare = (await edu('edu-root', 'org.create', { name: '기간 없는 기관' })).organization;
+    const nc = await edu('edu-root', 'class.create', { orgId: bare.id, name: '1반' });
+    ok('**이용 기간이 없는 기관에는 수업을 열지 않는다**', nc.status === 403 && nc.code === 'license_inactive', JSON.stringify(nc));
 
     // ---------------- 기관 키 — 쓰기 전용, 기관 프로젝트는 기관 키로
     eq('**학생은 기관 키를 넣지 못한다**', (await edu('edu-s1', 'org.key.set', { orgId: org.id, provider: 'anthropic', apiKey: FAKE_ORG_KEY })).status, 404);

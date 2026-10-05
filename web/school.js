@@ -29,6 +29,9 @@ function h(tag, attrs, ...kids) {
 const $ = (id) => document.getElementById(id);
 const val = (id) => ($(id) ? $(id).value.trim() : '');
 const day = (t) => (t ? new Date(t).toLocaleDateString() : '');
+// 수업 기간은 한국 날짜로 — 끝은 «그날 24시»로 저장되므로 하루 앞을 보인다
+const ymd = (t, end) => (t ? new Date(new Date(t).getTime() - (end ? 86400000 : 0)).toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' }) : '');
+const period = (c) => (c.starts_at || c.ends_at ? (ymd(c.starts_at) || '') + ' ~ ' + (ymd(c.ends_at, true) || '') : '');
 
 async function edu(op, body = {}) {
   const r = await fetch('/api/edu', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op, ...body }) }).catch(() => null);
@@ -191,6 +194,7 @@ const AI_CO = { anthropic: 'Claude', openai: 'ChatGPT', google: 'Gemini' };
 const AI_KEY_LABEL = { anthropic: 'Claude(Anthropic) API 키', openai: 'ChatGPT(OpenAI) API 키', google: 'Gemini(Google) API 키' };
 S.prov = {};
 S.lim = {};
+S.dates = {};
 const provOf = (k) => S.prov[k] || 'anthropic';
 const providerPick = (k) => h('div', { class: 'line', style: 'margin-top:10px' },
   Object.entries(AI_CO).map(([p, name]) => h('button', { class: provOf(k) === p ? 'btn' : 'btn-line', text: name, onclick: () => { S.prov[k] = p; render(); } })));
@@ -283,7 +287,13 @@ h('div', { class: 'when', style: 'margin-top:6px', text: '금액은 모델 가�
 function orgBox(id) {
   const { org, lic, classes, keys } = S.orgs[id];
   const live = (lic.licenses || []).find((l) => l.status === 'active' && (!l.ends_at || new Date(l.ends_at) > new Date()));
-  const addClass = async () => { const r = await edu('class.create', { orgId: id, name: val('nc-' + id) }); if (!r.ok) return tell(r.error); await load(); };
+  const addClass = async () => { const r = await edu('class.create', { orgId: id, name: val('nc-' + id), startsAt: val('ncs-' + id), endsAt: val('nce-' + id) }); if (!r.ok) return tell(r.error); await load(); };
+  const saveDates = async (c) => {
+    const r = await edu('class.dates', { classId: c.id, startsAt: val('cds-' + c.id), endsAt: val('cde-' + c.id) });
+    if (!r.ok) return tell(r.error);
+    S.dates[c.id] = false; S.say = '수업 기간을 바꿨습니다';
+    await load();
+  };
   const saveKey = async () => {
     const r = await edu('org.key.set', { orgId: id, provider: provOf('ok-' + id), apiKey: val('ok-' + id) });
     $('ok-' + id).value = '';
@@ -300,15 +310,21 @@ function orgBox(id) {
     classes.map((c) => h('div', { style: 'padding:8px 0;border-bottom:1px solid var(--line-soft)' },
       h('div', { class: 'line' },
         h('div', { class: 'name', style: 'flex:1', text: c.name }),
+        period(c) ? h('span', { class: 'when', text: period(c) }) : null,
         h('span', { class: 'mark', text: '학생 ' + (c.students || 0) }),
         c.status !== 'active' ? h('span', { class: 'mark', text: '닫힘' }) : null,
         h('button', { class: 'btn-text', text: S.progress[c.id] ? '현황 닫기' : '현황', onclick: () => showProgress(c) }),
+        h('button', { class: 'btn-text', text: S.dates[c.id] ? '기간 닫기' : '기간', onclick: () => { S.dates[c.id] = !S.dates[c.id]; render(); } }),
         h('button', { class: 'btn-text', text: '학생 초대', onclick: () => makeInvite('s-' + c.id, id, c.id, 'student') }),
         h('button', { class: 'btn-text', text: '강사 초대', onclick: () => makeInvite('i-' + c.id, id, c.id, 'instructor') }),
         h('button', { class: 'btn-text' + (c.status === 'active' ? ' red' : ''), text: c.status === 'active' ? '닫기' : '다시 열기',
           onclick: async () => { await edu('class.archive', { classId: c.id, reopen: c.status !== 'active' }); await load(); } })),
+      S.dates[c.id] ? h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
+        field('시작하는 날', 'cds-' + c.id, 'date', { value: ymd(c.starts_at) }), field('끝나는 날', 'cde-' + c.id, 'date', { value: ymd(c.ends_at, true) }),
+        h('button', { class: 'btn-line', text: '저장', onclick: () => saveDates(c) })) : null,
       codeBox('s-' + c.id), codeBox('i-' + c.id), progressBox(c))),
-    h('div', { class: 'line', style: 'margin-top:10px;align-items:flex-end' }, field('새 수업 이름', 'nc-' + id), h('button', { class: 'btn-line', text: '수업 만들기', onclick: addClass })),
+    h('div', { class: 'line', style: 'margin-top:10px;align-items:flex-end' }, field('새 수업 이름', 'nc-' + id),
+      field('시작하는 날(선택)', 'ncs-' + id, 'date'), field('끝나는 날(선택)', 'nce-' + id, 'date'), h('button', { class: 'btn-line', text: '수업 만들기', onclick: addClass })),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '기관 관리자' }),
     h('div', { class: 'line' }, h('button', { class: 'btn-line', text: '기관 관리자 초대 코드', onclick: () => makeInvite('a-' + id, id, null, 'organization_admin') })),
     codeBox('a-' + id),

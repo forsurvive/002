@@ -76,10 +76,14 @@ export function createTenancy(pool) {
     async canCreateInClass(user, classId) {
       if (!user || !isUuid(classId)) return { ok: false, reason: 'missing' };
       const c = (await pool.query(
-        `SELECT c.id, c.organization_id, c.status FROM classes c JOIN class_members m ON m.class_id = c.id
+        `SELECT c.id, c.organization_id, c.status, c.starts_at > now() AS early, c.ends_at <= now() AS late
+           FROM classes c JOIN class_members m ON m.class_id = c.id
           WHERE c.id = $1 AND m.user_id = $2`, [classId, user.id])).rows[0];
       if (!c) return { ok: false, reason: 'missing' };
       if (c.status !== 'active') return { ok: false, reason: 'class_closed' };
+      // 수업 기간(정했으면) — 시작 전 · 끝난 뒤에는 새 작품을 만들지 않는다(이미 만든 작품은 그대로 이어 쓴다)
+      if (c.early) return { ok: false, reason: 'class_not_started' };
+      if (c.late) return { ok: false, reason: 'class_ended' };
       const lic = await licenseOf(c.organization_id);
       if (!lic.ok) return lic;
       return { ok: true, organizationId: c.organization_id, classId: c.id };
@@ -93,6 +97,8 @@ export const SAY = {
   org_suspended: '기관 이용이 멈춰 있습니다 — 선생님(기관)께 문의해 주세요',
   org_missing: '기관을 찾을 수 없습니다',
   class_closed: '수업이 닫혀 있습니다',
+  class_not_started: '아직 수업 기간이 아닙니다',
+  class_ended: '수업 기간이 끝났습니다',
   missing: '찾을 수 없습니다',
   read_only: '읽기만 할 수 있습니다',
 };
