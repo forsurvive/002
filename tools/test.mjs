@@ -2042,6 +2042,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const w2 = wf.stageOf(tt, 'world');
   ok('**덮어쓴 칸만 바뀌고 원문은 남는다**', w2.title === '세계 만들기' && w2.task === '기관의 할 일' && w2.card.what === '새 설명' && w2.output === 'document' && wf.stageOf(tpl, 'world').title === '세계관');
   ok('고쳐 쓴 템플릿도 쓸 수 있는 꼴', wf.validateTemplate(tt).ok);
+  ok('단계마다 기본 등급이 데이터로 있다(기획 · 플롯은 High Reasoning, 분석은 Fast)', wf.stageOf(tpl, 'outline').tier === 'high_reasoning' && wf.stageOf(tpl, 'study').tier === 'fast' && wf.stageOf(tpl, 'world').tier === 'balanced');
+  ok('기본 등급도 고쳐 쓴다 — 모르는 등급 · 입력 단계는 버린다', wf.cleanOverride(tpl, 'world', { tier: 'fast' }).tier === 'fast'
+    && !('tier' in wf.cleanOverride(tpl, 'world', { tier: 'opus' })) && !('tier' in wf.cleanOverride(tpl, 'spec', { tier: 'fast' })));
 }
 
 // ---------------------------------------------------------------- Core 는 바깥을 모른다 (온라인화 Phase 1)

@@ -175,7 +175,7 @@ export async function runStage({ store, call, workflow }, pid, { stageKey, episo
     pid, code: s.code || 'F-UPDATE',
     refIds: (d.refIds || []).filter((id) => id !== d.id), targetIds: String(d.body || '').trim() ? [d.id] : [],
     agentIds: (d.agentIds || []).slice(), request, requestOnce, taskExtra: wf.stageTask(s, ep),
-    materials: !!s.materials, allFinals: !!s.materials, keepSeat: true, modelPick, stageKey,
+    materials: !!s.materials, allFinals: !!s.materials, keepSeat: true, modelPick, stageKey, stageTier: String(s.tier || ''),
     signal: ctx && ctx.signal,
   }, ctx);
   if (!r.ok) return r;

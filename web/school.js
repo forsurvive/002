@@ -520,10 +520,12 @@ function wfEditor(orgId) {
     if (!S.wfOpen[k]) return head;
     const id = (f) => 'wf-' + sk + '-' + st.key + '-' + f;
     const before = w.stages.filter((x) => x.n < st.n);
+    const generates = st.output !== 'input' && st.output !== 'final';
     const save = async (clear) => {
       const typed = {
         title: val(id('title')), task: $(id('task')) ? $(id('task')).value : undefined, teachingNote: $(id('note')).value,
         optional: $(id('opt')) ? $(id('opt')).checked : undefined,
+        tier: generates ? (Object.keys(TIER_CO).find((t) => $(id('t-' + t)) && $(id('t-' + t)).checked) || undefined) : undefined,
         inputs: before.some((x) => $(id('in-' + x.key))) ? before.filter((x) => $(id('in-' + x.key)).checked).map((x) => x.key) : undefined,
         card: { what: $(id('what')).value, look: $(id('look')).value.split('\n').map((x) => x.trim()).filter(Boolean), ask: $(id('ask')).value },
       };
@@ -541,7 +543,6 @@ function wfEditor(orgId) {
       S.wfOpen[k] = false;   // 저장하면 그 단계는 접는다
       await loadWf(sk, orgId);
     };
-    const generates = st.output !== 'input' && st.output !== 'final';
     const box = (f, label, value, big, hint) => h('div', { style: 'margin-top:10px' },
       h('div', { class: 'lab', text: label }),
       big ? h('textarea', { id: id(f), placeholder: hint || '' }) : h('input', { id: id(f), type: 'text', placeholder: hint || '' }));
@@ -552,6 +553,9 @@ function wfEditor(orgId) {
         h('div', { class: 'line' }, before.map((x) => h('label', { class: 'line', style: 'gap:4px' },
           h('input', { id: id('in-' + x.key), type: 'checkbox' }), h('span', { text: x.effective.title }))))) : null,
       generates ? h('label', { class: 'line', style: 'gap:6px;margin-top:10px' }, h('input', { id: id('opt'), type: 'checkbox' }), h('span', { text: '학생 · 작가가 이 단계를 끌 수 있음' })) : null,
+      generates ? h('div', { style: 'margin-top:10px' }, h('div', { class: 'lab', text: '기본 등급(학생 · 작가가 고르지 않았을 때 — 온라인판)' }),
+        h('div', { class: 'line' }, Object.entries(TIER_CO).map(([t, name]) => h('label', { class: 'line', style: 'gap:4px' },
+          h('input', { id: id('t-' + t), type: 'radio', name: id('tier') }), h('span', { text: name }))))) : null,
       box('what', '강의 카드 — 무엇인가', '', true),
       box('look', '강의 카드 — 볼 점(한 줄에 하나)', '', true),
       box('ask', '강의 카드 — 생각해 볼 질문', '', false),
@@ -567,6 +571,7 @@ function wfEditor(orgId) {
       set('title', eff.title); set('task', eff.task); set('note', eff.teachingNote);
       set('what', eff.card && eff.card.what); set('look', eff.card ? (eff.card.look || []).join('\n') : ''); set('ask', eff.card && eff.card.ask);
       const opt = $(id('opt')); if (opt && !opt.dataset.filled) { opt.checked = !!eff.optional; opt.dataset.filled = '1'; }
+      const tr = eff.tier && $(id('t-' + eff.tier)); if (tr && !tr.dataset.filled) { tr.checked = true; tr.dataset.filled = '1'; }
       for (const x of before) { const c = $(id('in-' + x.key)); if (c && !c.dataset.filled) { c.checked = (eff.inputs || []).includes(x.key); c.dataset.filled = '1'; } }
     }, 0);
     return h('div', null, head, form);

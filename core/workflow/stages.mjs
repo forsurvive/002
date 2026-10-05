@@ -195,7 +195,9 @@ export function stageTask(stage, episode = 0) {
 // 단계의 «기능»(이름 · 할 일 · 추천 참조 · 끌 수 있음)과 강의 카드 · 강사 메모를 덮어쓴다. 원문(설정 파일)은 그대로 남는다.
 // 차례: 설정 파일 < 운영자(전체) < 기관 관리자(그 기관). 덮어쓴 칸만 바뀌고 나머지는 아래 층을 따른다.
 // 열쇠(key) · 결과 꼴(output) · 고치는 문서(reviseOf) · 회차 여부는 고치지 못한다 — 바꾸면 이미 쌓인 단계 상태의 뜻이 바뀐다.
-export const EDITABLE = ['title', 'task', 'inputs', 'optional', 'card', 'teachingNote'];
+export const EDITABLE = ['title', 'task', 'inputs', 'optional', 'card', 'teachingNote', 'tier'];
+// 단계의 기본 등급(온라인 — 화면 이름은 High Reasoning / Balanced / Fast). 실제 모델은 카탈로그가 정한다.
+export const STAGE_TIERS = ['high_reasoning', 'balanced', 'fast'];
 
 export function cleanOverride(t, key, o = {}) {
   const s = stageOf(t, key);
@@ -217,6 +219,7 @@ export function cleanOverride(t, key, o = {}) {
     };
   }
   if (typeof o.teachingNote === 'string') out.teachingNote = o.teachingNote.slice(0, 1500);
+  if (typeof o.tier === 'string' && STAGE_TIERS.includes(o.tier) && s.output !== 'input' && s.output !== 'final') out.tier = o.tier;
   return out;
 }
 

@@ -62,7 +62,8 @@ export async function run({ pool, ok, eq }) {
     const w = s.workflow.stages.find((x) => x.key === 'world');
     const wd = s.docs.find((d) => d.id === w.docId);
     ok('**worker 가 단계를 생성한다 — 결과는 «세계관» 문서, 상태 초안**', w.status === 'draft' && wd && wd.title === '세계관' && wd.body === '단계의 글');
-    const run = await q1("SELECT workflow_stage, request_once_text, request_text, status FROM generation_runs WHERE project_id = $1 AND workflow_stage = 'world'", [pid]);
+    const run = await q1("SELECT workflow_stage, request_once_text, request_text, status, model_tier FROM generation_runs WHERE project_id = $1 AND workflow_stage = 'world'", [pid]);
+    eq('**단계의 기본 등급으로 돈다(작품 기본 High Reasoning 보다 단계 Balanced 가 앞)**', run.model_tier, 'balanced');
     ok('**생성 기록에 단계 · 이번 요청사항이 남는다(문서에는 없다)**', run && run.status === 'succeeded' && run.request_once_text === '이번엔 바다 무역 중심으로' && wd.request === '');
     ok('«이번 단계에 할 일»이 프롬프트에 실린다', seen[seen.length - 1].userPrompt.includes('세계의 규칙'));
     ok('승인 · 확정본 제안', (await api('wf-writer', 'stage.approve', { pid, key: 'world', final: true })).ok && (await state('wf-writer', pid)).docs.find((d) => d.id === w.docId).isFinal);

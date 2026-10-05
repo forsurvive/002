@@ -39,7 +39,7 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
     : null);
 
   // 공통 — 기록을 남기고 · 라우터로 부르고 · 결과를 적는다
-  async function send(pid, project, { systemPrompt, userPrompt, alias, modelSource = '', code, inputs = [], request = '', requestOnce = '', stageKey = '', target = '', signal = null }, ctx) {
+  async function send(pid, project, { systemPrompt, userPrompt, alias, modelSource = '', code, inputs = [], request = '', requestOnce = '', stageKey = '', stageTier = '', target = '', signal = null }, ctx) {
     // 고른 AI 회사 — 작품이 정했으면 그것, 아니면 비용 주체의 기본(기관 작품은 기관, 개인 작품은 그 사람)
     const row = (await pool.query(
       `SELECT p.owner_user_id, p.organization_id, p.model_policy->>'provider' AS project_provider,
@@ -70,13 +70,18 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
     }
 
     const tier = aliasTiers[alias] || '';
+    // 별칭이 어디서 왔는지에 따라 그 자리(층)에 둔다 — 이번에 고른 것 · 에이전트는 단계 기본보다 앞, 작품 기본은 뒤
+    const layer = modelSource === 'pick' ? 'pick' : modelSource === 'agent' || modelSource === 'slot' ? 'agent' : 'project';
     const r = await generator.generate({
       systemPrompt, userPrompt, signal: signal || ctx.signal || null,
       metadata: {
         project: { id: pid, ownerUserId: row.owner_user_id, organizationId: row.organization_id },
         policy: { ...licensePolicy(row), ...(await policyOf(row)) },
         model: {
-          project: tier || row.project_provider ? { ...(tier ? { tier } : {}), ...(row.project_provider ? { provider: row.project_provider } : {}) } : null,
+          ...(tier && layer !== 'project' ? { [layer]: { tier } } : {}),
+          stage: stageTier ? { tier: stageTier } : null,
+          project: (tier && layer === 'project') || row.project_provider
+            ? { ...(tier && layer === 'project' ? { tier } : {}), ...(row.project_provider ? { provider: row.project_provider } : {}) } : null,
           org: orgLayer(row),
         },
       },
@@ -109,7 +114,7 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
     const plan = planCall(project, args, { pr: promptFor(project, code), slotModel: slotModel(project, code) });
     return send(pid, project, {
       systemPrompt: plan.systemPrompt, userPrompt: plan.userPrompt, alias: plan.model, modelSource: plan.modelSource, code,
-      inputs: plan.inputs, request: args.request, requestOnce: args.requestOnce, stageKey: args.stageKey, target: (args.targetIds || [])[0] || '', signal: args.signal,
+      inputs: plan.inputs, request: args.request, requestOnce: args.requestOnce, stageKey: args.stageKey, stageTier: args.stageTier, target: (args.targetIds || [])[0] || '', signal: args.signal,
     }, ctx);
   }
 
