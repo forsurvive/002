@@ -360,11 +360,11 @@ function projectList() {
           h('span', { class: 'nav-sep' }),
           h('button', { class: 'nav-out', text: '로그아웃', onclick: logout })) : null,
         h('button', { class: 'nav-out', text: isLight() ? '어둡게' : '밝게', onclick: toggleTheme }),
+        // 다른 PC · 개인판에서 내려받은 작품 파일 열기 — «+»(새 작품)와 헷갈리지 않게 위쪽 단추 줄에
+        h('button', { class: 'btn-line', text: '작품 파일 가져오기', onclick: importProjectFile }),
         h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: () => startTour() }))),
     // 새 작품 «+» — 화면 한가운데(좁은 창에서도 잘리지 않게 줄을 따로 둔다)
     h('div', { class: 'new-row' }, h('button', { class: 'plus big', text: '+', title: '새 작품', onclick: newProjectOpen })),
-    // «+»(새 작품)와 따로 보이게 — 사이를 띄우고 글자를 작게(다른 일이다: 다른 PC · 개인판에서 내려받은 작품 파일 열기)
-    h('div', { class: 'new-row', style: 'margin-top:36px' }, h('button', { class: 'btn-text', style: 'font-size:13px', text: '작품 파일 가져오기', onclick: importProjectFile })),
     S.homeSay ? h('div', { class: 'new-row' }, h('div', { class: 'notice', text: S.homeSay })) : null,
     h('div', { class: 'cards' }, S.projects.map((p) => h('div', {
       class: 'card', onclick: () => { S.pid = p.id; S.tab = '작업실'; S.project = null; pull(true); },
