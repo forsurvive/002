@@ -85,7 +85,7 @@ const codeBox = (key, note) => {
   if (!v) return null;
   if (key.startsWith('mk-')) {
     return h('div', { class: 'line', style: 'margin-top:10px' },
-      h('div', { class: 'mark', style: 'font-size:15px;padding:6px 10px', text: v }), copyBtn(v), h('div', { class: 'when', text: note || '' }));
+      h('div', { class: 'mark', style: 'font-size:15px;padding:6px 10px', text: v }), copyBtn(v), hideBtn(key), h('div', { class: 'when', text: note || '' }));
   }
   const code = typeof v === 'string' ? v : v.code;
   const who = typeof v === 'string' ? '' : (ROLE_SAY[v.role] || '') + '용 초대 링크' + (v.cls ? ' · ' + v.cls : '');
@@ -94,9 +94,11 @@ const codeBox = (key, note) => {
     who ? h('div', { class: 'lab', style: 'margin-bottom:4px;color:var(--ink);font-weight:700', text: who }) : null,
     h('div', { class: 'line' },
       h('div', { class: 'mark', style: 'font-size:13px;padding:6px 10px;word-break:break-all;white-space:normal', text: inviteUrl(code) }),
-      linkBtns(inviteUrl(code), '스토리 엔진 ' + (who || '초대'))),
-    h('div', { class: 'when', text: note || '받은 사람이 누르면 ' + ((typeof v === 'object' && ROLE_SAY[v.role]) || '') + ' 계정 만들기 화면이 열립니다(코드 ' + code + ') · «초대 링크 목록»에서도 다시 볼 수 있습니다' }));
+      linkBtns(inviteUrl(code), '스토리 엔진 ' + (who || '초대')), hideBtn(key)),
+    h('div', { class: 'when', text: note || '받은 사람이 누르면 ' + ((typeof v === 'object' && ROLE_SAY[v.role]) || '') + ' 계정 만들기 화면이 열립니다(코드 ' + code + ') · 닫아도 «초대 링크 목록»에서 다시 볼 수 있고, 못 쓰게 하려면 거기서 [취소]' }));
 };
+// [닫기] — 화면에서 접기만 한다(링크 · 계정은 그대로). 링크를 못 쓰게 하려면 «초대 링크 목록»의 [취소].
+const hideBtn = (key) => h('button', { class: 'btn-text', text: '닫기', onclick: () => { delete S.shown[key]; render(); } });
 // 링크로 보내기 — 코드를 손으로 옮기지 않게. [링크 복사]는 어디서나, [보내기]는 휴대폰의 공유 창(카카오톡 · 문자 …)이 있을 때만.
 const inviteUrl = (code) => location.origin + '/login?invite=' + encodeURIComponent(code);
 const resetUrl = (code, loginId) => location.origin + '/login?reset=' + encodeURIComponent(code) + '&id=' + encodeURIComponent(loginId || '');
