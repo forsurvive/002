@@ -136,7 +136,8 @@ export async function changePassword(db, userId, { current, next }) {
   const { rows } = await db.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
   if (!rows[0] || !(await verifyPassword(current, rows[0].password_hash))) return { ok: false, code: 'unauthenticated', error: '지금 비밀번호가 맞지 않습니다' };
   if (String(next || '').length < MIN_PASSWORD) return { ok: false, code: 'validation', error: '비밀번호는 ' + MIN_PASSWORD + '자 이상' };
-  await db.query('UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1', [userId, await hashPassword(next)]);
+  // 본인이 바꾸면 운영자가 들고 있던 사본(known_password_sealed)도 지운다 — 그때부터는 본인만 안다
+  await db.query('UPDATE users SET password_hash = $2, known_password_sealed = NULL, updated_at = now() WHERE id = $1', [userId, await hashPassword(next)]);
   await db.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
   await audit(db, { actor: userId, action: 'auth.password_changed', targetType: 'user', targetId: userId });
   return { ok: true };

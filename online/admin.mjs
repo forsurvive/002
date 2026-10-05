@@ -70,7 +70,7 @@ try {
       if (String(next).length < 10) { console.log('  [STOP] password must be 10+ characters'); process.exitCode = 1; }
       else {
         const { hashPassword } = await import('./auth.mjs');
-        await pool.query('UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1', [u.id, await hashPassword(next)]);
+        await pool.query('UPDATE users SET password_hash = $2, known_password_sealed = NULL, updated_at = now() WHERE id = $1', [u.id, await hashPassword(next)]);
         await pool.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [u.id]);
         await audit(pool, { action: 'admin.password_reset', targetType: 'user', targetId: u.id });
         console.log('  password changed: ' + String(rest[0]).toLowerCase() + ' (other sessions signed out)');

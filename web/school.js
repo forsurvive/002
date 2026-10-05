@@ -536,7 +536,7 @@ function usersTab(id) {
       h('button', { class: 'btn-line', text: '+ 기관 관리자 초대 코드', onclick: () => makeInvite('a-' + id, id, null, 'organization_admin') })),
     codeBox('ti-' + id), codeBox('a-' + id),
     makeMemberBox(id),
-    codeBox('mk-' + id, '아이디 / 비밀번호 — 지금만 보입니다. 적어 두고 본인에게 전해 주세요'),
+    codeBox('mk-' + id, '아이디 / 비밀번호 — 본인에게 전해 주세요(본인이 바꾸기 전까지 아래 목록에서도 다시 보입니다)'),
     S.members[id] ? membersBox(id, { fixed: true }) : h('div', { class: 'when', text: '불러오는 중…' }),
     h('div', { style: 'margin-top:14px' }, inviteList('o-' + id, id, null)));
 }
@@ -710,6 +710,10 @@ function membersBox(orgId, { fixed = false } = {}) {
           h('button', { class: 'btn-text', text: '비밀번호 재설정 코드', onclick: () => giveResetCode(orgId, m, () => showMembers(orgId)) }),
           h('button', { class: 'btn-text red', text: '내보내기', onclick: () => remove(m) }),
         ]),
+      // 운영자가 만든 계정의 비밀번호(최상위 관리자에게만 — 본인이 바꾸면 사라진다)
+      m.knownPassword ? h('div', { class: 'line', style: 'margin-top:6px' },
+        h('div', { class: 'mark', style: 'font-size:14px;padding:4px 8px', text: m.loginId + ' / ' + m.knownPassword }), copyBtn(m.loginId + ' / ' + m.knownPassword),
+        h('div', { class: 'when', text: '운영자가 정한 비밀번호 — 본인이 바꾸면 여기서 사라집니다' })) : null,
       resetLine(m.resetCode, m.loginId))),
     h('button', { class: 'btn-text', style: 'margin-top:8px', text: '다시 불러오기', onclick: () => showMembers(orgId) }));
 }

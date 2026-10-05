@@ -159,7 +159,7 @@
 | `login.available` `{loginId, code?}` | 맞는 초대 코드를 쥔 사람(가입 중) · 기관/최상위 관리자 | 아이디를 쓸 수 있나(대소문자 무시) → `{available, reason: ''|'taken'|'format', say}`. 아무나 아이디를 더듬지 못하게 코드 없는 일반 사용자는 404 · 틀린 코드는 맞히기 고삐. 만들 때는 DB 유일 조건이 다시 막는다(409) |
 | `me.key.set` `{apiKey, provider?}` · `me.key.list` | 누구나(제 것만) | 내 AI 키 — 쓰기 전용(끝 네 자리 · 상태만). 내 개인 작품의 AI 는 이 키로(비용 주체 USER) |
 | `project.copy_personal` `{pid}` | 그 수업 작품의 주인 | 문서 · 판 이력 · 확정본 · 논의째 «… (개인)» 으로 복사 → `{pid, counts, verified}`. 원본은 기관에 그대로 · 기관 `org.settings allowCopy:false` 면 403 `copy_blocked` |
-| `member.create` `{orgId, role, loginId, displayName?, classId?, password?}` | **최상위 관리자만** | 기관 관리자 · 강사 · 학생 계정을 직접 만든다(학생은 수업 · 자리 상한). 비밀번호는 운영자가 정한다(기술 지원용) — 비우면 서버가 지어 이번 응답에만 `password`. 기관 관리자 · 강사는 초대 코드로 사람을 부른다(2026-10-05 사용자 결정) |
+| `member.create` `{orgId, role, loginId, displayName?, classId?, password?}` | **최상위 관리자만** | 기관 관리자 · 강사 · 학생 계정을 직접 만든다(학생은 수업 · 자리 상한). 비밀번호는 운영자가 정한다(기술 지원용) — 비우면 서버가 지어 응답에 `password`. 봉한 사본을 두어 `org.members` 가 **최상위 관리자에게만** `knownPassword` 로 다시 보인다(본인이 바꾸면 지운다). 기관 관리자 · 강사는 초대 코드로 사람을 부른다(2026-10-05 사용자 결정) |
 | `member.reset_password` `{orgId, userId}` | 기관 관리자(그 기관 — 기관 관리자는 최상위만) · 강사(맡은 수업의 학생만) | 비밀번호를 바꾸지 않고 **재설정 코드**(7일 · 한 번)를 준다 → `{resetCode, days}`. 쓰기 전까지 `org.members` · `class.progress` 에 다시 보인다(봉한 사본). 관리자는 남의 비밀번호를 모른다 |
 | (링크) `/login?invite=코드` · `/login?reset=코드&id=아이디` | 누구나 | 코드를 손으로 옮기지 않게 — 관리 화면의 [링크 복사] · [보내기](휴대폰 공유 창). 초대 링크는 코드가 채워진 «계정 만들기»(이미 로그인했으면 «내 계정 → 새 수업 코드 넣기»로), 재설정 링크는 아이디 · 코드가 채워진 «비밀번호를 잊었어요». 열면 주소창에서 코드를 지운다. 재설정 링크는 1:1로만(2026-10-05) |
 | `password.reset` `{loginId, code, password}` | **로그인 없이** | 로그인 화면 «비밀번호를 잊었어요» — 재설정 코드(또는 운영자는 Secrets 의 `SE2_RECOVERY_CODE`)로 새 비밀번호를 정하고 곧바로 들어간다. 틀리면 초대 코드와 같은 맞히기 고삐 |

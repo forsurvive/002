@@ -329,6 +329,12 @@ export async function run({ pool, ok, eq }) {
     eq('**학생 계정도 자리 상한을 지킨다**', (await edu('edu-root', 'member.create', { orgId: org.id, role: 'student', classId: c1.id, loginId: 'edu-made-st', password: 'student-pass-123' })).code, seatsNow >= 2 ? 'seats_full' : undefined);
     eq('**강사 · 학생은 계정을 만들지 못한다**', (await edu('edu-in', 'member.create', { orgId: org.id, role: 'instructor', loginId: 'edu-made-x' })).status, 404);
     eq('이미 있는 아이디는 만들지 않는다', (await edu('edu-root', 'member.create', { orgId: org.id, role: 'instructor', loginId: 'edu-s1', password: 'whatever-pass-1' })).status, 409);
+    const known = await edu('edu-root', 'org.members', { orgId: org.id });
+    ok('**운영자가 만든 계정의 비밀번호는 최상위 관리자에게 다시 보인다**', known.members.find((m) => m.loginId === 'edu-made-in').knownPassword === 'support-known-pass');
+    ok('**기관 관리자에게는 보이지 않는다**', !(await edu('edu-oa', 'org.members', { orgId: org.id })).members.some((m) => 'knownPassword' in m));
+    ok('**DB 에 원문은 없다(봉한 사본만)**', !JSON.stringify((await pool.query("SELECT * FROM users WHERE login_id = 'edu-made-in'")).rows).includes('support-known-pass'));
+    await fetch(base + '/api/auth/password', { method: 'POST', headers: { 'content-type': 'application/json', cookie: jar['edu-made-in'] }, body: JSON.stringify({ current: 'support-known-pass', next: 'only-i-know-this' }) });
+    ok('**본인이 바꾸면 운영자도 모른다(사본을 지운다)**', !(await edu('edu-root', 'org.members', { orgId: org.id })).members.find((m) => m.loginId === 'edu-made-in').knownPassword);
     ok('계정 만들기도 감사 로그에(비밀번호 없이)', (await pool.query("SELECT details FROM audit_logs WHERE action = 'member.create'")).rows.length === 3
       && !JSON.stringify((await pool.query("SELECT * FROM audit_logs WHERE action = 'member.create'")).rows).includes('support-known-pass'));
 

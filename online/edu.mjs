@@ -53,6 +53,10 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
   const RESET_DAYS = 7;
   const resetMeta = (userId) => ({ ownerType: 'reset-code', ownerId: userId, provider: 'password', id: userId });
   const openReset = (row) => { try { return row.reset_code_sealed && codeKeys && row.reset_expires_at && new Date(row.reset_expires_at) > new Date() ? unseal(row.reset_code_sealed, codeKeys, resetMeta(row.id)) : ''; } catch { return ''; } };
+  // 운영자가 정한 비밀번호의 사본 — 최상위 관리자만 다시 본다(본인이 바꾸면 지워진다)
+  const knownMeta = (userId) => ({ ownerType: 'known-password', ownerId: userId, provider: 'password', id: userId });
+  const sealKnown = (pw, userId) => { try { return codeKeys && codeKeys.current ? seal(pw, codeKeys, knownMeta(userId)) : null; } catch { return null; } };
+  const openKnown = (sealed, userId) => { try { return sealed && codeKeys ? unseal(sealed, codeKeys, knownMeta(userId)) : ''; } catch { return ''; } };
   async function issueResetCode(userId) {
     const code = newInviteCode();
     let sealed = null;
@@ -448,14 +452,16 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     async 'org.members'(user, b) {
       if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
       const rows = (await pool.query(
-        `SELECT u.id, u.login_id, u.display_name, u.last_login_at, u.reset_code_sealed, u.reset_expires_at, array_agg(DISTINCT m.role) AS roles,
+        `SELECT u.id, u.login_id, u.display_name, u.last_login_at, u.reset_code_sealed, u.reset_expires_at, u.known_password_sealed, array_agg(DISTINCT m.role) AS roles,
                 coalesce((SELECT array_agg(c.name ORDER BY c.name) FROM class_members cm JOIN classes c ON c.id = cm.class_id
                            WHERE cm.user_id = u.id AND cm.organization_id = $1), '{}') AS classes
            FROM organization_members m JOIN users u ON u.id = m.user_id
           WHERE m.organization_id = $1 AND m.status = 'active'
           GROUP BY u.id ORDER BY u.display_name, u.login_id`, [b.orgId])).rows;
       return ok({ members: rows.map((r) => ({ userId: r.id, loginId: r.login_id, name: r.display_name, roles: r.roles, classes: r.classes,
-        lastLoginAt: r.last_login_at ? new Date(r.last_login_at).getTime() : 0, resetCode: openReset(r) })) });
+        lastLoginAt: r.last_login_at ? new Date(r.last_login_at).getTime() : 0, resetCode: openReset(r),
+        // 운영자가 만든 계정의 비밀번호 — 최상위 관리자에게만(본인이 바꾸면 빈칸 · 바꿨다는 표)
+        ...(user.isPlatformAdmin ? { knownPassword: openKnown(r.known_password_sealed, r.id) } : {}) })) });
     },
     // 비밀번호를 잊은 사람 — 임시 비밀번호를 한 번만 보여 주고, 그 사람의 세션은 모두 끊는다.
     // 기관 관리자는 제 기관의 학생 · 강사만(다른 기관 관리자 · 플랫폼 관리자 · 자기 자신은 안 된다 — 자기 것은 «비밀번호 바꾸기»로).
@@ -509,6 +515,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       if (!r.ok) return no(r.code === 'conflict' ? 409 : 422, r.code === 'conflict' ? '이미 있는 아이디입니다 — 그 사람은 초대 코드로 더해 주세요' : r.error, r.code);
       await pool.query('INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1,$2,$3)', [b.orgId, r.user.id, role]);
       if (classId) await pool.query(`INSERT INTO class_members (class_id, organization_id, user_id, role) VALUES ($1,$2,$3,$4)`, [classId, b.orgId, r.user.id, role]);
+      await pool.query('UPDATE users SET known_password_sealed = $2 WHERE id = $1', [r.user.id, sealKnown(temp, r.user.id)]);
       await log(user, b.orgId, 'member.create', 'user', r.user.id, { role, classId }, ip);
       return ok({ loginId: r.user.login_id, ...(given ? {} : { password: temp }) });   // 지어 준 비밀번호만 돌려준다(운영자가 정한 것은 이미 안다)
     },
@@ -677,7 +684,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     const byRecovery = !byCode && u.is_platform_admin && recoveryCode && norm(b.code) === recoveryCode;
     if (!byCode && !byRecovery) return miss();
     if (String(b.password || '').length < 10) return no(422, '비밀번호는 10자 이상', 'validation');
-    await pool.query('UPDATE users SET password_hash = $2, reset_code_hash = NULL, reset_code_sealed = NULL, reset_expires_at = NULL, updated_at = now() WHERE id = $1', [u.id, await auth.hashPassword(b.password)]);
+    await pool.query('UPDATE users SET password_hash = $2, reset_code_hash = NULL, reset_code_sealed = NULL, reset_expires_at = NULL, known_password_sealed = NULL, updated_at = now() WHERE id = $1', [u.id, await auth.hashPassword(b.password)]);
     await pool.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [u.id]);
     tries.delete(key);
     await auth.audit(pool, { actor: u.id, action: byRecovery ? 'auth.recover' : 'auth.password_reset', targetType: 'user', targetId: u.id, ip });
