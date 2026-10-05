@@ -11,6 +11,8 @@ import { randomBytes, createHash } from 'node:crypto';
 import * as auth from './auth.mjs';
 import { isUuid } from './tenancy.mjs';
 import { PROVIDER_IDS } from '../ai/credentials.mjs';
+import { importProject } from './import.mjs';
+import { loadAggregate } from './store.mjs';
 
 const ok = (extra = {}) => ({ status: 200, body: { ok: true, ...extra } });
 const no = (status, error, code) => ({ status, body: { ok: false, error, ...(code ? { code } : {}) } });
@@ -57,6 +59,12 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
       const classes = (await pool.query(
         `SELECT c.id, c.name, c.status, c.organization_id, m.role FROM class_members m JOIN classes c ON c.id = m.class_id
           WHERE m.user_id = $1 ORDER BY c.name`, [user.id])).rows;
+      // 내가 수업에서 만든 작품 — «개인 작품으로 복사» 단추가 기관 설정(allow_copy)을 따른다
+      const works = (await pool.query(
+        `SELECT p.id, p.name, p.class_id, coalesce((o.settings->>'allow_copy')::boolean, true) AS can_copy
+           FROM projects p JOIN organizations o ON o.id = p.organization_id
+          WHERE p.owner_user_id = $1 AND p.class_id IS NOT NULL AND p.deleted_at IS NULL ORDER BY p.updated_at DESC`, [user.id])).rows;
+      for (const c of classes) c.works = works.filter((w) => w.class_id === c.id).map((w) => ({ id: w.id, name: w.name, canCopy: w.can_copy }));
       return ok({ platformAdmin: !!user.isPlatformAdmin, organizations: orgs, classes });
     },
 
@@ -92,6 +100,8 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
       }
       // 학생에게 작업 중 강의 카드를 보이는가(기본 켬)
       if (typeof b.studentCards === 'boolean') patch.student_cards = b.studentCards;
+      // 학생이 수업 작품을 개인 작품으로 복사해 갈 수 있는가(기본 허용)
+      if (typeof b.allowCopy === 'boolean') patch.allow_copy = b.allowCopy;
       const o = await one('UPDATE organizations SET settings = settings || $2::jsonb, updated_at = now() WHERE id = $1 RETURNING settings', [b.orgId, JSON.stringify(patch)]);
       await log(user, b.orgId, 'org.settings', 'organization', b.orgId, patch, ip);
       return ok({ settings: o.settings });
@@ -286,6 +296,38 @@ export function createEdu({ pool, credentials = null, wfs = null }) {
       if (!r.ok) return no(404, r.error);
       await log(user, b.orgId || null, b.orgId ? 'workflow.save_org' : 'workflow.save_platform', 'workflow_stage', String(b.stageKey), { fields: Object.keys(r.saved) }, ip);
       return ok({ saved: r.saved });
+    },
+
+    // ---------------- 내 AI 키(누구나 — 쓰기 전용). 내 개인 작품의 AI 는 이 키로, 비용은 나에게(USER).
+    async 'me.key.set'(user, b, ip) {
+      if (!credentials) return no(503, 'AI 키를 저장할 수 없습니다', 'unavailable');
+      const provider = b.provider || 'anthropic';
+      if (!PROVIDER_IDS.includes(provider)) return no(422, '모르는 AI 회사입니다', 'validation');
+      const r = await credentials.set({ ownerType: 'user', ownerId: user.id, provider, apiKey: b.apiKey, createdBy: user.id });
+      if (!r.ok) return no(422, '키를 저장하지 못했습니다', 'validation');
+      await log(user, null, 'credential.set', 'user', user.id, { provider, ownerType: 'user', credentialId: r.credential.id }, ip);
+      return ok({ credential: r.credential });
+    },
+    async 'me.key.list'(user) {
+      return ok({ credentials: credentials ? await credentials.list('user', user.id) : [] });
+    },
+
+    // ---------------- 수업 작품 → 내 개인 작품으로 복사(원본은 기관에 그대로). 문서 · 판 이력 · 확정본 · 논의가 따라간다.
+    // 복사본은 기관 · 수업에 묶이지 않는다 — AI 는 내 키로, 비용은 나에게. 기관이 막아 두었으면(allow_copy=false) 못 한다.
+    async 'project.copy_personal'(user, b, ip) {
+      const row = isUuid(b.pid) ? await one(`SELECT p.id, p.owner_user_id, p.organization_id, p.name, o.settings AS org_settings
+        FROM projects p LEFT JOIN organizations o ON o.id = p.organization_id WHERE p.id = $1 AND p.deleted_at IS NULL`, [b.pid]) : null;
+      if (!row || row.owner_user_id !== user.id) return NOT_FOUND;
+      if (!row.organization_id) return no(422, '이미 개인 작품입니다', 'validation');
+      if ((row.org_settings || {}).allow_copy === false) return no(403, '이 기관은 수업 작품을 개인 작품으로 복사하지 않게 정했습니다', 'copy_blocked');
+      const loaded = await loadAggregate(pool, row.id);
+      const src = structuredClone(loaded.project);
+      src.name = src.name + ' (개인)';
+      src.jobs = [];
+      const r = await importProject(pool, src, { ownerUserId: user.id });
+      if (!r.pid) return no(422, '복사하지 못했습니다', 'copy_failed');
+      await log(user, row.organization_id, 'project.copy_personal', 'project', r.pid, { from: row.id, counts: r.report.counts }, ip);
+      return ok({ pid: r.pid, counts: r.report.counts, verified: r.ok });
     },
 
     // ---------------- 기관 키(기관 관리자 — 쓰기 전용)

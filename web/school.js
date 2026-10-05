@@ -160,7 +160,39 @@ function myClasses() {
         h('button', { class: 'btn-line', text: '학생 초대 코드', onclick: () => makeInvite('s-' + c.id, c.organization_id, c.id, 'student') }),
       ] : null),
     codeBox('s-' + c.id),
+    (c.works || []).map((w) => h('div', { class: 'row', style: 'cursor:default' },
+      h('div', { class: 'name', style: 'flex:1', text: w.name }),
+      h('a', { class: 'btn-text', href: '/?pid=' + encodeURIComponent(w.id), text: '열기' }),
+      w.canCopy ? h('button', { class: 'btn-text', text: '개인 작품으로 복사', onclick: () => copyWork(w) }) : null)),
     progressBox(c))));
+}
+
+// 수업 작품 → 내 개인 작품(원본은 기관에 그대로). 복사본의 AI 는 내 키로 — 비용은 나에게.
+async function copyWork(w) {
+  if (!confirm('«' + w.name + '» 을 내 개인 작품으로 복사합니다.\n원본은 수업에 그대로 남고, 복사본에서 쓰는 AI 는 내 AI 키로 돕니다(비용은 본인).')) return;
+  const r = await edu('project.copy_personal', { pid: w.id });
+  if (!r.ok) return tell(r.error);
+  tell('복사했습니다 — 작업실의 «' + w.name + ' (개인)»');
+}
+
+// ---------------------------------------------------------------- 내 AI 키(누구나 — 쓰기 전용). 내 개인 작품의 AI 는 이 키로.
+function myKeyBox() {
+  const k = 'mykey';
+  if (!S.open[k]) return h('button', { class: 'btn-text', text: '내 AI 키', onclick: async () => { S.myKeys = (await edu('me.key.list')).credentials || []; S.open[k] = true; render(); } });
+  const have = (S.myKeys || []).filter((x) => x.status === 'active');
+  const save = async () => {
+    const r = await edu('me.key.set', { provider: 'anthropic', apiKey: val('mk-key') });
+    if ($('mk-key')) $('mk-key').value = '';
+    if (!r.ok) return tell(r.error);
+    S.myKeys = (await edu('me.key.list')).credentials || [];
+    tell('저장했습니다');
+  };
+  return section('내 AI 키',
+    h('div', { class: 'when', text: have.length ? '넣어 둔 키: ' + have.map((x) => x.keyHint).join(', ') : '아직 없습니다' }),
+    h('div', { class: 'when', style: 'margin-top:4px', text: '내 개인 작품의 AI 는 이 키로 돌고 비용은 키 주인에게 나갑니다. 수업 작품은 기관 키로 돕니다. 만 14세 이상만 넣어 주세요.' }),
+    h('div', { class: 'line', style: 'align-items:flex-end;margin-top:10px' },
+      field('Anthropic API 키', 'mk-key', 'password', { autocomplete: 'off', spellcheck: 'false' }),
+      h('button', { class: 'btn-red', text: '저장', onclick: save })));
 }
 
 // ---------------------------------------------------------------- 사용량(비용을 내는 쪽만 — 서버가 학생 · 강사에게는 내주지 않는다)
@@ -225,6 +257,10 @@ function orgBox(id) {
       h('div', { class: 'lab', style: 'margin:0', text: '학생에게 작업 중 강의 카드 보이기' }),
       h('button', { class: 'tg' + (!(org.settings && org.settings.student_cards === false) ? ' on' : ''),
         onclick: async () => { await edu('org.settings', { orgId: id, studentCards: !!(org.settings && org.settings.student_cards === false) }); await load(); } })),
+    h('div', { class: 'line', style: 'margin-top:16px' },
+      h('div', { class: 'lab', style: 'margin:0', text: '학생이 수업 작품을 개인 작품으로 복사해 갈 수 있게' }),
+      h('button', { class: 'tg' + (!(org.settings && org.settings.allow_copy === false) ? ' on' : ''),
+        onclick: async () => { await edu('org.settings', { orgId: id, allowCopy: !!(org.settings && org.settings.allow_copy === false) }); await load(); } })),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '단계 · 강의 카드 고쳐 쓰기(이 기관)' }),
     wfEditor(id),
     // 학생 작품 열람 — 최상위 관리자만 바꾼다. 기관 관리자는 지금 상태만 본다.
@@ -417,6 +453,7 @@ function render() {
   $('root').replaceChildren(h('div', { class: 'body' }, head('수업'), notice,
     myClasses(),
     joinBox(),
+    S.loggedIn ? myKeyBox() : null,
     S.loggedIn ? passwordBox() : null));
 }
 

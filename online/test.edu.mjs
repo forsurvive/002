@@ -150,6 +150,33 @@ export async function run({ pool, ok, eq }) {
     eq('**강사도 못 본다**', (await edu('edu-in', 'usage.summary', { orgId: org.id })).status, 404);
     eq('학생의 «내 사용량»에 기관 키로 돈 것은 없다', (await edu('edu-s1', 'usage.summary')).usage.length, 0);
 
+    // ---------------- 수업이 끝난 뒤 개인으로 이어 쓰기 — 내 AI 키 · 수업 작품을 개인 작품으로 복사
+    const MY_KEY = 'fake-my-key-' + randomBytes(5).toString('hex');
+    const mk = await edu('edu-s1', 'me.key.set', { apiKey: MY_KEY });
+    ok('**누구나 내 AI 키를 넣는다 — 돌려받는 것은 끝 네 자리뿐**', mk.ok && !JSON.stringify(mk).includes(MY_KEY) && !JSON.stringify(await edu('edu-s1', 'me.key.list')).includes(MY_KEY)
+      && (await edu('edu-s1', 'me.key.list')).credentials.length === 1);
+    const st0 = async (who, pid) => (await (await fetch(base + '/api/state?pid=' + pid, { headers: { cookie: jar[who] } })).json()).project;
+    const dc = await api('edu-s1', 'doc.create', { pid: proj.pid, title: '세계관', body: '첫 판' });
+    await api('edu-s1', 'doc.write', { pid: proj.pid, id: dc.id, body: '둘째 판' });
+    await api('edu-s1', 'doc.final', { pid: proj.pid, ids: [dc.id], on: true });
+    const before = await st0('edu-s1', proj.pid);
+    eq('**남의 수업 작품은 복사하지 못한다**', (await edu('edu-s2', 'project.copy_personal', { pid: proj.pid })).status, 404);
+    const cp = await edu('edu-s1', 'project.copy_personal', { pid: proj.pid });
+    ok('학생이 수업 작품을 개인 작품으로 복사한다(검증 통과)', cp.ok && cp.verified && cp.pid !== proj.pid, JSON.stringify(cp));
+    const row = (await pool.query('SELECT owner_user_id, organization_id, class_id, name FROM projects WHERE id = $1', [cp.pid])).rows[0];
+    const me1 = (await pool.query("SELECT id FROM users WHERE login_id = 'edu-s1'")).rows[0].id;
+    ok('**복사본은 기관 · 수업에 묶이지 않는다(내 것, 내 키로 — 비용 주체 USER)**', row.owner_user_id === me1 && !row.organization_id && !row.class_id && row.name.endsWith('(개인)'));
+    const after = await st0('edu-s1', cp.pid);
+    const d0 = before.docs.find((d) => d.id === dc.id); const d1 = after.docs.find((d) => d.id === dc.id);
+    ok('**문서 · 판 이력 · 확정본이 그대로 따라간다**', d1 && d1.body === '둘째 판' && d1.isFinal && d1.versions.length === d0.versions.length && JSON.stringify(d1.versions.map((v) => v.body)) === JSON.stringify(d0.versions.map((v) => v.body)), JSON.stringify([d0 && d0.versions.length, d1 && d1.versions.length, d1 && d1.body, d1 && d1.isFinal]));
+    ok('원본은 기관에 그대로', (await pool.query('SELECT organization_id FROM projects WHERE id = $1', [proj.pid])).rows[0].organization_id === org.id && (await st0('edu-s1', proj.pid)).docs.length === before.docs.length);
+    eq('개인 작품은 다시 복사할 것이 없다', (await edu('edu-s1', 'project.copy_personal', { pid: cp.pid })).status, 422);
+    await edu('edu-oa', 'org.settings', { orgId: org.id, allowCopy: false });
+    const blocked = await edu('edu-s1', 'project.copy_personal', { pid: proj.pid });
+    ok('**기관이 막아 두면 복사하지 못한다**', blocked.status === 403 && blocked.code === 'copy_blocked');
+    await edu('edu-oa', 'org.settings', { orgId: org.id, allowCopy: true });
+    ok('복사도 감사 로그에', (await pool.query("SELECT 1 FROM audit_logs WHERE action = 'project.copy_personal' AND organization_id = $1", [org.id])).rowCount === 1);
+
     // ---------------- 한 사람 한 계정 — 같은 초대 코드로 들어와도 계정은 따로다
     const ids = (await pool.query("SELECT id, login_id, password_hash FROM users WHERE login_id IN ('edu-s1', 'edu-s2')")).rows;
     ok('**같은 코드로 들어온 두 학생은 다른 계정(다른 비밀번호)**', ids.length === 2 && ids[0].id !== ids[1].id && ids[0].password_hash !== ids[1].password_hash);
