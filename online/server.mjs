@@ -326,7 +326,14 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const r = (await pool.query(
           `SELECT bool_or(role = 'organization_admin') AS org_admin, count(*)::int AS n FROM organization_members WHERE user_id = $1 AND status = 'active'`, [user.id])).rows[0];
         const classes = (await pool.query('SELECT count(*)::int AS n FROM class_members WHERE user_id = $1', [user.id])).rows[0].n;
-        return { ...me, manage: !!(user.isPlatformAdmin || r.org_admin), platformAdmin: !!user.isPlatformAdmin, classes, member: r.n > 0 };
+        // 새 작품을 만들 수 있는 수업 — 열려 있고 기관 이용 기간 안(화면의 «어디에 만들까요?»). 막는 것은 project.create 가 다시 본다.
+        const open = (await pool.query(
+          `SELECT c.id, c.name, c.organization_id, o.name AS org_name FROM class_members m JOIN classes c ON c.id = m.class_id
+             JOIN organizations o ON o.id = c.organization_id
+            WHERE m.user_id = $1 AND c.status = 'active' AND o.status = 'active' ORDER BY c.name`, [user.id])).rows;
+        const places = [];
+        for (const c of open) if ((await tenancy.licenseOf(c.organization_id)).ok) places.push({ classId: c.id, name: c.name, orgName: c.org_name });
+        return { ...me, manage: !!(user.isPlatformAdmin || r.org_admin), platformAdmin: !!user.isPlatformAdmin, classes, member: r.n > 0, places };
       };
 
       if (req.method === 'GET' && (url.pathname === '/login' || url.pathname === '/login.html')) {

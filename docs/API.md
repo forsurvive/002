@@ -149,6 +149,10 @@
 | `invite.check` `{code}` | **로그인 없이도** | 첫 화면에서 코드만 확인(쓰지 않는다) → `{role, organizationName, className}` · 틀리면 같은 고삐에 센다 |
 | `me.key.set` `{apiKey, provider?}` · `me.key.list` | 누구나(제 것만) | 내 AI 키 — 쓰기 전용(끝 네 자리 · 상태만). 내 개인 작품의 AI 는 이 키로(비용 주체 USER) |
 | `project.copy_personal` `{pid}` | 그 수업 작품의 주인 | 문서 · 판 이력 · 확정본 · 논의째 «… (개인)» 으로 복사 → `{pid, counts, verified}`. 원본은 기관에 그대로 · 기관 `org.settings allowCopy:false` 면 403 `copy_blocked` |
+
+새 작품은 작업실(홈)의 «+» 한 곳에서 만든다(2026-10-05): 창 맨 위 «어디에 만들까요?» — `/api/state` 의 `me.places`(열려 있고 기관 이용 기간 안인 내 수업)
+가운데 하나(기본: 첫 수업) 또는 «내 개인 작품». 수업을 고르면 `project.create` 에 `classId` 가 실린다(서버가 다시 본다).
+작업실 목록의 수업 작품에는 `place`(수업 이름)가 붙는다. 첫 화면의 초대 코드는 «이미 계정이 있어요» → 로그인하고 그 계정으로 참여(새 계정을 만들지 않는다).
 | `org.key.set` `{orgId, provider, apiKey}` · `org.key.list` | 기관 관리자 | 기관 키(쓰기 전용 — 끝 네 자리만 보임) |
 | `org.members` `{orgId}` | 기관 관리자 | 사람 목록 — 한 사람 한 계정(아이디 · 이름 · 역할 · 수업). 초대 코드는 들어오는 열쇠일 뿐 계정이 아니다 |
 | `member.reset_password` `{orgId, userId}` | 기관 관리자(제 기관 학생 · 강사) | 임시 비밀번호를 한 번만 보여 주고 그 사람의 세션을 끊는다 |

@@ -102,24 +102,6 @@ function joinBox() {
 
 // ---------------------------------------------------------------- 내 수업
 
-function newWorkForm(c) {
-  const k = 'nw-' + c.id;
-  if (!S.open[k]) return h('button', { class: 'btn-line', text: '이 수업에 새 작품', onclick: () => { S.open[k] = true; render(); } });
-  const go = async () => {
-    const r = await fetch('/api', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
-      op: 'project.create', classId: c.id, name: val(k + '-name'), spec: { form: val(k + '-form') }, materials: [{ name: '자료', text: val(k + '-mat') }],
-    }) }).then((x) => x.json()).catch(() => ({ ok: false, error: '연결되지 않습니다' }));
-    if (r.code === 'gate') return location.reload();
-    if (!r.ok) return tell(r.error);
-    location.href = '/';
-  };
-  return h('div', { style: 'width:100%' },
-    h('div', { class: 'line', style: 'align-items:flex-end' }, field('작품 이름', k + '-name'), field('형식(예: 단편소설)', k + '-form')),
-    h('div', { class: 'lab', style: 'margin-top:10px', text: '자료' }), h('textarea', { id: k + '-mat' }),
-    h('div', { class: 'line', style: 'margin-top:10px' }, h('button', { class: 'btn-red', text: '만들기', onclick: go }),
-      h('button', { class: 'btn-text', text: '닫기', onclick: () => { S.open[k] = false; render(); } })));
-}
-
 function progressBox(c) {
   const p = S.progress[c.id];
   if (!p) return null;
@@ -154,7 +136,6 @@ function myClasses() {
       h('span', { class: 'mark', text: c.role === 'instructor' ? '강사' : '학생' }),
       c.status !== 'active' ? h('span', { class: 'mark', text: '닫힘' }) : null),
     h('div', { class: 'line', style: 'margin-top:8px' },
-      c.role === 'student' && c.status === 'active' ? newWorkForm(c) : null,
       c.role === 'instructor' ? [
         h('button', { class: 'btn-line', text: '수업 현황', onclick: () => showProgress(c) }),
         h('button', { class: 'btn-line', text: '학생 초대 코드', onclick: () => makeInvite('s-' + c.id, c.organization_id, c.id, 'student') }),

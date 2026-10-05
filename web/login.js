@@ -77,6 +77,18 @@ async function join(e) {
   tell(out.error || '계정을 만들지 못했습니다');
 }
 
+// 이미 계정이 있는 사람 — 새 계정을 만들지 않고, 로그인한 뒤 그 계정으로 이 수업 · 기관에 들어간다
+async function joinWithAccount(e) {
+  e.preventDefault();
+  tell('');
+  if (!v('ha-id') || !$('ha-pw').value) return tell('아이디와 비밀번호를 넣어 주세요');
+  const li = await post('/api/auth/login', { loginId: v('ha-id'), password: $('ha-pw').value });
+  if (!li.ok) return tell(li.error || '들어가지 못했습니다');
+  const out = await post('/api/edu', { op: 'invite.accept', code: S.invite.code });
+  if (!out.ok) return tell(out.error || '수업에 들어가지 못했습니다');
+  location.href = '/';
+}
+
 // 처음 설정 — 계정이 하나도 없을 때만 서버가 needed 를 준다. 운영자 계정과 (있으면) AI 키를 한 번에.
 // 키는 서버가 봉해 저장하고 다시 돌려주지 않는다 — 이 화면도 보낸 뒤 칸을 비운다.
 async function setup(e) {
@@ -113,7 +125,15 @@ function mainForms() {
     sayLine(),
     h('div', { style: 'margin-top:18px;padding-top:18px;border-top:1px solid var(--line-soft)' },
       h('div', { class: 'lab', text: '처음 오셨나요? 초대 코드' }),
-      inv ? h('form', { onsubmit: join },
+      inv && S.invite.have ? h('form', { onsubmit: joinWithAccount },
+        h('div', { class: 'top-name', style: 'font-size:19px;margin-top:6px', text: '내 계정으로 참여' }),
+        h('div', { class: 'when', style: 'margin-top:4px', text: [inv.organizationName, inv.className, ROLE[inv.role] || ''].filter(Boolean).join(' · ') }),
+        field('아이디', 'ha-id', 'text', { autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
+        field('비밀번호', 'ha-pw', 'password', { autocomplete: 'current-password' }),
+        h('div', { class: 'line', style: 'margin-top:14px' },
+          h('button', { class: 'btn-red', type: 'submit', text: '로그인하고 참여' }),
+          h('button', { class: 'btn-text', type: 'button', text: '새 계정 만들기', onclick: () => { S.invite.have = false; draw(mainForms()); } })))
+      : inv ? h('form', { onsubmit: join },
         // 역할은 고르지 않는다 — 초대 코드가 정한다(스스로 기관 관리자를 고르는 길을 두지 않는다)
         h('div', { class: 'top-name', style: 'font-size:19px;margin-top:6px', text: (ROLE[inv.role] || '') + ' 계정 만들기' }),
         h('div', { class: 'when', style: 'margin-top:4px', text: [inv.organizationName, inv.className].filter(Boolean).join(' · ') }),
@@ -123,6 +143,7 @@ function mainForms() {
         field('비밀번호 한 번 더', 'nu-pw2', 'password', { autocomplete: 'new-password' }),
         h('div', { class: 'line', style: 'margin-top:14px' },
           h('button', { class: 'btn-red', type: 'submit', text: '계정 만들고 들어가기' }),
+          h('button', { class: 'btn-text', type: 'button', text: '이미 계정이 있어요', onclick: () => { S.invite.have = true; draw(mainForms()); } }),
           h('button', { class: 'btn-text', type: 'button', text: '다른 코드', onclick: () => { S.invite = null; draw(mainForms()); } })))
         : h('form', { onsubmit: checkCode, class: 'line', style: 'align-items:center' },
           h('input', { id: 'iv-code', type: 'text', placeholder: 'ABCD-EFGH-JKLM', autocapitalize: 'characters', spellcheck: 'false', style: 'flex:1' }),

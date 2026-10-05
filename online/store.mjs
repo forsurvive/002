@@ -393,8 +393,10 @@ export function createProjectStore(pool) {
 
     async listFor(userId) {
       const { rows } = await pool.query(
-        'SELECT id, name, created_at, updated_at FROM projects WHERE owner_user_id = $1 AND deleted_at IS NULL ORDER BY updated_at DESC', [userId]);
-      return rows.map((r) => ({ id: r.id, name: r.name, updatedAt: ms(r.updated_at), createdAt: ms(r.created_at) }));
+        `SELECT p.id, p.name, p.created_at, p.updated_at, c.name AS class_name FROM projects p LEFT JOIN classes c ON c.id = p.class_id
+          WHERE p.owner_user_id = $1 AND p.deleted_at IS NULL ORDER BY p.updated_at DESC`, [userId]);
+      // place — 수업 작품이면 그 수업 이름(작업실 목록에 소속을 보인다). 개인 작품은 없다.
+      return rows.map((r) => ({ id: r.id, name: r.name, updatedAt: ms(r.updated_at), createdAt: ms(r.created_at), ...(r.class_name ? { place: r.class_name } : {}) }));
     },
   };
 }

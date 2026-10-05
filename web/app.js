@@ -267,11 +267,16 @@ function projectList() {
         S.me ? h('button', { class: 'btn-text', text: '수업 · 초대 코드', onclick: () => { location.href = '/school.html'; } }) : null,
         S.me ? h('button', { class: 'btn-text', text: '로그아웃', onclick: logout }) : null,
         h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: () => startTour() }),
-        h('button', { class: 'plus', text: '+', onclick: () => { S.draft = []; S.open = { type: 'newproject' }; render(); } }))),
+        h('button', { class: 'plus', text: '+', onclick: () => {
+          // 온라인판 — 열린 수업이 있으면 그 수업을 먼저 골라 둔다(학생 대부분은 과제를 만든다)
+          const places = (S.me && S.me.places) || [];
+          S.draft = []; S.open = { type: 'newproject', place: places.length ? places[0].classId : '' }; render();
+        } }))),
     h('div', { class: 'cards' }, S.projects.map((p) => h('div', {
       class: 'card', onclick: () => { S.pid = p.id; S.tab = '작업실'; S.project = null; pull(true); },
     },
     h('div', { class: 'name', text: p.name }),
+    p.place ? h('span', { class: 'mark', text: p.place }) : null,
     h('div', { class: 'when', text: when(p.updatedAt || p.createdAt) })))),
     brandMark('text-align:center;padding:56px 0 8px'));
 }
@@ -1268,6 +1273,7 @@ function newProjectPanel(close) {
   return h('div', { class: 'panel' },
     h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '새 작품' }), h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
+      placeChoice(),
       h('div', { class: 'grid2' },
         h('div', null, h('div', { class: 'lab', text: '이름' }), textbox('n-name', '이름')),
         h('div', null, h('div', { class: 'lab', text: '형식' }), textbox('n-form', '형식'))),
@@ -1293,6 +1299,22 @@ function newProjectPanel(close) {
         S.open.note ? h('div', { class: 'lab', style: 'margin-top:8px', text: S.open.note }) : null)));
 }
 
+// 온라인판 — 어디에 만들까요? 수업 작품은 기관 키로, 내 개인 작품은 내 AI 키로 돈다(개인판에는 이 칸이 없다).
+function placeChoice() {
+  if (!S.me) return null;
+  const places = S.me.places || [];
+  const pick = S.open.place || '';
+  const choose = (v) => { S.open.place = v; render(); };
+  return h('div', null,
+    places.length ? [
+      h('div', { class: 'lab', text: '어디에 만들까요?' }),
+      h('div', { class: 'line' },
+        places.map((c) => h('button', { class: pick === c.classId ? 'btn' : 'btn-line', text: c.orgName + ' · ' + c.name, onclick: () => choose(c.classId) })),
+        h('button', { class: pick === '' ? 'btn' : 'btn-line', text: '내 개인 작품', onclick: () => choose('') })),
+    ] : null,
+    pick === '' ? h('div', { class: 'when', style: 'margin-top:8px', text: '내 개인 작품 — AI 는 내 AI 키(«수업 · 초대 코드» 페이지)로 돌고, 비용은 본인에게 나갑니다.' }) : null);
+}
+
 // 돌려주는 값: 이 자리에서 창까지 다 갈무리했으면 true. 거절당했으면 false(창을 열어 둔다).
 async function makeProject() {
   const rest = $('n-mat') ? $('n-mat').value : '';
@@ -1313,6 +1335,7 @@ async function makeProject() {
     render();
     return false;
   }
+  if (S.me && S.open.place) body.classId = S.open.place;
   const r = await api('project.create', body);
   if (r.ok) { S.pid = r.pid; S.draft = []; S.open = null; S.project = null; S.typed = {}; pull(true); return true; }
   S.open.err = r.error;

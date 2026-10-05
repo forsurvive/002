@@ -111,9 +111,17 @@ export async function run({ pool, ok, eq }) {
     // ---------------- 수업 프로젝트 → 수업 현황
     const proj = await api('edu-s1', 'project.create', { classId: c1.id, name: '하나의 과제', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }] });
     ok('학생이 수업 프로젝트를 만든다', proj.ok);
+    const home = await (await fetch(base + '/api/state', { headers: { cookie: jar['edu-s1'] } })).json();
+    ok('**«어디에 만들까요?» — 학생에게 열린 수업이 보인다**', home.me.places.some((x) => x.classId === c1.id && x.name && x.orgName));
+    ok('**작업실 목록에 수업 작품의 소속(수업 이름)이 보인다**', home.projects.find((x) => x.id === proj.pid).place === '웹소설 1반');
+    const solo = await api('edu-s1', 'project.create', { name: '내 것', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }] });
+    ok('수업을 고르지 않으면 개인 작품(소속 표시 없음)', solo.ok && !(await (await fetch(base + '/api/state', { headers: { cookie: jar['edu-s1'] } })).json()).projects.find((x) => x.id === solo.pid).place);
+    ok('같은 수업에 작품을 또 만들 수 있다(개수 제한 없음)', (await api('edu-s1', 'project.create', { classId: c1.id, name: '과제 둘', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }] })).ok);
+    ok('수업이 없는 사람에게는 고를 수업이 없다', (await (await fetch(base + '/api/state', { headers: { cookie: jar['edu-plain'] } })).json()).me.places.length === 0);
     const pg = await edu('edu-in', 'class.progress', { classId: c1.id });
-    const one = pg.students.find((s) => s.name === '학생 하나');
-    ok('**강사는 수업 현황을 본다(학생 · 프로젝트 · 최근 작업)**', pg.ok && one && one.projectId === proj.pid && pg.students.some((s) => s.name === '학생 둘' && !s.projectId));
+    // 학생 하나가 작품을 둘 만들었다 — 작품마다 한 줄
+    const one = pg.students.find((s) => s.name === '학생 하나' && s.projectId === proj.pid);
+    ok('**강사는 수업 현황을 본다(학생 · 프로젝트 · 최근 작업 — 작품마다 한 줄)**', pg.ok && one && pg.students.filter((s) => s.name === '학생 하나').length === 2 && pg.students.some((s) => s.name === '학생 둘' && !s.projectId));
     ok('**수업 현황에 비용 · 토큰 칸이 없다**', !/cost|token|usd|credential/i.test(JSON.stringify(pg)));
     eq('**학생은 수업 현황을 못 본다**', (await edu('edu-s1', 'class.progress', { classId: c1.id })).status, 404);
     eq('맡지 않은 수업 현황도 못 본다', (await edu('edu-in', 'class.progress', { classId: c2.id })).status, 404);
