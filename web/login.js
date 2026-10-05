@@ -114,8 +114,10 @@ function mainForms() {
     h('div', { style: 'margin-top:18px;padding-top:18px;border-top:1px solid var(--line-soft)' },
       h('div', { class: 'lab', text: '처음 오셨나요? 초대 코드' }),
       inv ? h('form', { onsubmit: join },
-        h('div', { class: 'when', style: 'margin-top:4px', text: [inv.organizationName, inv.className, ROLE[inv.role] || ''].filter(Boolean).join(' · ') + ' — 쓸 계정을 만듭니다' }),
-        field('아이디(영문 소문자 · 숫자)', 'nu-id', 'text', { autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
+        // 역할은 고르지 않는다 — 초대 코드가 정한다(스스로 기관 관리자를 고르는 길을 두지 않는다)
+        h('div', { class: 'top-name', style: 'font-size:19px;margin-top:6px', text: (ROLE[inv.role] || '') + ' 계정 만들기' }),
+        h('div', { class: 'when', style: 'margin-top:4px', text: [inv.organizationName, inv.className].filter(Boolean).join(' · ') }),
+        field('아이디(영문 소문자 · 숫자, 3자 이상)', 'nu-id', 'text', { autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
         field('이름', 'nu-name', 'text'),
         field('비밀번호(10자 이상)', 'nu-pw', 'password', { autocomplete: 'new-password' }),
         field('비밀번호 한 번 더', 'nu-pw2', 'password', { autocomplete: 'new-password' }),
