@@ -1787,7 +1787,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const deadClasses = [...usedClasses].filter((c) => !css.includes('.' + c));
   ok('화면이 쓰는 반이 모두 style.css 에 있다', deadClasses.length === 0, deadClasses.join(' '));
   // 튜토리얼 (사용자 지시, 2026-09-19) — 가상 작품으로 기능을 차례로 보여 주는 소개 시퀀스
-  ok('첫 화면에 튜토리얼 문이 있다', app.includes("text: '튜토리얼 보기', onclick: startTour"));
+  ok('첫 화면에 튜토리얼 문이 있다', /text: '튜토리얼 보기', onclick: (\(\) => )?startTour/.test(app));
   ok('세 번째 겹을 그린다', app.includes("$('layer3').replaceChildren") && /<div id="layer3">/.test(src(join(ROOT, 'web', 'index.html'))));
   ok('튜토리얼 파일을 함께 부른다', /src="tour\.demo\.js"/.test(src(join(ROOT, 'web', 'index.html'))) && /src="tour\.js"/.test(src(join(ROOT, 'web', 'index.html'))));
   // 서버로 나가는 길 셋이 모두 막혔는가 — 구독을 쓰지 않고 데이터에 쓰지 않는다는 약속의 전부다

@@ -266,7 +266,7 @@ function projectList() {
         S.me && S.me.manage ? h('button', { class: 'btn-text', text: '관리', onclick: () => { location.href = '/manage.html'; } }) : null,
         S.me ? h('button', { class: 'btn-text', text: '수업 · 초대 코드', onclick: () => { location.href = '/school.html'; } }) : null,
         S.me ? h('button', { class: 'btn-text', text: '로그아웃', onclick: logout }) : null,
-        h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: startTour }),
+        h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: () => startTour() }),
         h('button', { class: 'plus', text: '+', onclick: () => { S.draft = []; S.open = { type: 'newproject' }; render(); } }))),
     h('div', { class: 'cards' }, S.projects.map((p) => h('div', {
       class: 'card', onclick: () => { S.pid = p.id; S.tab = '작업실'; S.project = null; pull(true); },
