@@ -17,6 +17,7 @@ import { killAllCalls, lastLimit } from './call.mjs';
 import * as auth from './auth.mjs';
 import { createOps } from './ops.mjs';
 import { baseTemplate } from './workflow.mjs';
+import { normalizeProject, saveProject, newId } from './store.mjs';
 import { runKind } from '../core/generation/kinds.mjs';
 import { resolveHosting, hostOf, originOk, gateOk, isNavigation, GATE_REALM } from './hosting.mjs';
 
@@ -53,7 +54,16 @@ function startAgentPrep(pid, request = '') {
   jobs.start(pid, { kind: 'agents', title: '에이전트 준비', params: { request } });
 }
 
-const { OPS, stateOf, downloadOf } = createOps({ state, jobs, engine, auth, limit: lastLimit, prepared, startAgentPrep, workflow: async () => baseTemplate() });
+// 작품 파일 가져오기 — 늘 새 id 로 세운다(있는 작품을 덮어쓰지 않는다). 문서 · 판 · 참조 · 논의는 파일의 것 그대로.
+function importProject(raw) {
+  const p = normalizeProject({ ...structuredClone(raw), id: newId('p').replace(/[^A-Za-z0-9_-]/g, '') });
+  if (!p) return { error: '작품 파일이 아닙니다' };
+  p.jobs = [];
+  saveProject(p);
+  return { pid: p.id };
+}
+
+const { OPS, stateOf, downloadOf } = createOps({ state, jobs, engine, auth, limit: lastLimit, prepared, startAgentPrep, workflow: async () => baseTemplate(), importProject });
 
 export const OP_NAMES = Object.keys(OPS);
 
@@ -138,8 +148,9 @@ async function handle(plan, req, res) {
     if (req.method === 'GET' && url.pathname === '/api/download') {
       const d = await downloadOf(url.searchParams.get('pid'), url.searchParams.get('kind'), url.searchParams.get('id'));
       if (!d) return send(res, 404, '없음', 'text/plain; charset=utf-8');
-      return send(res, 200, d.text, 'text/markdown; charset=utf-8', {
-        'content-disposition': 'attachment; filename*=UTF-8\'\'' + encodeURIComponent(d.name),
+      return send(res, 200, d.text, d.type || 'text/markdown; charset=utf-8', {
+        // filename 은 한글을 못 읽는 브라우저를 위한 ASCII 대신 이름, filename* 이 진짜 이름
+        'content-disposition': 'attachment; filename="' + (d.name.replace(/[^\x20-\x7e]|["\\]/g, '_')) + '"; filename*=UTF-8\'\'' + encodeURIComponent(d.name),
       });
     }
     if (req.method === 'GET') {

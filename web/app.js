@@ -162,6 +162,28 @@ function toLogin(out) { location.href = '/login'; return out; }
 // 출입 열쇠가 풀렸으면 페이지를 다시 연다 — 그때 브라우저가 열쇠를 묻는다(단추마다 창이 뜨지 않게)
 function regate(out) { location.reload(); return out; }
 
+// 작품 파일(.story-project.json · 개인판 project.json) → 새 작품. 온라인판은 큰 파일을 받는 문(/api/import)으로.
+function importProjectFile() {
+  if (S.tour) return;
+  const pick = h('input', { type: 'file', accept: '.json,application/json' });
+  pick.onchange = async () => {
+    const f = pick.files && pick.files[0];
+    if (!f) return;
+    let bundle;
+    try { bundle = JSON.parse(await f.text()); } catch { S.homeSay = '작품 파일이 아닙니다'; return render(); }
+    S.homeSay = '가져오는 중…'; render();
+    const r = await fetch(S.me ? '/api/import' : '/api', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'project.import', bundle }),
+    });
+    const out = await r.json().catch(() => ({ ok: false, error: r.status === 413 ? '파일이 너무 큽니다' : '응답 없음' }));
+    if (out.code === 'login') return toLogin(out);
+    S.homeSay = out.ok ? '' : out.error;
+    if (out.ok) { S.pid = out.pid; S.tab = '작업실'; S.project = null; }
+    pull(true);
+  };
+  pick.click();
+}
+
 async function logout() {
   await fetch('/api/auth/logout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => null);
   location.href = '/login';
@@ -302,6 +324,8 @@ function projectList() {
         h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: () => startTour() }))),
     // 새 작품 «+» — 화면 한가운데(좁은 창에서도 잘리지 않게 줄을 따로 둔다)
     h('div', { class: 'new-row' }, h('button', { class: 'plus big', text: '+', title: '새 작품', onclick: newProjectOpen })),
+    h('div', { class: 'new-row', style: 'margin-top:-12px' }, h('button', { class: 'btn-text', text: '작품 파일 가져오기', onclick: importProjectFile })),
+    S.homeSay ? h('div', { class: 'new-row' }, h('div', { class: 'notice', text: S.homeSay })) : null,
     h('div', { class: 'cards' }, S.projects.map((p) => h('div', {
       class: 'card', onclick: () => { S.pid = p.id; S.tab = '작업실'; S.project = null; pull(true); },
     },
@@ -759,6 +783,10 @@ function settings() {
     // 알 길이 없었다. **있는데 못 찾는 것은 없는 것과 같다.**
     // 지어진 자리가 있으면 펴 둔다 — 작가가 한 번 접으면 그다음부터는 그 뜻을 따른다.
     (p.prompts || []).length ? agentList(p) : null,
+    // 작품 통째로 — 다른 PC · 개인판(USB) · 온라인판에서 «작품 파일 가져오기»로 그대로 연다
+    h('div', { class: 'line', style: 'padding-top:20px' },
+      h('button', { class: 'btn-line', text: '작품 파일 내려받기', onclick: () => download('project', '') }),
+      h('div', { class: 'when', text: '문서 · 판 이력 · 확정본 · 논의까지 한 파일로' })),
     h('div', { style: 'padding-top:20px' },
       h('button', {
         class: 'btn-red', text: '프로젝트 삭제',

@@ -315,6 +315,24 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const dlc = await fetch(base + '/api/download?pid=' + pid + '&kind=cat&id=' + catId);
   ok('카테고리 내려받기', (await dlc.text()).includes('설정'));
 
+  // 작품 통째로 — 내려받은 파일을 가져오면 새 작품(새 id)으로 문서 · 판 · 참조 · 논의가 그대로
+  const dlp = await fetch(base + '/api/download?pid=' + pid + '&kind=project&id=');
+  ok('작품 파일 내려받기(JSON · 이름)', dlp.status === 200 && /application\/json/.test(dlp.headers.get('content-type')) && /story-project\.json/.test(decodeURIComponent(dlp.headers.get('content-disposition'))));
+  const bundle = await dlp.json();
+  ok('묶음 꼴 — 지문 · 작업 줄 없음', bundle.format === 'story-project' && /^[0-9a-f]{64}$/.test(bundle.sha256) && !('jobs' in bundle.project));
+  const im = await post('project.import', { bundle });
+  ok('**가져오면 새 작품 — 있는 작품을 덮어쓰지 않는다**', im.ok && im.pid && im.pid !== pid, JSON.stringify(im));
+  const a0 = (await stateOf(pid)).project; const a1 = (await stateOf(im.pid)).project;
+  ok('**문서 · 판 이력 · 확정 · 참조가 그대로**', a1.docs.length === a0.docs.length && a0.docs.every((d) => {
+    const e = a1.docs.find((x) => x.id === d.id);
+    return e && e.body === d.body && e.isFinal === d.isFinal && e.versions.length === d.versions.length && JSON.stringify(e.refIds) === JSON.stringify(d.refIds);
+  }) && a1.threads.length === a0.threads.length);
+  const bent = structuredClone(bundle); bent.project.docs[0].body += ' 고침';
+  eq('**지문이 맞지 않으면 받지 않는다**', (await post('project.import', { bundle: bent })).error, '파일이 손상되었습니다(지문이 맞지 않습니다)');
+  eq('작품 파일이 아니면 받지 않는다', (await post('project.import', { bundle: { hello: 1 } })).error, '작품 파일이 아닙니다');
+  ok('개인판 project.json 그대로도 받는다', (await post('project.import', { bundle: bundle.project })).ok);
+  for (const x of (await post('project.list')).projects) if (x.id !== pid && x.name === a0.name) await post('project.delete', { pid: x.id });
+
   // 휴지통
   await post('doc.delete', { pid, ids: [docId] });
   p = (await stateOf(pid)).project;

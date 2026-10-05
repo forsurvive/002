@@ -109,7 +109,7 @@
 | 생성 기록 | `run.list` `run.read` | 프로젝트 쓰기 권한(학생은 비용 칸 없음) | «이 결과는 무엇을 보고 만들었나» — 참조 스냅샷 |
 | 워크플로우 | `workflow.templates` `stage.list` `stage.start` `stage.approve` `stage.reopen` `stage.skip` | 프로젝트 쓰기 권한 | `stage.start` = 추천 참조 확인 후 `doc.update` 와 같은 작업 등록 |
 | 사용량 | `usage.summary` `usage.byClass` `usage.byModel` | 기관 관리자 / 플랫폼 관리자 / 개인(본인) | 학생 불가 |
-| 내보내기 | `project.export` `project.import` | 소유자 | `story-project` 묶음(Phase 9) |
+| 내보내기 | `GET /api/download?kind=project` · `project.import {bundle}`(온라인은 큰 파일용 `POST /api/import`, 60MB · 로그인한 사람만) | 읽을 수 있는 사람 / 누구나(내 개인 작품으로) | `story-project` 묶음 `{format, version, exportedAt, sha256, project}` — 지문이 틀리면 거절 · 늘 새 작품(덮어쓰지 않음) · 개인판 project.json 그대로도 받는다 (2026-10-05 구현) |
 | 관리 | `admin.jobs` `admin.errors` `admin.users` | 플랫폼 관리자 | |
 
 편집 op 의 온라인 차이:

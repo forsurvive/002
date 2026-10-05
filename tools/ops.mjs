@@ -4,6 +4,7 @@
 // 넣는 것은 동기여도 비동기여도 된다 — 문마다 기다린다(개인판은 메모리, 온라인판은 PostgreSQL).
 
 import * as model from './model.mjs';
+import { makeBundle, readBundle } from './bundle.mjs';
 import { MODELS } from '../core/ids.mjs';
 import { bookList, BOOK_CATEGORY } from './books.mjs';
 import { EDITABLE_CODES, VIEW_CODES } from './prompts.mjs';
@@ -34,6 +35,15 @@ export function createOps(d) {
   const OPS = {
     // ---------------- 프로젝트
     'project.list': async () => ok({ projects: await state.list() }),
+
+    // 작품 파일(story-project · 개인판 project.json)을 새 작품으로 — 있는 작품을 덮어쓰지 않는다(늘 새 id)
+    'project.import': async (b) => {
+      if (!d.importProject) return bad('여기서는 작품을 가져올 수 없습니다');
+      const r = readBundle(b.bundle);
+      if (r.error) return bad(r.error);
+      const out = await d.importProject(r.project);
+      return out && out.pid ? ok({ pid: out.pid, checked: out.checked !== false }) : bad((out && out.error) || '가져오지 못했습니다');
+    },
 
     // 필수는 셋뿐이다 — 이름·형식·자료(사용자 지시, 2026-09-19). 무엇이 빠졌는지 짚어서 돌려준다.
     'project.create': async (b) => {
@@ -376,6 +386,10 @@ export function createOps(d) {
     if (kind === 'thread') {
       const t = model.findThread(p, id);
       return t ? { name: model.safeFileName(t.title) + '.md', text: model.threadToText(t) } : null;
+    }
+    // 작품 통째로 — 문서 · 판 이력 · 확정 · 참조 · 논의 · 에이전트 · 단계 · 휴지통까지(다른 판에서 «가져오기»로 연다)
+    if (kind === 'project') {
+      return { name: model.safeFileName(p.name || '작품') + '.story-project.json', text: JSON.stringify(makeBundle(p)), type: 'application/json; charset=utf-8' };
     }
     return null;
   }

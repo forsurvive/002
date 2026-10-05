@@ -31,12 +31,14 @@ import { createEdu } from './edu.mjs';
 import { createWorkflowSource } from './workflow.mjs';
 import { createWorker } from './worker.mjs';
 import { createOnlineCall, DEFAULT_ALIAS_TIERS } from './call.mjs';
+import { importProject } from './import.mjs';
 import { buildAi } from './ai.mjs';
 import { resolveHosting, hostOf, originOk, gateOk } from '../tools/hosting.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(dirname(HERE), 'web');
 const MAX_BODY = 5 * 1024 * 1024;   // 원고 한 편이 넉넉히 드는 크기. 넘으면 413
+const MAX_IMPORT = 60 * 1024 * 1024;   // 작품 통째(판 이력까지) — 로그인한 사람의 /api/import 에만
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const ok = (extra = {}) => ({ ok: true, ...extra });
@@ -44,7 +46,7 @@ const bad = (error, code) => ({ ok: false, error: String(error), ...(code ? { co
 const NOT_FOUND = '프로젝트를 찾을 수 없습니다';
 
 // pid 없이 부르는 문 — 나머지는 모두 «이 사람의 프로젝트»여야 한다
-const NO_PID = new Set(['project.list', 'project.create', 'auth.read', 'auth.write']);
+const NO_PID = new Set(['project.list', 'project.create', 'project.import', 'auth.read', 'auth.write']);
 // 읽기만 하는 문 — 열람 권한(강사 · 정책이 허락한 기관 관리자)으로도 부를 수 있다
 const READ_OPS = new Set(['peek', 'prompt.read']);
 
@@ -120,7 +122,13 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
   };
   // 키도 갈래도 내려 주지 않는다 — modes 가 비면 화면이 «무엇으로» 칸을 세우지 않는다
   const view = () => ({ mode: 'online', modes: [], hasKey: false });
+  // 작품 파일 가져오기 — 늘 내 개인 작품으로(수업 작품으로 세우지 않는다 — 비용 주체 USER). 옮긴 뒤 다시 읽어 견준다(checked).
+  const importOne = pool ? async (raw) => {
+    const r = await importProject(pool, raw, { ownerUserId: user.id });
+    return r.pid ? { pid: r.pid, checked: r.ok } : { error: '작품 파일이 아닙니다' };
+  } : null;
   return {
+    importProject: importOne,
     state, jobs, engine: pick, auth: { view, write: view }, limit: () => null,
     // 단계 흐름 — 템플릿은 운영자 · 기관이 고쳐 쓴 것까지. 강의 카드는 기관 프로젝트면 기관 설정(기본 켬), 개인 프로젝트면 그 사람의 설정(기본 끔).
     workflow: (pid) => (wfs ? wfs.templateFor(pid) : null),
@@ -170,10 +178,10 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
     return req.socket.remoteAddress || '';
   };
 
-  const readBody = (req) => new Promise((resolve) => {
+  const readBody = (req, max = MAX_BODY) => new Promise((resolve) => {
     let s = ''; let n = 0; let over = false;
     req.setEncoding('utf8');
-    req.on('data', (c) => { n += Buffer.byteLength(c); if (n > MAX_BODY) over = true; else s += c; });
+    req.on('data', (c) => { n += Buffer.byteLength(c); if (n > max) over = true; else s += c; });
     req.on('end', () => {
       if (over) return resolve({ tooBig: true });
       try { resolve({ body: JSON.parse(s || '{}') }); } catch { resolve({ body: null }); }
@@ -270,8 +278,10 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       if (req.method === 'POST') {
         if (!originOk(req, host)) return json(res, 403, bad('다른 곳에서 온 요청은 받지 않습니다'));
         if (!isJson(req)) return json(res, 415, bad('JSON 요청만 받습니다'));
-        const got = await readBody(req);
-        if (got.tooBig) return json(res, 413, bad('요청이 너무 큽니다'));
+        // 작품 가져오기만 크게 받는다 — 로그인한 사람일 때만(밖에서 큰 몸통으로 두드리지 못하게)
+        const big = url.pathname === '/api/import' && !!(await auth.sessionUser(pool, auth.readCookie(req)));
+        const got = await readBody(req, big ? MAX_IMPORT : MAX_BODY);
+        if (got.tooBig) return json(res, 413, bad(url.pathname === '/api/import' ? '파일이 너무 큽니다' : '요청이 너무 큽니다'));
         body = got.body;
         if (!body || typeof body !== 'object') return json(res, 400, bad('JSON 이 아닙니다'));
       }
@@ -437,13 +447,21 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         return json(res, 200, { ok: true, project: st, projects, me }, cache);
       }
 
+      // 작품 가져오기 — 몸통이 커서 따로 연 문(위에서 로그인한 사람만 크게 받았다). 하는 일은 op 'project.import' 와 같다.
+      if (req.method === 'POST' && url.pathname === '/api/import') {
+        if (!user) return json(res, 401, bad('로그인이 필요합니다', 'login'));
+        const { OPS } = createOps(depsFor(store, queue, worker, user, { tenancy, wfs, pool }));
+        return json(res, 200, await OPS['project.import'](body));   // 감사 기록(project.import)은 importProject 가 남긴다
+      }
+
       if (req.method === 'GET' && url.pathname === '/api/download') {
         const pid = url.searchParams.get('pid');
         const { downloadOf } = createOps(depsFor(store, queue, worker, user, { tenancy, wfs, pool }));
         const d = (await canRead(user, pid)) ? await downloadOf(pid, url.searchParams.get('kind'), url.searchParams.get('id')) : null;
         if (!d) return send(res, 404, '없음', 'text/plain; charset=utf-8');
-        return send(res, 200, d.text, 'text/markdown; charset=utf-8', {
-          'content-disposition': 'attachment; filename*=UTF-8\'\'' + encodeURIComponent(d.name),
+        return send(res, 200, d.text, d.type || 'text/markdown; charset=utf-8', {
+          // filename 은 한글을 못 읽는 브라우저를 위한 ASCII 대신 이름, filename* 이 진짜 이름
+        'content-disposition': 'attachment; filename="' + (d.name.replace(/[^\x20-\x7e]|["\\]/g, '_')) + '"; filename*=UTF-8\'\'' + encodeURIComponent(d.name),
         });
       }
 

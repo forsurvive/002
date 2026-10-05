@@ -176,6 +176,22 @@ export async function run({ pool, ok, eq }) {
     const other = await fetch(base + '/api', { method: 'POST', headers: { 'content-type': 'application/json', cookie: ckb }, body: JSON.stringify({ op: 'job.remove', pid, id: j1 }) });
     eq('**남의 프로젝트 작업을 치울 수 없다(404)**', other.status, 404);
     ok('그 작업은 그대로 목록에', (await state(pid)).jobs.some((j) => j.id === j1));
+
+    // ---------------- 작품 통째로 내려받기 · 가져오기(온라인 ↔ 개인판)
+    const dlp = await fetch(base + '/api/download?pid=' + pid + '&kind=project&id=', { headers: { cookie } });
+    const bundle = await dlp.json();
+    ok('작품 파일 내려받기', dlp.status === 200 && bundle.format === 'story-project' && bundle.project.docs.some((x) => x.id === doc) && !('jobs' in bundle.project));
+    eq('**남의 작품 파일은 못 받는다**', (await fetch(base + '/api/download?pid=' + pid + '&kind=project&id=', { headers: { cookie: ckb } })).status, 404);
+    const imp = async (ck, b) => (await fetch(base + '/api/import', { method: 'POST', headers: { 'content-type': 'application/json', cookie: ck }, body: JSON.stringify({ bundle: b }) })).json();
+    const im = await imp(cookie, bundle);
+    ok('**가져오면 내 새 개인 작품 — 다시 읽어 견줘도 같다**', im.ok && im.pid !== pid && im.checked, JSON.stringify(im));
+    const back = await state(im.pid);
+    const e0 = (await state(pid)).docs.find((x) => x.id === doc); const e1 = back.docs.find((x) => x.id === doc);
+    ok('문서 · 판 이력이 따라온다', e1 && e1.body === e0.body && e1.versions.length === e0.versions.length);
+    const bent = structuredClone(bundle); bent.project.name += 'x';
+    eq('**지문이 맞지 않으면 받지 않는다**', (await imp(cookie, bent)).error, '파일이 손상되었습니다(지문이 맞지 않습니다)');
+    eq('**로그인 없이는 가져오지 못한다**', (await fetch(base + '/api/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ bundle }) })).status, 401);
+    ok('가져온 것은 감사 기록에', (await pool.query("SELECT 1 FROM audit_logs WHERE action = 'project.import' AND target_id = $1", [im.pid])).rowCount === 1);
   } finally {
     await worker.stop({ graceMs: 2000 });
     await new Promise((r) => srv.close(r));

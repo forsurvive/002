@@ -26,6 +26,7 @@
 
 - 개인판 사용자가 «온라인으로 옮기기»를 고를 때(Phase 9 의 export/import 와 같은 길). **자동으로 올리지 않는다** — 원고는 사용자 PC 의 개인 자료다.
 - 형식: `story-project` 묶음(명세 §40) = `project.json`(지금 파일 그대로) + `manifest.json`(판·도구 버전·해시). 첫 판은 JSON 하나로 충분하다.
+  → 구현(2026-10-05, `tools/bundle.mjs`): 한 JSON `{format:'story-project', version:1, exportedAt, sha256, project}`. 두 판 모두 설정 탭 «작품 파일 내려받기» · 작업실 «작품 파일 가져오기».
 - 가져오기는 **새 프로젝트를 만든다**(덮어쓰지 않는다). 실패하면 트랜잭션 전체를 되돌린다.
 
 ### 2-2. 변환 절차
