@@ -44,11 +44,23 @@ export function resetInviteThrottle() { tries.clear(); }
 const CLASS_TZ = 'Asia/Seoul';
 const LIC_COLS = 'id, plan, status, starts_at, ends_at, seat_limit, allowed_providers, allowed_model_tiers';
 
-export function createEdu({ pool, credentials = null, wfs = null, keyTester = null, codeKeys = null }) {
+export function createEdu({ pool, credentials = null, wfs = null, keyTester = null, codeKeys = null, recoveryCode = '' }) {
   // 초대 코드 봉하기 — 마스터 키가 있을 때만(없으면 지금처럼 만들 때 한 번만 보인다). 붙임 정보로 그 기관 · 그 초대에만 열린다.
   const codeMeta = (orgId, id) => ({ ownerType: 'invite', ownerId: orgId, provider: 'code', id });
   const sealCode = (code, orgId, id) => { try { return codeKeys && codeKeys.current ? seal(code, codeKeys, codeMeta(orgId, id)) : null; } catch { return null; } };
   const openCode = (sealed, orgId, id) => { try { return sealed && codeKeys ? unseal(sealed, codeKeys, codeMeta(orgId, id)) : ''; } catch { return ''; } };
+  // 비밀번호 재설정 코드 — 7일 · 한 번. 비밀번호는 바꾸지 않는다(기억나면 그대로 들어온다). 관리자 목록에서 쓰기 전까지 다시 보인다.
+  const RESET_DAYS = 7;
+  const resetMeta = (userId) => ({ ownerType: 'reset-code', ownerId: userId, provider: 'password', id: userId });
+  const openReset = (row) => { try { return row.reset_code_sealed && codeKeys && row.reset_expires_at && new Date(row.reset_expires_at) > new Date() ? unseal(row.reset_code_sealed, codeKeys, resetMeta(row.id)) : ''; } catch { return ''; } };
+  async function issueResetCode(userId) {
+    const code = newInviteCode();
+    let sealed = null;
+    try { sealed = codeKeys && codeKeys.current ? seal(code, codeKeys, resetMeta(userId)) : null; } catch { sealed = null; }
+    await pool.query(`UPDATE users SET reset_code_hash = $2, reset_code_sealed = $3, reset_expires_at = now() + make_interval(days => $4), updated_at = now() WHERE id = $1`,
+      [userId, codeHash(code), sealed, RESET_DAYS]);
+    return code;
+  }
   const one = async (sql, args) => (await pool.query(sql, args)).rows[0] || null;
   const rolesIn = async (userId, orgId) => new Set((await pool.query(
     `SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2 AND status = 'active'`, [orgId, userId])).rows.map((r) => r.role));
@@ -335,7 +347,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       const canRead = teacher || (!!(await one(`SELECT 1 FROM organizations WHERE id = $1 AND settings->>'admin_can_read_projects' = 'true'`, [c.organization_id]))
         && (await rolesIn(user.id, c.organization_id)).has('organization_admin'));
       const rows = (await pool.query(
-        `SELECT u.id AS user_id, u.display_name, u.login_id, p.id AS project_id, p.name AS project_name, p.updated_at, p.stages,
+        `SELECT u.id AS user_id, u.display_name, u.login_id, u.reset_code_sealed, u.reset_expires_at, p.id AS project_id, p.name AS project_name, p.updated_at, p.stages,
                 (SELECT j.status FROM jobs j WHERE j.project_id = p.id ORDER BY j.created_at DESC LIMIT 1) AS last_job,
                 (SELECT count(*)::int FROM documents d WHERE d.project_id = p.id AND d.deleted_at IS NULL) AS docs
            FROM class_members m JOIN users u ON u.id = m.user_id
@@ -353,8 +365,10 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
         }
         return best ? { key: best.slot, title: best.s.title + (best.slot.includes('#') ? ' (' + best.slot.split('#')[1] + '화)' : ''), status: best.st.status, teachingNote: best.s.teachingNote || '' } : null;
       };
-      return ok({ class: { id: c.id, name: c.name }, canRead, students: rows.map((r) => ({
-        userId: r.user_id, name: r.display_name || r.login_id, projectId: r.project_id, projectName: r.project_name,
+      return ok({ class: { id: c.id, name: c.name, organizationId: c.organization_id }, canRead, students: rows.map((r) => ({
+        userId: r.user_id, name: r.display_name || r.login_id, loginId: r.login_id,
+        // 비밀번호를 잊은 학생에게 준 재설정 코드(쓰기 전 · 7일) — 강사 · 기관 관리자가 다시 볼 수 있다
+        resetCode: openReset({ id: r.user_id, reset_code_sealed: r.reset_code_sealed, reset_expires_at: r.reset_expires_at }), projectId: r.project_id, projectName: r.project_name,
         updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0, docs: r.docs || 0, lastJob: r.last_job || '',
         stage: nowStage(r.stages),
       })) });
@@ -434,51 +448,69 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     async 'org.members'(user, b) {
       if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
       const rows = (await pool.query(
-        `SELECT u.id, u.login_id, u.display_name, u.last_login_at, array_agg(DISTINCT m.role) AS roles,
+        `SELECT u.id, u.login_id, u.display_name, u.last_login_at, u.reset_code_sealed, u.reset_expires_at, array_agg(DISTINCT m.role) AS roles,
                 coalesce((SELECT array_agg(c.name ORDER BY c.name) FROM class_members cm JOIN classes c ON c.id = cm.class_id
                            WHERE cm.user_id = u.id AND cm.organization_id = $1), '{}') AS classes
            FROM organization_members m JOIN users u ON u.id = m.user_id
           WHERE m.organization_id = $1 AND m.status = 'active'
           GROUP BY u.id ORDER BY u.display_name, u.login_id`, [b.orgId])).rows;
       return ok({ members: rows.map((r) => ({ userId: r.id, loginId: r.login_id, name: r.display_name, roles: r.roles, classes: r.classes,
-        lastLoginAt: r.last_login_at ? new Date(r.last_login_at).getTime() : 0 })) });
+        lastLoginAt: r.last_login_at ? new Date(r.last_login_at).getTime() : 0, resetCode: openReset(r) })) });
     },
     // 비밀번호를 잊은 사람 — 임시 비밀번호를 한 번만 보여 주고, 그 사람의 세션은 모두 끊는다.
     // 기관 관리자는 제 기관의 학생 · 강사만(다른 기관 관리자 · 플랫폼 관리자 · 자기 자신은 안 된다 — 자기 것은 «비밀번호 바꾸기»로).
+    // 비밀번호 잊음 — 재설정 코드를 준다. 기관 관리자는 그 기관 사람(기관 관리자는 최상위만), 강사는 맡은 수업의 학생만.
     async 'member.reset_password'(user, b, ip) {
-      if (!isUuid(b.orgId) || !isUuid(b.userId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
+      if (!isUuid(b.orgId) || !isUuid(b.userId)) return NOT_FOUND;
       if (b.userId === user.id) return no(422, '자기 비밀번호는 «비밀번호 바꾸기»에서 바꿉니다', 'validation');
       const roles = await rolesIn(b.userId, b.orgId);
       const target = await one('SELECT id, is_platform_admin FROM users WHERE id = $1', [b.userId]);
       if (!target || !roles.size) return NOT_FOUND;
+      const admin = await isAdmin(user, b.orgId);
+      const teacherOf = !admin && roles.size === 1 && roles.has('student') && !!(await one(
+        `SELECT 1 FROM class_members s JOIN class_members t ON t.class_id = s.class_id
+          WHERE s.user_id = $1 AND s.role = 'student' AND t.user_id = $2 AND t.role = 'instructor' AND t.organization_id = $3 LIMIT 1`, [b.userId, user.id, b.orgId]));
+      if (!admin && !teacherOf) return NOT_FOUND;
       if (target.is_platform_admin || (roles.has('organization_admin') && !user.isPlatformAdmin)) return FORBIDDEN;
-      const temp = newInviteCode().toLowerCase();   // 12자 · 사람이 받아 적기 쉬운 꼴
-      await pool.query('UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1', [b.userId, await auth.hashPassword(temp)]);
-      await pool.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [b.userId]);
+      const code = await issueResetCode(b.userId);
       await log(user, b.orgId, 'member.reset_password', 'user', b.userId, {}, ip);
-      return ok({ tempPassword: temp });   // 이번 한 번만
+      return ok({ resetCode: code, days: RESET_DAYS });
     },
     // 계정 직접 만들기 — 초대 코드 없이 운영자 · 기관 관리자가 그 기관의 강사(또는 기관 관리자) 계정을 만든다.
     // 임시 비밀번호를 한 번만 보여 준다(본인이 «내 계정»에서 바꾼다). 기관 관리자 계정은 최상위 관리자만 만든다.
     // 학생은 초대 코드로(학생 자리 상한을 지키는 길이 하나여야 한다). 이미 있는 아이디면 만들지 않는다 — 있는 사람은 초대 코드로 더한다.
+    // 계정 직접 만들기 — 최상위 관리자만(2026-10-05 사용자 결정: 기관 · 강사 · 학생은 초대 코드로 들어오고, 운영자만 임의로 만든다).
+    // 비밀번호는 운영자가 정한다(기술 지원용으로 운영자가 알고 있게). 비우면 서버가 지어 이번 응답에만 돌려준다.
     async 'member.create'(user, b, ip) {
       if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
+      if (!user.isPlatformAdmin) return no(403, '계정은 초대 코드로 들어옵니다 — 직접 만들기는 최상위 관리자만', 'forbidden');
       const role = String(b.role || 'instructor');
-      if (!['instructor', 'organization_admin'].includes(role)) return no(422, '강사 · 기관 관리자 계정만 직접 만듭니다(학생은 초대 코드로)', 'validation');
-      if (role === 'organization_admin' && !user.isPlatformAdmin) return no(403, '기관 관리자 계정은 최상위 관리자만 만듭니다', 'forbidden');
+      if (!ROLES.includes(role)) return no(422, '역할이 맞지 않습니다', 'validation');
       let classId = null;
       if (b.classId) {
         const c = isUuid(b.classId) ? await one('SELECT id, organization_id FROM classes WHERE id = $1', [b.classId]) : null;
         if (!c || c.organization_id !== b.orgId) return NOT_FOUND;
-        if (role === 'instructor') classId = c.id;
+        if (role !== 'organization_admin') classId = c.id;
       }
-      const temp = newInviteCode().toLowerCase();
+      if (role === 'student') {
+        // 학생은 수업에 든다 · 이용 기간의 학생 자리 안에서
+        if (!classId) return no(422, '학생은 수업을 골라야 합니다', 'validation');
+        const lic = await liveLicense(b.orgId);
+        if (!lic) return no(403, '이용 기간이 없습니다', 'license_inactive');
+        if (lic.seat_limit) {
+          const used = (await one(`SELECT count(DISTINCT user_id)::int AS n FROM organization_members WHERE organization_id = $1 AND role = 'student' AND status = 'active'`, [b.orgId])).n;
+          if (used >= lic.seat_limit) return no(403, '학생 자리가 다 찼습니다 — 이용 기간의 자리 수를 늘려 주세요', 'seats_full');
+        }
+      }
+      const given = String(b.password || '');
+      if (given && given.length < 10) return no(422, '비밀번호는 10자 이상', 'validation');
+      const temp = given || newInviteCode().toLowerCase();
       const r = await auth.createUser(pool, { loginId: b.loginId, password: temp, displayName: b.displayName || '' });
       if (!r.ok) return no(r.code === 'conflict' ? 409 : 422, r.code === 'conflict' ? '이미 있는 아이디입니다 — 그 사람은 초대 코드로 더해 주세요' : r.error, r.code);
       await pool.query('INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1,$2,$3)', [b.orgId, r.user.id, role]);
-      if (classId) await pool.query(`INSERT INTO class_members (class_id, organization_id, user_id, role) VALUES ($1,$2,$3,'instructor')`, [classId, b.orgId, r.user.id]);
+      if (classId) await pool.query(`INSERT INTO class_members (class_id, organization_id, user_id, role) VALUES ($1,$2,$3,$4)`, [classId, b.orgId, r.user.id, role]);
       await log(user, b.orgId, 'member.create', 'user', r.user.id, { role, classId }, ip);
-      return ok({ loginId: r.user.login_id, tempPassword: temp });   // 임시 비밀번호는 이번 한 번만
+      return ok({ loginId: r.user.login_id, ...(given ? {} : { password: temp }) });   // 지어 준 비밀번호만 돌려준다(운영자가 정한 것은 이미 안다)
     },
     // 기관에서 내보내기 — 계정과 작품은 지우지 않는다(작품은 그 사람이 계속 읽는다). 기관 · 수업 멤버십만 거둔다.
     async 'member.remove'(user, b, ip) {
@@ -626,6 +658,32 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     return next;
   }
 
+  // 재설정 코드로 새 비밀번호 — 로그인 없이. 틀리면 초대 코드와 같은 맞히기 고삐에 센다.
+  // 운영자(최상위 관리자)는 Secrets 의 SE2_RECOVERY_CODE 로도 된다(운영자 위에는 재설정해 줄 사람이 없다).
+  async function resetWithCode(b, ip) {
+    const key = String(ip || '');
+    const t = tries.get(key);
+    if (t && t.n >= TRY_LIMIT && t.until > Date.now()) return no(429, '잠시 뒤에 다시 시도해 주세요', 'rate_limited');
+    const miss = () => {
+      const f = tries.get(key);
+      if (!f || f.until <= Date.now()) tries.set(key, { n: 1, until: Date.now() + TRY_WINDOW }); else f.n += 1;
+      return no(403, '아이디나 재설정 코드가 맞지 않습니다(기한은 7일)', 'reset_invalid');
+    };
+    const u = await one(`SELECT id, login_id, is_platform_admin, status, reset_code_hash, reset_expires_at FROM users WHERE lower(login_id) = lower($1)`, [String(b.loginId || '').trim()]);
+    if (!u || u.status !== 'active') return miss();
+    const given = codeHash(b.code);
+    const byCode = !!(u.reset_code_hash && u.reset_expires_at && new Date(u.reset_expires_at) > new Date() && Buffer.compare(Buffer.from(u.reset_code_hash), given) === 0);
+    const norm = (c) => String(c || '').normalize('NFC').toUpperCase().replace(/[^\p{L}\p{N}]/gu, '');
+    const byRecovery = !byCode && u.is_platform_admin && recoveryCode && norm(b.code) === recoveryCode;
+    if (!byCode && !byRecovery) return miss();
+    if (String(b.password || '').length < 10) return no(422, '비밀번호는 10자 이상', 'validation');
+    await pool.query('UPDATE users SET password_hash = $2, reset_code_hash = NULL, reset_code_sealed = NULL, reset_expires_at = NULL, updated_at = now() WHERE id = $1', [u.id, await auth.hashPassword(b.password)]);
+    await pool.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [u.id]);
+    tries.delete(key);
+    await auth.audit(pool, { actor: u.id, action: byRecovery ? 'auth.recover' : 'auth.password_reset', targetType: 'user', targetId: u.id, ip });
+    return { status: 200, body: { ok: true }, newUser: true, loginId: u.login_id };
+  }
+
   // 초대 코드 확인 — 맞고, 기관이 살아 있고, (학생이면) 이용 기간 · 자리가 남았는가. 틀리면 맞히기 횟수에 센다.
   async function findInvite(user, b, ip) {
     const key = String(ip || '');
@@ -713,6 +771,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     OP_NAMES: [...Object.keys(OPS), 'invite.accept', 'invite.check', 'login.available'],
     async handle(user, body, ip = '') {
       const op = String((body && body.op) || '');
+      if (op === 'password.reset') return resetWithCode(body, ip);
       if (op === 'invite.accept') return acceptInvite(user, body, ip);
       if (op === 'invite.check') return checkInvite(user, body, ip);
       if (op === 'login.available') return loginAvailable(user, body, ip);

@@ -72,10 +72,10 @@ const section = (title, ...body) => h('div', { class: 'sec' },
   h('div', { style: 'padding:14px 16px' }, ...body));
 
 // 만든 그 자리에서 한 번만 보이는 초대 코드
-const codeBox = (key) => (S.shown[key] ? h('div', { class: 'line', style: 'margin-top:10px' },
+const codeBox = (key, note = '«초대 코드 목록»에서도 다시 볼 수 있습니다') => (S.shown[key] ? h('div', { class: 'line', style: 'margin-top:10px' },
   h('div', { class: 'mark', style: 'font-size:15px;padding:6px 10px', text: S.shown[key] }),
   copyBtn(S.shown[key]),
-  h('div', { class: 'when', text: '«초대 코드 목록»에서도 다시 볼 수 있습니다' })) : null);
+  h('div', { class: 'when', text: note })) : null);
 // 복사 — 안 되는 브라우저(보안 연결이 아닌 곳 등)에서는 조용히 넘어간다(코드는 화면에 그대로 있다)
 const copyBtn = (code) => h('button', { class: 'btn-text', text: '복사', onclick: async () => {
   try { await navigator.clipboard.writeText(code); done('복사했습니다'); } catch { tell('복사하지 못했습니다 — 화면의 코드를 적어 주세요'); }
@@ -155,11 +155,17 @@ function progressBox(c) {
       s.lastJob ? h('span', { class: 'mark', text: SAY[s.lastJob] || s.lastJob }) : null,
       h('div', { class: 'when', text: s.updatedAt ? day(s.updatedAt) : '' }),
       s.projectId && p.canRead ? h('a', { class: 'btn-text', href: '/?pid=' + encodeURIComponent(s.projectId), text: '읽기' }) : null,
+      h('button', { class: 'btn-text', text: '비밀번호 재설정 코드', onclick: () => giveResetCode(p.class.organizationId, { userId: s.userId, name: s.name, loginId: s.loginId }, () => reloadProgress(c)) }),
+      resetLine(s.resetCode),
       s.stage && s.stage.teachingNote ? h('button', { class: 'btn-text', text: '강의 포인트', onclick: () => { S.open['tn-' + s.userId] = !S.open['tn-' + s.userId]; render(); } }) : null,
       S.open['tn-' + s.userId] && s.stage ? h('div', { class: 'when', style: 'width:100%;white-space:normal', text: s.stage.title + ' — ' + s.stage.teachingNote }) : null))
     : h('div', { class: 'when', text: '아직 학생이 없습니다' }));
 }
 
+async function reloadProgress(c) {
+  const r = await edu('class.progress', { classId: c.id });
+  if (r.ok) { S.progress[c.id] = r; render(); }
+}
 async function showProgress(c) {
   if (S.progress[c.id]) { delete S.progress[c.id]; render(); return; }   // 열려 있으면 닫는다
   const r = await edu('class.progress', { classId: c.id });
@@ -502,10 +508,13 @@ function classesTab(id) {
 function usersTab(id) {
   if (!S.members[id] && !S.open['ml-' + id]) { S.open['ml-' + id] = true; showMembers(id).finally(() => { S.open['ml-' + id] = false; }); }
   return h('div', null,
+    // 사람을 부르는 길은 초대 코드(본인이 비밀번호를 정한다). 운영자만 계정을 직접 만든다.
     h('div', { class: 'line', style: 'margin-bottom:10px' },
-      makeMemberBox(id),
-      S.open['mk-' + id] ? null : h('button', { class: 'btn-line', text: '+ 기관 관리자 초대 코드', onclick: () => makeInvite('a-' + id, id, null, 'organization_admin') })),
-    codeBox('mk-' + id), codeBox('a-' + id),
+      h('button', { class: 'btn-line', text: '+ 강사 초대 코드', onclick: () => makeInvite('ti-' + id, id, null, 'instructor') }),
+      h('button', { class: 'btn-line', text: '+ 기관 관리자 초대 코드', onclick: () => makeInvite('a-' + id, id, null, 'organization_admin') })),
+    codeBox('ti-' + id), codeBox('a-' + id),
+    makeMemberBox(id),
+    codeBox('mk-' + id, '아이디 / 비밀번호 — 지금만 보입니다. 적어 두고 본인에게 전해 주세요'),
     S.members[id] ? membersBox(id, { fixed: true }) : h('div', { class: 'when', text: '불러오는 중…' }),
     h('div', { style: 'margin-top:14px' }, inviteList('o-' + id, id, null)));
 }
@@ -603,48 +612,62 @@ function wireIdCheck(id, extra = () => ({})) {
   });
 }
 
-// 강사(· 기관 관리자) 계정 직접 만들기 — 임시 비밀번호는 만든 자리에서 한 번만 보인다
+// 계정 직접 만들기 — 최상위 관리자만(기관 관리자 · 강사 · 학생). 비밀번호는 운영자가 정한다(기술 지원용) — [자동으로]는 칸에 지어 넣어 보이게 한다.
+// 기관 관리자 · 강사는 초대 코드로 사람을 부른다(이 상자는 보이지 않는다).
 function makeMemberBox(orgId) {
+  if (!S.me || !S.me.platformAdmin) return null;
   const k = 'mk-' + orgId;
   const o = S.orgs[orgId];
   const st = S.open[k];
-  if (!st) return h('button', { class: 'btn-line', text: '+ 강사 계정 만들기', onclick: () => { S.open[k] = { role: 'instructor', classId: '' }; render(); } });
+  if (!st) return h('button', { class: 'btn-line', text: '+ 계정 직접 만들기', onclick: () => { S.open[k] = { role: 'instructor', classId: '' }; render(); } });
   const pick = (patch) => { Object.assign(st, patch); render(); };
   setTimeout(() => wireIdCheck(k + '-id'), 0);   // 그리기가 끝난 뒤
+  const gen = () => { const a = 'abcdefghjkmnpqrstuvwxyz23456789'; const r = crypto.getRandomValues(new Uint8Array(12)); $(k + '-pw').value = [...r].map((x, i) => (i && i % 4 === 0 ? '-' : '') + a[x % a.length]).join(''); $(k + '-pw').type = 'text'; };
   const go = async () => {
-    const r = await edu('member.create', { orgId, role: st.role, classId: st.classId || null, loginId: val(k + '-id'), displayName: val(k + '-name') });
+    const pw = val(k + '-pw');
+    const r = await edu('member.create', { orgId, role: st.role, classId: st.classId || null, loginId: val(k + '-id'), displayName: val(k + '-name'), password: pw });
     if (!r.ok) return tell(r.error);
-    S.shown[k] = r.loginId + ' / 임시 비밀번호 ' + r.tempPassword;
+    S.shown[k] = r.loginId + ' / ' + (r.password || pw);
     S.open[k] = null;
-    if (S.members[orgId]) await showMembers(orgId); else render();
+    S.sayGood = true; S.say = '계정을 만들었습니다 — 아이디와 비밀번호를 본인에게 전해 주세요';
+    await load(); await showMembers(orgId);   // 학생 자리 수(상태 카드)도 다시
   };
-  return h('div', { style: 'width:100%' },
-    S.me && S.me.platformAdmin ? h('div', { class: 'line' },
-      h('button', { class: st.role === 'instructor' ? 'btn' : 'btn-line', text: '강사', onclick: () => pick({ role: 'instructor' }) }),
-      h('button', { class: st.role === 'organization_admin' ? 'btn' : 'btn-line', text: '기관 관리자', onclick: () => pick({ role: 'organization_admin', classId: '' }) })) : null,
-    st.role === 'instructor' && o.classes.length ? h('div', { style: 'margin-top:8px' },
-      h('div', { class: 'lab', text: '맡길 수업(나중에 정해도 됩니다)' }),
+  const classes = o.classes.filter((c) => c.status === 'active');
+  return h('div', { class: 'card-box', style: 'width:100%' },
+    h('div', { class: 'line' }, [['organization_admin', '기관 관리자'], ['instructor', '강사'], ['student', '학생']].map(([r, n]) =>
+      h('button', { class: st.role === r ? 'btn' : 'btn-line', text: n, onclick: () => pick({ role: r, classId: r === 'organization_admin' ? '' : st.classId }) }))),
+    st.role !== 'organization_admin' && classes.length ? h('div', { style: 'margin-top:8px' },
+      h('div', { class: 'lab', text: st.role === 'student' ? '들어갈 수업' : '맡길 수업(나중에 정해도 됩니다)' }),
       h('div', { class: 'line' },
-        h('button', { class: st.classId === '' ? 'btn' : 'btn-line', text: '아직 없음', onclick: () => pick({ classId: '' }) }),
-        o.classes.filter((c) => c.status === 'active').map((c) => h('button', { class: st.classId === c.id ? 'btn' : 'btn-line', text: c.name, onclick: () => pick({ classId: c.id }) })))) : null,
+        st.role === 'student' ? null : h('button', { class: st.classId === '' ? 'btn' : 'btn-line', text: '아직 없음', onclick: () => pick({ classId: '' }) }),
+        classes.map((c) => h('button', { class: st.classId === c.id ? 'btn' : 'btn-line', text: c.name, onclick: () => pick({ classId: c.id }) })))) : null,
+    st.role === 'student' && !classes.length ? h('div', { class: 'notice', text: '학생은 수업에 들어갑니다 — [수업] 탭에서 수업을 먼저 만드세요' }) : null,
     h('div', { class: 'line', style: 'align-items:flex-end;margin-top:8px' },
       field('아이디(영문 소문자 · 숫자, 3자 이상)', k + '-id', 'text', { autocapitalize: 'none', spellcheck: 'false' }),
       field('이름', k + '-name'),
+      field('비밀번호(10자 이상)', k + '-pw', 'text', { autocomplete: 'off', spellcheck: 'false' }),
+      h('button', { class: 'btn-text', text: '자동으로', onclick: gen })),
+    h('div', { class: 'line', style: 'margin-top:10px' },
       h('button', { class: 'btn-red', text: '만들기', onclick: go }),
       h('button', { class: 'btn-text', text: '닫기', onclick: () => { S.open[k] = null; render(); } })),
-    h('div', { class: 'when', style: 'margin-top:6px', text: '임시 비밀번호가 한 번만 보입니다 — 본인에게 전하고 «내 계정»에서 바꾸게 해 주세요. 학생은 초대 코드로 들어옵니다.' }));
+    h('div', { class: 'when', style: 'margin-top:6px', text: '비밀번호는 운영자가 정해 본인에게 전합니다. 본인이 «내 계정»에서 바꾸면 운영자도 모르게 됩니다.' }));
 }
+
+// 비밀번호를 잊은 사람 — 재설정 코드를 준다(비밀번호는 아무도 모른다). 본인이 로그인 화면 «비밀번호를 잊었어요»에서 아이디 · 코드 · 새 비밀번호를 넣는다.
+async function giveResetCode(orgId, m, after) {
+  if (!confirm((m.name || m.loginId) + '(' + m.loginId + ')에게 비밀번호 재설정 코드를 줄까요?\n본인이 로그인 화면의 «비밀번호를 잊었어요»에서 이 코드로 새 비밀번호를 정합니다(7일 · 한 번).')) return;
+  const r = await edu('member.reset_password', { orgId, userId: m.userId });
+  if (!r.ok) return tell(r.error);
+  done('재설정 코드를 만들었습니다 — 본인에게 전해 주세요');
+  await after();
+}
+const resetLine = (code) => (code ? h('div', { class: 'line', style: 'margin-top:6px' },
+  h('div', { class: 'mark', style: 'font-size:14px;padding:4px 8px', text: code }), copyBtn(code),
+  h('div', { class: 'when', text: '재설정 코드 — 본인이 로그인 화면 «비밀번호를 잊었어요»에 넣습니다(7일 · 한 번)' })) : null);
 
 function membersBox(orgId, { fixed = false } = {}) {
   const list = S.members[orgId];
   if (!list) return h('button', { class: 'btn-line', text: '사용자 목록', onclick: () => showMembers(orgId) });
-  const reset = async (m) => {
-    if (!confirm(m.name + '(' + m.loginId + ')의 비밀번호를 임시 비밀번호로 바꿀까요? 그 사람은 다시 로그인해야 합니다.')) return;
-    const r = await edu('member.reset_password', { orgId, userId: m.userId });
-    if (!r.ok) return tell(r.error);
-    S.shown['pw-' + m.userId] = r.tempPassword;
-    render();
-  };
   const remove = async (m) => {
     if (!confirm(m.name + '(' + m.loginId + ')을(를) 기관에서 내보낼까요? 계정과 작품은 남고, 수업에서만 빠집니다.')) return;
     const r = await edu('member.remove', { orgId, userId: m.userId });
@@ -654,19 +677,17 @@ function membersBox(orgId, { fixed = false } = {}) {
   return h('div', null,
     fixed ? null : h('button', { class: 'btn-line', text: '사용자 목록 닫기', onclick: () => { delete S.members[orgId]; render(); } }),
     h('div', { class: 'when', style: 'margin-top:8px', text: '학생 · 강사는 저마다 제 아이디로 들어옵니다(초대 코드는 수업에 들어오는 열쇠일 뿐 계정이 아닙니다).' }),
-    list.length ? null : h('div', { class: 'when', style: 'margin-top:8px', text: '아직 사용자가 없습니다 — 학생은 [수업] 탭의 «학생 초대 코드»로, 강사는 [+ 강사 계정 만들기]로' }),
+    list.length ? null : h('div', { class: 'when', style: 'margin-top:8px', text: '아직 사용자가 없습니다 — 학생은 [수업] 탭의 «학생 초대 코드»로, 강사는 [+ 강사 초대 코드]로 부르세요' }),
     list.map((m) => h('div', { style: 'padding:6px 0;border-bottom:1px solid var(--line-soft)' },
       h('div', { class: 'line' },
         h('div', { class: 'name', style: 'flex:1', text: (m.name || m.loginId) + ' · ' + m.loginId }),
         m.roles.map((r) => h('span', { class: 'mark', text: ROLE_SAY[r] || r })),
         m.classes.length ? h('div', { class: 'when', text: m.classes.join(', ') }) : null,
         S.me && m.loginId === S.me.loginId ? null : [
-          h('button', { class: 'btn-text', text: '비밀번호 재설정', onclick: () => reset(m) }),
+          h('button', { class: 'btn-text', text: '비밀번호 재설정 코드', onclick: () => giveResetCode(orgId, m, () => showMembers(orgId)) }),
           h('button', { class: 'btn-text red', text: '내보내기', onclick: () => remove(m) }),
         ]),
-      S.shown['pw-' + m.userId] ? h('div', { class: 'line', style: 'margin-top:6px' },
-        h('div', { class: 'mark', style: 'font-size:15px;padding:6px 10px', text: S.shown['pw-' + m.userId] }),
-        h('div', { class: 'when', text: '임시 비밀번호 — 지금만 보입니다. 전해 주고, 들어간 뒤 «비밀번호 바꾸기»로 바꾸게 해 주세요.' })) : null)),
+      resetLine(m.resetCode))),
     h('button', { class: 'btn-text', style: 'margin-top:8px', text: '다시 불러오기', onclick: () => showMembers(orgId) }));
 }
 

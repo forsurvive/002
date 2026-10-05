@@ -10,6 +10,7 @@ import { ensureMasterKey, ensureDeps } from './start.mjs';
 import { createCredentialService, keysFromEnv } from '../ai/credentials.mjs';
 import { pgCredentialStore } from './credentials.mjs';
 import { loadCatalog } from './ai.mjs';
+import { createUser } from './auth.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const FAKE_KEY = 'fake-setup-key-' + randomBytes(5).toString('hex');
@@ -40,6 +41,25 @@ export async function run({ pool, ok, eq }) {
     eq('**정한 코드가 아니면 거절**', (await post(base, '/api/setup', { ...body, setupCode: 'AAAA-BBBB-CCCC' })).status, 403);
     ok('정한 코드를 쓰는 서버라고 표시(값은 찍지 않는다)', srv.setupFixed === true);
     srv.close();
+  }
+
+  // ---------------- 운영자 비밀번호를 잊었을 때 — Secrets 의 SE2_RECOVERY_CODE(운영자 계정만)
+  {
+    await createUser(pool, { loginId: 'rec-root', password: 'long-enough-rec', isPlatformAdmin: true });
+    await createUser(pool, { loginId: 'rec-plain', password: 'long-enough-plain' });
+    const pl = onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_RECOVERY_CODE: 'my recovery code 2026' });
+    ok('SE2_RECOVERY_CODE(12자 이상)를 읽는다', pl.recoveryCode === 'MYRECOVERYCODE2026');
+    const { srv, base } = await serve(pool, pl, credentials);
+    const rc = (b) => post(base, '/api/edu', { op: 'password.reset', ...b });
+    eq('**운영자가 아닌 계정은 복구 코드로 못 바꾼다**', (await rc({ loginId: 'rec-plain', code: 'my recovery code 2026', password: 'hijacked-pass-1' })).status, 403);
+    const r = await rc({ loginId: 'rec-root', code: 'MY-RECOVERY-CODE-2026', password: 'recovered-root-1' });
+    ok('**운영자는 복구 코드로 새 비밀번호를 정하고 들어온다**', r.status === 200 && /se_session=/.test(r.headers.get('set-cookie') || ''));
+    ok('감사 기록(auth.recover)', (await pool.query("SELECT 1 FROM audit_logs WHERE action = 'auth.recover'")).rowCount === 1);
+    srv.close();
+    const off = await serve(pool, onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0' }), credentials);
+    eq('**복구 코드를 Secrets 에서 지우면 그 길은 닫힌다**', (await post(off.base, '/api/edu', { op: 'password.reset', loginId: 'rec-root', code: 'my recovery code 2026', password: 'again-root-pass' })).status, 403);
+    off.srv.close();
+    await pool.query("DELETE FROM sessions"); await pool.query("DELETE FROM audit_logs"); await pool.query("DELETE FROM users WHERE login_id IN ('rec-root', 'rec-plain')");
   }
 
   // ---------------- 바깥에 열면 출입 열쇠 없이 계정으로만 — 처음 설정은 서버 콘솔의 «설정 코드»가 있어야(낯선 사람이 먼저 차지하지 못하게)

@@ -69,6 +69,10 @@ export function onlinePlan(env = process.env) {
   const fixed = setupNorm(env.SE2_SETUP_CODE);
   plan.setupCode = fixed.length >= 12 ? fixed : '';
   if (env.SE2_SETUP_CODE && !plan.setupCode) plan.notes.push('SE2_SETUP_CODE is too short (12+ letters/digits) - ignored');
+  // 운영자 비밀번호를 잊었을 때 — Secrets 의 SE2_RECOVERY_CODE(12자 이상)를 «비밀번호를 잊었어요»의 코드 칸에 넣는다(운영자 계정만)
+  const rec = setupNorm(env.SE2_RECOVERY_CODE);
+  plan.recoveryCode = rec.length >= 12 ? rec : '';
+  if (env.SE2_RECOVERY_CODE && !plan.recoveryCode) plan.notes.push('SE2_RECOVERY_CODE is too short (12+ letters/digits) - ignored');
   return plan;
 }
 
@@ -165,7 +169,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
   const store = createProjectStore(pool);
   const tenancy = createTenancy(pool);
   const wfs = createWorkflowSource(pool);
-  const edu = createEdu({ pool, credentials, wfs, keyTester, codeKeys });
+  const edu = createEdu({ pool, credentials, wfs, keyTester, codeKeys, recoveryCode: plan.recoveryCode || '' });
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
 
   // 화면은 제 자리의 파일만 부른다 — 스크립트는 외부 파일만, 꾸밈은 style 속성을 쓰므로 인라인 꾸밈만 허락
@@ -375,7 +379,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       if (req.method === 'POST' && url.pathname === '/api/edu') {
         const r = await edu.handle(user, body, ipOf(req));
         if (r.newUser) {
-          const li = await auth.login(pool, { loginId: body.loginId, password: body.password, ip: ipOf(req), userAgent: req.headers['user-agent'] || '' });
+          const li = await auth.login(pool, { loginId: r.loginId || body.loginId, password: body.password, ip: ipOf(req), userAgent: req.headers['user-agent'] || '' });
           if (li.ok) return json(res, r.status, r.body, { 'set-cookie': auth.sessionCookie(li.token, { secure }) });
         }
         return json(res, r.status, r.body);

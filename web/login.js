@@ -55,6 +55,19 @@ async function enter(e) {
   tell(out.error || '들어가지 못했습니다');
 }
 
+// 비밀번호를 잊었을 때 — 한 단계 위 사람(학생 ← 강사 · 기관 관리자, 강사 ← 기관 관리자, 기관 관리자 ← 운영자)에게 받은 재설정 코드로.
+// 운영자는 Secrets 의 SE2_RECOVERY_CODE 를 코드로 넣는다. 맞으면 새 비밀번호로 곧바로 들어간다.
+async function resetPw(e) {
+  e.preventDefault();
+  tell('');
+  if (!v('rs-id') || !v('rs-code') || !$('rs-pw').value) return tell('아이디 · 재설정 코드 · 새 비밀번호를 모두 넣어 주세요');
+  if ($('rs-pw').value !== $('rs-pw2').value) return tell('새 비밀번호가 서로 다릅니다');
+  if (!(await passGate())) return;
+  const out = await post('/api/edu', { op: 'password.reset', loginId: v('rs-id'), code: v('rs-code'), password: $('rs-pw').value });
+  if (out.ok) { location.href = '/'; return; }
+  tell(out.error || '바꾸지 못했습니다');
+}
+
 // 초대 코드 — 먼저 맞는지만 본다(쓰지 않는다). 맞으면 계정 만들기 칸을 연다.
 async function checkCode(e) {
   e.preventDefault();
@@ -124,7 +137,15 @@ function mainForms() {
       h('input', { id: 'lg-id', type: 'text', autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
       h('div', { class: 'lab', style: 'margin-top:14px', text: '비밀번호' }),
       h('input', { id: 'lg-pw', type: 'password', autocomplete: 'current-password' }),
-      h('div', { class: 'line', style: 'margin-top:14px' }, h('button', { class: 'btn-red', type: 'submit', text: '로그인' }))),
+      h('div', { class: 'line', style: 'margin-top:14px' }, h('button', { class: 'btn-red', type: 'submit', text: '로그인' }),
+        h('button', { class: 'btn-text', type: 'button', text: S.forgot ? '닫기' : '비밀번호를 잊었어요', onclick: () => { S.forgot = !S.forgot; draw(mainForms()); } }))),
+    S.forgot ? h('form', { onsubmit: resetPw, style: 'margin-top:14px;padding:14px;border-radius:12px;background:var(--group)' },
+      h('div', { class: 'when', text: '재설정 코드는 학생은 선생님(또는 기관 관리자)에게, 강사는 기관 관리자에게, 기관 관리자는 운영자에게 받습니다.' }),
+      field('아이디', 'rs-id', 'text', { autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
+      field('재설정 코드', 'rs-code', 'text', { autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', placeholder: 'ABCD-EFGH-JKLM' }),
+      field('새 비밀번호(10자 이상)', 'rs-pw', 'password', { autocomplete: 'new-password' }),
+      field('새 비밀번호 한 번 더', 'rs-pw2', 'password', { autocomplete: 'new-password' }),
+      h('div', { class: 'line', style: 'margin-top:14px' }, h('button', { class: 'btn-red', type: 'submit', text: '새 비밀번호로 들어가기' }))) : null,
     sayLine(),
     h('div', { style: 'margin-top:18px;padding-top:18px;border-top:1px solid var(--line-soft)' },
       h('div', { class: 'lab', text: '처음 오셨나요? 초대 코드' }),

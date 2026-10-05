@@ -312,19 +312,22 @@ export async function run({ pool, ok, eq }) {
       && (await edu('edu-root', 'login.available', { loginId: 'someone-new' })).available === true);
     ok('확인만으로 코드 자리를 쓰지 않는다', (await pool.query('SELECT used_count FROM invites ORDER BY created_at DESC LIMIT 1')).rows[0].used_count === 0);
 
-    // ---------------- 계정 직접 만들기 — 강사(· 기관 관리자). 임시 비밀번호는 한 번만
-    const mi = await edu('edu-root', 'member.create', { orgId: org.id, role: 'instructor', classId: c1.id, loginId: 'edu-made-in', displayName: '만든 강사' });
-    ok('**최상위 관리자가 강사 계정을 직접 만든다(임시 비밀번호 한 번)**', mi.ok && mi.loginId === 'edu-made-in' && typeof mi.tempPassword === 'string' && mi.tempPassword.length >= 12);
-    await login('edu-made-in', mi.tempPassword);
+    // ---------------- 계정 직접 만들기 — 최상위 관리자만(기관 관리자 · 강사 · 학생 모두). 비밀번호는 운영자가 정하거나 서버가 짓는다
+    const mi = await edu('edu-root', 'member.create', { orgId: org.id, role: 'instructor', classId: c1.id, loginId: 'edu-made-in', displayName: '만든 강사', password: 'support-known-pass' });
+    ok('**최상위 관리자가 강사 계정을 직접 만든다(운영자가 정한 비밀번호 — 돌려주지 않는다)**', mi.ok && mi.loginId === 'edu-made-in' && !('password' in mi));
+    await login('edu-made-in', 'support-known-pass');
     ok('**만든 강사는 그 수업을 맡는다(수업 현황을 본다)**', (await edu('edu-made-in', 'class.progress', { classId: c1.id })).ok);
-    ok('기관 관리자도 강사 계정을 만든다', (await edu('edu-oa', 'member.create', { orgId: org.id, role: 'instructor', loginId: 'edu-made-in2', displayName: '둘' })).ok);
-    eq('**기관 관리자는 기관 관리자 계정을 직접 만들지 못한다(최상위만)**', (await edu('edu-oa', 'member.create', { orgId: org.id, role: 'organization_admin', loginId: 'edu-made-oa' })).status, 403);
-    ok('최상위 관리자는 기관 관리자 계정을 만든다', (await edu('edu-root', 'member.create', { orgId: org.id, role: 'organization_admin', loginId: 'edu-made-oa', displayName: '관리' })).ok);
-    eq('**학생 계정은 직접 만들지 않는다(초대 코드로 — 자리 상한)**', (await edu('edu-root', 'member.create', { orgId: org.id, role: 'student', loginId: 'edu-made-st' })).status, 422);
+    const autoMade = await edu('edu-root', 'member.create', { orgId: org.id, role: 'instructor', loginId: 'edu-made-in2', displayName: '둘' });
+    ok('비밀번호를 비우면 서버가 지어 이번에만 돌려준다', autoMade.ok && typeof autoMade.password === 'string' && autoMade.password.length >= 12);
+    eq('**기관 관리자는 계정을 직접 만들지 못한다(초대 코드로)**', (await edu('edu-oa', 'member.create', { orgId: org.id, role: 'instructor', loginId: 'edu-made-x2' })).status, 403);
+    ok('최상위 관리자는 기관 관리자 계정을 만든다', (await edu('edu-root', 'member.create', { orgId: org.id, role: 'organization_admin', loginId: 'edu-made-oa', displayName: '관리', password: 'support-known-oa' })).ok);
+    eq('학생은 수업을 골라야 한다', (await edu('edu-root', 'member.create', { orgId: org.id, role: 'student', loginId: 'edu-made-st' })).status, 422);
+    const seatsNow = (await pool.query(`SELECT count(DISTINCT user_id)::int AS n FROM organization_members WHERE organization_id = $1 AND role = 'student' AND status = 'active'`, [org.id])).rows[0].n;
+    eq('**학생 계정도 자리 상한을 지킨다**', (await edu('edu-root', 'member.create', { orgId: org.id, role: 'student', classId: c1.id, loginId: 'edu-made-st', password: 'student-pass-123' })).code, seatsNow >= 2 ? 'seats_full' : undefined);
     eq('**강사 · 학생은 계정을 만들지 못한다**', (await edu('edu-in', 'member.create', { orgId: org.id, role: 'instructor', loginId: 'edu-made-x' })).status, 404);
-    eq('이미 있는 아이디는 만들지 않는다', (await edu('edu-root', 'member.create', { orgId: org.id, role: 'instructor', loginId: 'edu-s1' })).status, 409);
+    eq('이미 있는 아이디는 만들지 않는다', (await edu('edu-root', 'member.create', { orgId: org.id, role: 'instructor', loginId: 'edu-s1', password: 'whatever-pass-1' })).status, 409);
     ok('계정 만들기도 감사 로그에(비밀번호 없이)', (await pool.query("SELECT details FROM audit_logs WHERE action = 'member.create'")).rows.length === 3
-      && !JSON.stringify((await pool.query("SELECT * FROM audit_logs WHERE action = 'member.create'")).rows).includes(mi.tempPassword));
+      && !JSON.stringify((await pool.query("SELECT * FROM audit_logs WHERE action = 'member.create'")).rows).includes('support-known-pass'));
 
     // ---------------- 한 사람 한 계정 — 같은 초대 코드로 들어와도 계정은 따로다
     const ids = (await pool.query("SELECT id, login_id, password_hash FROM users WHERE login_id IN ('edu-s1', 'edu-s2')")).rows;
@@ -347,13 +350,28 @@ export async function run({ pool, ok, eq }) {
     ok('기관 관리자는 사람 목록을 본다(아이디 · 이름 · 역할 · 수업)', ml.ok && s1row && s1row.name === '학생 하나' && s1row.roles.includes('student') && s1row.classes.includes('웹소설 1반'));
     ok('사람 목록에 비밀번호 · 해시가 없다', !/password|scrypt/.test(JSON.stringify(ml)));
     eq('**학생 · 강사는 사람 목록을 못 본다**', (await edu('edu-in', 'org.members', { orgId: org.id })).status, 404);
-    eq('**강사는 비밀번호를 재설정하지 못한다**', (await edu('edu-in', 'member.reset_password', { orgId: org.id, userId: s1row.userId })).status, 404);
+    // 비밀번호를 잊었을 때 — 재설정 코드(2026-10-05 사용자 결정: 관리자는 남의 비밀번호를 모른다 · 한 단계 위 사람이 코드를 준다)
+    const reset = (b) => edu(null, 'password.reset', b);
     const rp = await edu('edu-oa', 'member.reset_password', { orgId: org.id, userId: s1row.userId });
-    ok('기관 관리자가 학생 비밀번호를 재설정한다(임시 비밀번호는 한 번만)', rp.ok && typeof rp.tempPassword === 'string' && rp.tempPassword.length >= 12);
-    eq('**재설정하면 그 학생의 세션은 끊긴다**', (await fetch(base + '/api/me', { headers: { cookie: jar['edu-s1'] } })).status, 401);
-    await login('edu-s1', rp.tempPassword);
-    ok('임시 비밀번호로 들어온다', (await meOf('edu-s1')).loginId === 'edu-s1');
-    const pw = await fetch(base + '/api/auth/password', { method: 'POST', headers: { 'content-type': 'application/json', cookie: jar['edu-s1'] }, body: JSON.stringify({ current: rp.tempPassword, next: 'brand-new-s1-pass' }) });
+    ok('**기관 관리자가 학생에게 재설정 코드를 준다(비밀번호가 아니다)**', rp.ok && /^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(rp.resetCode) && rp.days === 7 && !('tempPassword' in rp));
+    ok('코드를 줘도 지금 비밀번호 · 세션은 그대로(기억나면 그냥 들어온다)', (await fetch(base + '/api/me', { headers: { cookie: jar['edu-s1'] } })).status === 200);
+    ok('**쓰기 전까지 사용자 목록에서 다시 보인다**', (await edu('edu-oa', 'org.members', { orgId: org.id })).members.find((m) => m.loginId === 'edu-s1').resetCode === rp.resetCode);
+    ok('**DB 에 코드 원문이 없다**', !JSON.stringify((await pool.query("SELECT * FROM users WHERE login_id = 'edu-s1'")).rows).includes(rp.resetCode.replace(/-/g, '')));
+    const rpi = await edu('edu-in', 'member.reset_password', { orgId: org.id, userId: s1row.userId });
+    ok('**맡은 수업의 강사도 제 학생에게 재설정 코드를 준다(새 코드 — 앞 코드는 끝)**', rpi.ok && rpi.resetCode !== rp.resetCode
+      && (await edu('edu-in', 'class.progress', { classId: c1.id })).students.find((x) => x.userId === s1row.userId).resetCode === rpi.resetCode);
+    eq('**강사는 다른 강사 · 기관 관리자의 비밀번호는 못 건드린다**', (await edu('edu-in', 'member.reset_password', { orgId: org.id, userId: (await pool.query("SELECT id FROM users WHERE login_id = 'edu-oa'")).rows[0].id })).status, 404);
+    eq('**지난 코드로는 못 바꾼다**', (await reset({ loginId: 'edu-s1', code: rp.resetCode, password: 'brand-new-s1-pass' })).status, 403);
+    eq('짧은 비밀번호는 안 된다', (await reset({ loginId: 'edu-s1', code: rpi.resetCode, password: 'short' })).status, 422);
+    const rs = await fetch(base + '/api/edu', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'password.reset', loginId: 'EDU-S1', code: rpi.resetCode.toLowerCase(), password: 'brand-new-s1-pass' }) });
+    ok('**학생이 코드로 새 비밀번호를 정하고 바로 들어온다(대소문자 무시)**', rs.status === 200 && /se_session=/.test(rs.headers.get('set-cookie') || ''));
+    eq('**한 번 쓴 코드는 끝**', (await reset({ loginId: 'edu-s1', code: rpi.resetCode, password: 'another-s1-pass' })).status, 403);
+    ok('목록에서도 코드가 사라진다', !(await edu('edu-oa', 'org.members', { orgId: org.id })).members.find((m) => m.loginId === 'edu-s1').resetCode);
+    eq('**옛 비밀번호는 끝**', (await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loginId: 'edu-s1', password: 'long-enough-s1' }) })).status, 401);
+    await login('edu-s1', 'brand-new-s1-pass');
+    ok('새 비밀번호로 들어온다', (await meOf('edu-s1')).loginId === 'edu-s1');
+    eq('**운영자 계정은 기관 코드로 재설정할 수 없다(SE2_RECOVERY_CODE 없으면 막힘)**', (await reset({ loginId: 'edu-root', code: 'anything-long-enough-1', password: 'root-new-pass-123' })).status, 403);
+    const pw = await fetch(base + '/api/auth/password', { method: 'POST', headers: { 'content-type': 'application/json', cookie: jar['edu-s1'] }, body: JSON.stringify({ current: 'brand-new-s1-pass', next: 'brand-new-s1-pass2' }) });
     ok('**학생이 제 비밀번호를 바꾼다(이 브라우저는 새로 들어온다)**', pw.status === 200 && /se_session=/.test(pw.headers.get('set-cookie') || ''));
     jar['edu-s1'] = (pw.headers.get('set-cookie') || '').split(';')[0];
     ok('바꾼 비밀번호로만 들어온다', (await meOf('edu-s1')).loginId === 'edu-s1');
