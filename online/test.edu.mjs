@@ -211,12 +211,26 @@ export async function run({ pool, ok, eq }) {
     ok('사람마다 기본 회사를 고른다', (await edu('edu-s2', 'me.ai.set', { provider: 'google' })).ok && (await edu('edu-s2', 'me.memberships')).aiProvider === 'google');
     eq('모르는 회사는 고르지 못한다', (await edu('edu-s2', 'me.ai.set', { provider: 'mystery' })).status, 422);
     const mine2 = await api('edu-s2', 'project.create', { name: '개인 것', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }] });
-    ok('**작품마다 회사를 고른다(개인 작품)**', (await edu('edu-s2', 'project.ai.set', { pid: mine2.pid, provider: 'openai' })).ok);
+    eq('**키가 없는 회사는 고르지 못한다(2026-10-05 — 키가 있는 회사만)**', (await edu('edu-s2', 'project.ai.set', { pid: mine2.pid, provider: 'openai' })).code, 'no_key');
+    eq('사람 기본도 키 없는 회사는 못 고른다', (await edu('edu-s2', 'me.ai.set', { provider: 'anthropic' })).code, 'no_key');
+    await edu('edu-s2', 'me.key.set', { provider: 'openai', apiKey: 'sk-good-openai-0002' });
+    ok('**작품마다 회사를 고른다(개인 작품 — 키를 넣은 뒤)**', (await edu('edu-s2', 'project.ai.set', { pid: mine2.pid, provider: 'openai' })).ok);
     const st2 = (await (await fetch(base + '/api/state?pid=' + mine2.pid, { headers: { cookie: jar['edu-s2'] } })).json()).project;
     ok('작품 화면에 고른 회사 · 내 기본 · 키 있는 회사가 실린다', st2.ai && st2.ai.provider === 'openai' && st2.ai.ownerDefault === 'google' && !st2.ai.classWork, JSON.stringify(st2.ai));
     eq('**남의 작품 회사는 못 바꾼다**', (await edu('edu-s1', 'project.ai.set', { pid: mine2.pid, provider: 'google' })).status, 404);
     eq('**수업 작품 회사는 학생이 못 바꾼다(기관이 정한다)**', (await edu('edu-s1', 'project.ai.set', { pid: proj.pid, provider: 'google' })).status, 403);
     ok('기관이 회사를 고른다', (await edu('edu-oa', 'org.settings', { orgId: org.id, aiProvider: 'anthropic' })).settings.ai_provider === 'anthropic');
+    eq('**기관도 키 없는 회사는 못 고른다**', (await edu('edu-oa', 'org.settings', { orgId: org.id, aiProvider: 'google' })).code, 'no_key');
+    // 기본값 — 처음 넣은 키의 회사가 저절로 기본이 되고, 그 키를 지우면 키가 남은 회사로 옮긴다
+    {
+      const o2 = (await edu('edu-root', 'org.create', { name: '기본값 기관' })).organization;
+      const k1 = await edu('edu-root', 'org.key.set', { orgId: o2.id, provider: 'google', apiKey: 'AIza-fake-key-for-default-0001' });
+      eq('**첫 키를 넣으면 그 회사가 기본**', k1.aiProvider, 'google');
+      const k2 = await edu('edu-root', 'org.key.set', { orgId: o2.id, provider: 'openai', apiKey: 'sk-fake-key-for-default-0002' });
+      eq('둘째 키는 기본을 바꾸지 않는다', k2.aiProvider, 'google');
+      eq('**기본 회사의 키를 지우면 남은 키의 회사로 옮긴다**', (await edu('edu-root', 'org.key.revoke', { orgId: o2.id, provider: 'google' })).aiProvider, 'openai');
+      eq('키가 모두 없으면 비운다', (await edu('edu-root', 'org.key.revoke', { orgId: o2.id, provider: 'openai' })).aiProvider, '');
+    }
     // ---------------- 기관 기본 등급 · 라이선스가 허락하는 회사 · 등급
     ok('기관이 시작 등급을 고른다', (await edu('edu-oa', 'org.settings', { orgId: org.id, aiTier: 'balanced' })).settings.ai_tier === 'balanced');
     eq('모르는 등급은 고르지 못한다', (await edu('edu-oa', 'org.settings', { orgId: org.id, aiTier: 'ultra' })).status, 422);

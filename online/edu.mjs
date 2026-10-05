@@ -234,6 +234,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       // 이 기관 작품에 쓸 AI 회사(''이면 고르지 않음 — 키를 넣은 회사 가운데 하나)
       if (typeof b.aiProvider === 'string') {
         if (b.aiProvider && !PROVIDER_IDS.includes(b.aiProvider)) return no(422, '모르는 AI 회사입니다', 'validation');
+        if (b.aiProvider && !(await keyedOf('organization', b.orgId)).includes(b.aiProvider)) return no(422, NO_KEY, 'no_key');
         patch.ai_provider = b.aiProvider;
       }
       // 이 기관 작품의 기본 등급(''이면 Balanced) — 작품 · 단계가 정하면 그쪽이 앞선다
@@ -513,12 +514,13 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       const r = await credentials.set({ ownerType: 'user', ownerId: user.id, provider, apiKey: b.apiKey, createdBy: user.id });
       if (!r.ok) return no(422, '키를 저장하지 못했습니다', 'validation');
       await log(user, null, 'credential.set', 'user', user.id, { provider, ownerType: 'user', credentialId: r.credential.id }, ip);
-      return ok({ credential: r.credential });
+      return ok({ credential: r.credential, aiProvider: await settleDefault('user', user.id) });
     },
     // 쓸 AI 회사 고르기 — 사람마다 기본(개인 작품에 쓴다). '' 는 «고르지 않음»(키를 넣은 회사 가운데 하나).
     async 'me.ai.set'(user, b, ip) {
       const p = String(b.provider || '');
       if (p && !PROVIDER_IDS.includes(p)) return no(422, '모르는 AI 회사입니다', 'validation');
+      if (p && !(await keyedOf('user', user.id)).includes(p)) return no(422, NO_KEY, 'no_key');
       await pool.query(`UPDATE users SET settings = settings || jsonb_build_object('ai_provider', $2::text), updated_at = now() WHERE id = $1`, [user.id, p]);
       await log(user, null, 'ai.choose', 'user', user.id, { provider: p }, ip);
       return ok({ provider: p });
@@ -530,6 +532,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       const row = isUuid(b.pid) ? await one('SELECT owner_user_id, organization_id FROM projects WHERE id = $1 AND deleted_at IS NULL', [b.pid]) : null;
       if (!row || row.owner_user_id !== user.id) return NOT_FOUND;
       if (row.organization_id) return no(403, '수업 작품의 AI 회사는 기관이 정합니다', 'forbidden');
+      if (p && !(await keyedOf('user', user.id)).includes(p)) return no(422, NO_KEY, 'no_key');
       await pool.query(`UPDATE projects SET model_policy = model_policy || jsonb_build_object('provider', $2::text), updated_at = now() WHERE id = $1`, [b.pid, p]);
       await log(user, null, 'ai.choose', 'project', b.pid, { provider: p }, ip);
       return ok({ provider: p });
@@ -575,7 +578,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       const r = await credentials.set({ ownerType: 'organization', ownerId: b.orgId, provider: b.provider, apiKey: b.apiKey, createdBy: user.id });
       if (!r.ok) return no(422, '키를 저장하지 못했습니다', 'validation');
       await log(user, b.orgId, 'credential.set', 'organization', b.orgId, { provider: b.provider, ownerType: 'organization', credentialId: r.credential.id }, ip);
-      return ok({ credential: r.credential });
+      return ok({ credential: r.credential, aiProvider: await settleDefault('organization', b.orgId) });
     },
     async 'org.key.list'(user, b) {
       if (!credentials) return ok({ credentials: [] });
@@ -597,7 +600,26 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     if (!live.length) return NOT_FOUND;
     for (const c of live) await credentials.revoke(c.id);
     await log(user, orgId, 'credential.revoke', ownerType, ownerId, { provider, ownerType }, ip);
-    return ok();
+    // 개인 작품이 그 회사를 골라 두었으면 풀어 둔다(내 기본을 따르게) — 키 없는 회사로 돌다 멈추지 않게
+    if (ownerType === 'user') await pool.query(`UPDATE projects SET model_policy = model_policy - 'provider' WHERE owner_user_id = $1 AND organization_id IS NULL AND model_policy->>'provider' = $2`, [ownerId, provider]);
+    return ok({ aiProvider: await settleDefault(ownerType, ownerId) });
+  }
+
+  // ---------------- 기본 AI 회사 — 키가 있는 회사만 고를 수 있다(2026-10-05 사용자 지시)
+  const NO_KEY = '그 회사의 AI 키를 먼저 넣어 주세요';
+  async function keyedOf(ownerType, ownerId) {
+    if (!credentials) return [];
+    return [...new Set((await credentials.list(ownerType, ownerId)).filter((c) => c.status === 'active').map((c) => c.provider))];
+  }
+  // 고른 회사에 키가 없으면(첫 키를 넣었을 때 · 그 키를 지웠을 때) 키가 있는 첫 회사로 맞춘다. 아무 키도 없으면 비운다.
+  async function settleDefault(ownerType, ownerId) {
+    const keyed = await keyedOf(ownerType, ownerId);
+    const table = ownerType === 'organization' ? 'organizations' : 'users';
+    const cur = ((await one(`SELECT settings->>'ai_provider' AS p FROM ${table} WHERE id = $1`, [ownerId])) || {}).p || '';
+    if (cur && keyed.includes(cur)) return cur;
+    const next = PROVIDER_IDS.find((p) => keyed.includes(p)) || '';
+    if (next !== cur) await pool.query(`UPDATE ${table} SET settings = settings || jsonb_build_object('ai_provider', $2::text), updated_at = now() WHERE id = $1`, [ownerId, next]);
+    return next;
   }
 
   // 초대 코드 확인 — 맞고, 기관이 살아 있고, (학생이면) 이용 기간 · 자리가 남았는가. 틀리면 맞히기 횟수에 센다.
