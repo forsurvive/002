@@ -104,6 +104,7 @@ RETURNING j.*;
 | `quota-*`(CLI) · `credential_missing` | 없음 → `waiting_for_user` | 사람이 답할 때까지 worker 를 붙잡지 않는다 |
 
 - 호출 시간 상한: 지금과 같은 뜻의 `CALL_TIMEOUT`(기본 30분). 작업 전체 상한: `JOB_MAX_DURATION`(기본 2시간) — 넘으면 `failed(timeout)`.
+  → 구현(2026-10-05): `online/worker.mjs` `maxJobMs`(env `JOB_MAX_DURATION_MS`) — 끊고 «작업이 너무 오래 걸려 멈췄습니다», 본문은 그대로.
 - 취소: `cancel_requested_at` 을 찍으면 worker 가 heartbeat 때 보고 진행 중 HTTP 를 `AbortController` 로 끊는다. 결과는 버리고 문서는 그대로.
 - 일시중지: `pause_requested_at` → worker 는 **돌던 호출을 끝까지 하고**(지금 약속 그대로) 다음 호출 앞(`ctx.gate()`)에서 체크포인트를 저장하고 `paused` 로 내려놓는다. 이어 하기 = `queued`.
 

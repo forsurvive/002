@@ -32,6 +32,7 @@ import { createWorkflowSource } from './workflow.mjs';
 import { createWorker } from './worker.mjs';
 import { createOnlineCall, DEFAULT_ALIAS_TIERS } from './call.mjs';
 import { importProject } from './import.mjs';
+import { guardConsole } from './log.mjs';
 import { buildAi } from './ai.mjs';
 import { resolveHosting, hostOf, originOk, gateOk } from '../tools/hosting.mjs';
 
@@ -444,6 +445,11 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         if (Array.isArray(st.models)) st.models = st.models.filter((m) => m !== 'fable' || st.model === 'fable');
         // 기관 작품은 이용 기간이 허락한 등급만 고르는 칸에 남긴다(막는 것은 부르기 쪽 정책이다)
         if (ar && ar.tiers && ar.tiers.length && Array.isArray(st.models)) st.models = st.models.filter((m) => !DEFAULT_ALIAS_TIERS[m] || ar.tiers.includes(DEFAULT_ALIAS_TIERS[m]) || st.model === m);
+        // 지금 판을 지은 부르기가 출력 상한에 닿았으면(finish_reason=length) 문서에 표 — 화면이 «잘렸을 수 있음»을 보인다
+        const cut = new Set((await pool.query(
+          `SELECT d.legacy_id FROM documents d JOIN document_versions v ON v.id = d.current_version_id JOIN generation_runs r ON r.id = v.generation_run_id
+            WHERE d.project_id = $1 AND d.deleted_at IS NULL AND r.finish_reason = 'length'`, [pid])).rows.map((r) => r.legacy_id));
+        if (cut.size) for (const d of st.docs || []) if (cut.has(d.id)) d.truncated = true;
         if (ar) st.ai = { provider: ar.provider || '', classWork: !!ar.organization_id, ownerDefault: ar.organization_id ? ar.org_provider : ar.user_provider, keys: ar.keys || [] };
         return json(res, 200, { ok: true, project: st, projects, me }, cache);
       }
@@ -488,6 +494,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
  * online/start.mjs(Replit 의 Run)와 직접 실행이 함께 쓴다. 돌려주는 값: 서버(닫기용) — 서지 못하면 null.
  */
 export async function main(env = process.env) {
+  guardConsole();   // 키 · 비밀값 꼴을 콘솔에서 가린다(둘째 울타리)
   const plan = onlinePlan(env);
   if (plan.problems.length) { for (const p of plan.problems) console.log('  [STOP] ' + p); return null; }
   if (!env.DATABASE_URL) { console.log('  [STOP] DATABASE_URL is not set (create the database in the platform)'); return null; }

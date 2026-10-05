@@ -26,10 +26,12 @@ const SAY = {
 
 /**
  * deps = { queue, store, call, prepare? }  — store 는 createProjectStore, call 은 createOnlineCall 의 결과
- * opts = { concurrency, heartbeatMs, idleMs, leaseMs, log }
+ * opts = { concurrency, heartbeatMs, idleMs, leaseMs, log, maxJobMs }
  */
 export function createWorker({ queue, store, call, prepare = null, allowed = null, workflow = null }, {
   concurrency = Number(process.env.WORKER_CONCURRENCY) || 4, heartbeatMs = 15000, idleMs = 10 * 60 * 1000, leaseMs = LEASE_MS, log = () => {},
+  // 작업 하나의 상한(JOB_SYSTEM §106 — 기본 2시간). 넘으면 끊고 failed(timeout). 문서는 그대로(결과는 새 판으로만 쌓인다).
+  maxJobMs = Number(process.env.JOB_MAX_DURATION_MS) || 2 * 60 * 60 * 1000,
 } = {}) {
   const id = 'w-' + process.pid + '-' + randomBytes(3).toString('hex');
   const running = new Map();   // jobId → { controller }
@@ -52,6 +54,8 @@ export function createWorker({ queue, store, call, prepare = null, allowed = nul
       return h;
     };
     const beat = setInterval(() => { check().catch(() => {}); }, heartbeatMs);
+    let overdue = false;
+    const cap = setTimeout(() => { overdue = true; controller.abort(); }, maxJobMs);
 
     // 작업마다 저장은 «누가 고쳤나»(판의 created_by)를 그 작업을 맡긴 사람으로 남긴다
     // 바로 앞의 성공한 부르기 — 그 뒤의 저장에서 생긴 판 · 메시지가 그 생성 기록에 잇닿는다(판 source='ai')
@@ -93,6 +97,7 @@ export function createWorker({ queue, store, call, prepare = null, allowed = nul
       if (e !== PARK) log('job ' + row.id + ' threw ' + ((e && e.name) || 'error'));
     } finally {
       clearInterval(beat);
+      clearTimeout(cap);
       await Promise.all(pending);
       running.delete(row.id);
     }
@@ -100,6 +105,7 @@ export function createWorker({ queue, store, call, prepare = null, allowed = nul
     if (lost) return;   // 울타리 밖 — 이미 다른 worker 가 맡았거나 회수됐다. 아무것도 쓰지 않는다.
     if (res === PARK) return queue.park(row.id, id, { status: 'paused' });
     // 이 worker 가 내려가느라 끊은 것 — 취소가 아니다. 곧바로 다시 줄 세운다(다른 worker · 다시 뜬 worker 가 잇는다).
+    if (overdue && !cancelled) return queue.finish(row.id, id, { status: 'failed', errorCode: 'timeout', errorSafe: '작업이 너무 오래 걸려 멈췄습니다 — 나눠서 다시 해 보세요' });
     if (stopped && !cancelled) return queue.retryLater(row.id, id, { delayMs: 0, errorCode: 'worker_stopped' });
     if (cancelled || controller.signal.aborted) return queue.finish(row.id, id, { status: 'cancelled' });
     if (res && res.ok !== false) return queue.finish(row.id, id, { status: 'done' });

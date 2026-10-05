@@ -1159,6 +1159,8 @@ function docPanel(close) {
       h('button', { class: 'btn-text red', text: '삭제', onclick: async () => { await api('doc.delete', { ids: [d.id] }); close(); } }),
       h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
+      // 지금 판을 지은 AI 가 출력 상한에 닿았다(온라인 — 서버가 truncated 를 실을 때만). 저장은 됐고, 끝이 잘렸을 수 있다.
+      d.truncated && !peeking ? h('div', { class: 'notice', text: '이 글은 길이 한도에 닿아 끝이 잘렸을 수 있습니다 — 끝부분을 확인하고, 필요하면 나눠서 다시 생성하세요' }) : null,
       // 모순 검사는 견주는 자리이지 치는 자리가 아니다 — 결과만 보인다(사용자 지시).
       // 옛 판 펼쳐보기도 같은 읽기 칸을 쓴다. 치는 칸과 id 를 갈라 두어야
       // 옛 판을 펼친 채로 창을 닫을 때 그 글이 지금 본문을 덮지 않는다.

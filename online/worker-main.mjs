@@ -11,6 +11,7 @@ import { createOnlineCall } from './call.mjs';
 import { createTenancy } from './tenancy.mjs';
 import { createWorkflowSource } from './workflow.mjs';
 import { createWorker } from './worker.mjs';
+import { guardConsole } from './log.mjs';
 
 /** 돌려주는 값: { worker, stop() } — 서지 못하면 null */
 export async function startWorker(env = process.env, { log = (m) => console.log(m) } = {}) {
@@ -32,6 +33,7 @@ export async function startWorker(env = process.env, { log = (m) => console.log(
 }
 
 if (process.argv[1] && process.argv[1].endsWith(join('online', 'worker-main.mjs'))) {
+  guardConsole();
   const w = await startWorker(process.env);
   if (!w) process.exit(1);
   const bye = async () => { await w.stop(); process.exit(0); };

@@ -177,6 +177,17 @@ export async function run({ pool, ok, eq }) {
     eq('**남의 프로젝트 작업을 치울 수 없다(404)**', other.status, 404);
     ok('그 작업은 그대로 목록에', (await state(pid)).jobs.some((j) => j.id === j1));
 
+    // ---------------- 출력 상한에 닿은 결과 — 저장하되 «잘렸을 수 있음» 표
+    behave = async () => success({ text: '길게 쓰다 만 글', finishReason: 'length' });
+    const jl = (await op('doc.update', { pid, id: doc })).jobId;
+    await until(pid, jl, (j) => j.status === 'done');
+    let tdoc = (await state(pid)).docs.find((x) => x.id === doc);
+    ok('**상한에 닿은 결과도 새 판으로 저장되고 «잘렸을 수 있음» 표가 선다**', tdoc.body === '길게 쓰다 만 글' && tdoc.truncated === true);
+    await op('doc.write', { pid, id: doc, body: '내가 이어 쓴 글' });
+    tdoc = (await state(pid)).docs.find((x) => x.id === doc);
+    ok('사람이 고쳐 새 판이 되면 표는 내려간다', !tdoc.truncated);
+    behave = async () => success({ text: '지은 글', usage: { input_tokens: 10, output_tokens: 5 } });
+
     // ---------------- 작품 통째로 내려받기 · 가져오기(온라인 ↔ 개인판)
     const dlp = await fetch(base + '/api/download?pid=' + pid + '&kind=project&id=', { headers: { cookie } });
     const bundle = await dlp.json();
