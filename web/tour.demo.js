@@ -154,6 +154,70 @@ const TOUR_TALK = [
   ['assistant', '이르다. 안태섭이 거기 서면 4화에서 쓸 패를 미리 보이게 된다. 이름 없는 문상객으로 두고 4화에서 그가 안태섭이 보낸 사람이었다고 밝히면, 그 장면이 뒤에 가서 다시 값을 한다.'],
 ];
 
+const TOUR_WORLD = `빈소가 있는 세계
+
+장례식장은 층마다 냄새가 다르다. 아래는 소독약, 그 위는 육개장, 빈소 층은 국화. 사람들은 냄새로 제가 몇 층에 있는지 안다.
+빈소는 주인이 있어야 하는 방이다. 주인이 없으면 조문객이 들어오지 못하고, 그래서 주인 노릇을 파는 업이 생겼다.
+
+대역이 지키는 말 — 아무도 까닭을 설명하지 않는다
+빈소에 든 동안 대역은 망자의 이름으로 불린다. 조문 온 이의 청은 빈소 안에서 물리지 못한다. 망자의 이름으로 한 약속은 망자가 한 것으로 남는다.
+
+갈등과 이어지는 것
+값은 발인까지다 — 기한이 일에 박혀 있다. 대역이 자리를 뜨면 회사가 물어낸다 — 해진을 빈소에 묶어 두는 끈이다.
+이름을 빌릴수록 제 이름에 대답이 늦어진다 — 해진이 잃을 수 있는 것이다.`;
+
+// 단계형 작업 흐름 — 서버의 stateOf 가 싣는 workflow 꼴(core/workflow/stages.mjs view + 할 일 · 강의 카드).
+// 단계 이름은 config/workflows/story_creation.json 의 원문이다(관리 화면에서 고친 이름은 실제 작품에서만 보인다).
+const TOUR_STAGES = [
+  ['spec', '작품 규격 · 자료 입력', 'input'],
+  ['study', '자료 분석', 'document', '넣은 자료와 작품 규격 · 집필 기준 · 요청사항을 읽고, 이 작품을 쓰는 데 쓸 수 있는 것을 정리한다.'],
+  ['world', '세계관', 'document', '이 이야기가 벌어지는 세계의 규칙 · 장소 · 사회 · 역사를 정리한다. 이야기의 갈등과 이어지는 것을 먼저 쓴다.'],
+  ['material', '서사 재료 선별 · 정리', 'document'], ['plan', '작품 기획서', 'document'], ['plan_rev', '기획서 수정', 'revision'],
+  ['world_rev', '기획서에 맞춘 세계관 수정', 'revision'], ['cast', '인물 설계(캐릭터 풀)', 'document'], ['leads', '주요 인물 선정', 'document'],
+  ['outline', '대략적인 플롯 + 인물별 캐릭터 아크', 'document'], ['plot', '상세 플롯', 'document'], ['plot_rev', '상세 플롯 수정', 'revision'],
+  ['episodes', '회차 / 파트 구체화', 'document'], ['scenes', '장면 구체화', 'perEpisode'], ['body', '본문 작성', 'perEpisode'], ['finish', '완성', 'final'],
+];
+const TOUR_WORLD_CARD = {
+  what: '세계관은 인물이 «당연하게» 여기는 것들의 목록입니다. 독자가 처음 보는 규칙은 사건 속에서 드러나야 설명처럼 느껴지지 않습니다.',
+  look: ['이 세계에만 있는 규칙이 갈등을 만들어 내나요?', '규칙끼리 서로 어긋나지 않나요?'],
+  ask: '이 세계에서 주인공이 가장 잃기 싫은 것은 무엇일까요?',
+};
+
+// 강의 카드는 온라인판(수업 작품)에서만 켠다 — 개인판 작품은 카드가 꺼진 채다
+function tourWorkflow(cards) {
+  const stages = TOUR_STAGES.map(([key, title, output, task], i) => ({
+    key, n: i + 1, title, output, optional: key === 'body', off: false, prevPending: false,
+    status: key === 'spec' ? 'approved' : key === 'study' ? 'draft' : 'not_started',
+    docId: key === 'study' ? 'd_study' : '', docTitle: '', upstreamChanged: false, refs: [], task: task || '',
+    ...(output === 'perEpisode' ? { episodes: [] } : {}),
+    ...(cards && key === 'world' ? { card: TOUR_WORLD_CARD } : {}),
+  }));
+  return tourStagePending({ title: '이야기 만들기', bodyOn: true, cards: !!cards, stages });
+}
+// 앞 단계가 승인 전인가 — 서버의 view 와 같은 셈(완성 · 회차 단계는 세지 않는다)
+function tourStagePending(w) {
+  w.stages.forEach((s, i) => {
+    s.prevPending = w.stages.slice(0, i).some((x) => x.output !== 'final' && x.output !== 'perEpisode' && !['approved', 'skipped'].includes(x.status));
+  });
+  return w;
+}
+function tourStageDone(d, key) {
+  d.workflow.stages.find((s) => s.key === key).status = 'approved';
+  tourStagePending(d.workflow);
+}
+// 단계를 시작해 초안이 선 꼴 — 결과 문서는 «단계» 카테고리에 단계 이름으로 선다(core/workflow/stages.mjs startStage)
+function tourStageDraft(d, key, docId, body) {
+  const s = d.workflow.stages.find((x) => x.key === key);
+  let c = d.categories.find((x) => x.name === '단계');
+  if (!c) { c = { id: 'c_stage', name: '단계', virtual: false, docIds: [] }; d.categories.push(c); }
+  if (!d.docs.some((x) => x.id === docId)) {
+    d.docs.push({ id: docId, kind: 'doc', title: s.title, body, isFinal: false, categoryId: c.id, request: '', refIds: ['d_study'], targetIds: [], agentIds: [], versions: [], updatedAt: d.updatedAt });
+    c.docIds.push(docId);
+  }
+  Object.assign(s, { status: 'draft', docId, refs: ['d_study'] });
+  tourStagePending(d.workflow);
+}
+
 // 한 덩이 — tools/server.mjs 의 stateOf 가 내려 주는 꼴 그대로.
 function tourProject(now) {
   const doc = (id, title, body, extra) => Object.assign({
@@ -219,6 +283,7 @@ function tourProject(now) {
     ],
     agentKind: '소설',
     prepared: true,
+    workflow: tourWorkflow(typeof S !== 'undefined' && !!S.me),
     createdAt: now,
     updatedAt: now,
   };

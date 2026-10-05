@@ -392,7 +392,8 @@ function wfEditor(orgId) {
     const head = h('div', { class: 'line', style: 'padding:6px 0;border-bottom:1px solid var(--line-soft);cursor:pointer', onclick: () => { S.wfOpen[k] = !S.wfOpen[k]; render(); } },
       h('div', { class: 'name', style: 'flex:1', text: st.n + '  ' + eff.title }),
       Object.keys(mine).length ? h('span', { class: 'mark', text: orgId ? '이 기관이 고침' : '고침' }) : null,
-      !orgId ? null : st.platform ? h('span', { class: 'mark', text: '운영자가 고침' }) : null);
+      !orgId ? null : st.platform ? h('span', { class: 'mark', text: '운영자가 고침' }) : null,
+      h('span', { class: 'when', text: S.wfOpen[k] ? '접기 ▴' : '열기 ▾' }));
     if (!S.wfOpen[k]) return head;
     const id = (f) => 'wf-' + sk + '-' + st.key + '-' + f;
     const before = w.stages.filter((x) => x.n < st.n);
@@ -413,7 +414,8 @@ function wfEditor(orgId) {
       if (!clear) for (const k of Object.keys(typed)) if (typed[k] !== undefined && !same(k)) data[k] = typed[k];
       const r = await edu('workflow.save', { ...(orgId ? { orgId } : {}), stageKey: st.key, data });
       if (!r.ok) return tell(r.error);
-      S.say = clear ? '원래대로 되돌렸습니다' : '저장했습니다 — 다음 생성부터 쓰입니다';
+      S.say = (clear ? '원래대로 되돌렸습니다' : '저장했습니다 — 다음 생성부터 쓰입니다') + ' (' + st.n + '  ' + (clear ? st.original.title : (data.title || st.effective.title)) + ')';
+      S.wfOpen[k] = false;   // 저장하면 그 단계는 접는다
       await loadWf(sk, orgId);
     };
     const generates = st.output !== 'input' && st.output !== 'final';
@@ -433,6 +435,7 @@ function wfEditor(orgId) {
       box('note', '강사 메모(강사 화면에만)', '', true),
       h('div', { class: 'line', style: 'margin-top:12px' },
         h('button', { class: 'btn-red', text: '저장', onclick: () => save(false) }),
+        h('button', { class: 'btn-line', text: '닫기', onclick: () => { S.wfOpen[k] = false; render(); } }),
         Object.keys(mine).length ? h('button', { class: 'btn-text', text: '원래대로', onclick: () => save(true) }) : null,
         h('div', { class: 'when', text: '원문은 그대로 남습니다' })));
     // 칸에 지금 값(합친 결과)을 채워 둔다 — 그리기가 끝난 뒤
@@ -461,7 +464,7 @@ function platformBox() {
     h('div', { class: 'lab', text: '단계 · 강의 카드 고쳐 쓰기(전체 기본 — 모든 기관 · 개인에게)' }),
     wfEditor(null),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '기관' }),
-    h('div', { class: 'line', style: 'align-items:flex-end' }, field('기관 이름', 'no-name'), field('주소 이름(영문 소문자 · -)', 'no-slug'),
+    h('div', { class: 'line', style: 'align-items:flex-end' }, field('기관 이름', 'no-name'), field('영문 약칭(선택 — 비워 두면 자동)', 'no-slug', 'text', { placeholder: '예: sea-school', autocapitalize: 'none', spellcheck: 'false' }),
       h('button', { class: 'btn-line', text: '기관 만들기', onclick: addOrg })),
     Object.values(S.orgs).map(({ org }) => h('div', { class: 'line', style: 'margin-top:10px;align-items:flex-end' },
       h('div', { class: 'name', style: 'flex:1;font-weight:600', text: org.name }),
@@ -483,9 +486,17 @@ function themeBox() {
 
 // ---------------------------------------------------------------- 그리기
 
+// 지금 들어와 있는 아이디와 신분 — 위쪽 제목 아래(여럿이면 모두)
+function whoLine() {
+  if (!S.me || !S.me.loginId) return null;
+  const held = new Set([...(S.me.organizations || []).flatMap((o) => o.roles || []), ...(S.me.classes || []).map((c) => c.role)]);
+  const names = [S.me.platformAdmin ? '최상위 관리자' : null, ...['organization_admin', 'instructor', 'student'].filter((r) => held.has(r)).map((r) => ROLE_SAY[r])].filter(Boolean);
+  return h('div', { class: 'who' }, h('span', { class: 'who-id', text: S.me.loginId }), h('span', { text: names.length ? names.join(' · ') : '개인' }));
+}
+
 function render() {
-  const head = (title) => h('div', { class: 'line', style: 'margin-bottom:22px' },
-    h('div', { class: 'top-name', style: 'font-size:28px;flex:1', text: title }),
+  const head = (title) => h('div', { class: 'line', style: 'margin-bottom:22px;align-items:flex-start' },
+    h('div', { style: 'flex:1' }, h('div', { class: 'top-name', style: 'font-size:28px', text: title }), whoLine()),
     S.loggedIn ? h('a', { class: 'btn-line', href: '/', text: '작업실로' }) : h('a', { class: 'btn-line', href: '/login', text: '로그인' }));
   const notice = S.say ? h('div', { class: 'notice', style: 'margin-bottom:14px', text: S.say }) : null;
   if (PAGE === 'manage') {

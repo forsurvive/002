@@ -266,13 +266,30 @@ function toggleTheme() {
   render();
 }
 
+// 온라인판 — 지금 들어와 있는 아이디와 신분(여럿이면 모두). 개인판에는 계정이 없으므로 서지 않는다.
+const ROLE_NAME = { platform_admin: '최상위 관리자', organization_admin: '기관 관리자', instructor: '강사', student: '학생' };
+function whoLine() {
+  if (!S.me || !S.me.loginId) return null;
+  const roles = (S.me.roles || []).map((r) => ROLE_NAME[r]).filter(Boolean);
+  return h('div', { class: 'who' },
+    h('span', { class: 'who-id', text: S.me.loginId }),
+    h('span', { text: roles.length ? roles.join(' · ') : '개인' }));
+}
+
+function newProjectOpen() {
+  // 온라인판 — 열린 수업이 있으면 그 수업을 먼저 골라 둔다(학생 대부분은 과제를 만든다)
+  const places = (S.me && S.me.places) || [];
+  S.draft = []; S.open = { type: 'newproject', place: places.length ? places[0].classId : '' }; render();
+}
+
 function projectList() {
   return h('div', { class: 'body' },
-    h('div', { class: 'top', style: 'position:static;padding:0 0 22px;border:none;background:none' },
+    h('div', { class: 'top home-top', style: 'position:static;padding:0 0 22px;border:none;background:none' },
       h('div', null,
         brandMark('margin-bottom:6px'),
-        h('div', { class: 'top-name', style: 'font-size:30px', text: '스토리 엔진' })),
-      h('div', { class: 'line', style: 'flex:none' },
+        h('div', { class: 'top-name', style: 'font-size:30px', text: '스토리 엔진' }),
+        whoLine()),
+      h('div', { class: 'line home-acts' },
         // 온라인판 — 관리는 운영자 · 기관 관리자에게만, 내 수업은 수업에 든 사람에게만, 내 계정은 누구나(막는 것은 서버다).
         // 쪽으로 가는 문(알약)과 로그아웃 · 밝기(옅은 글자)를 띄워 갈라 보인다.
         S.me ? h('div', { class: 'nav' },
@@ -282,12 +299,9 @@ function projectList() {
           h('span', { class: 'nav-sep' }),
           h('button', { class: 'nav-out', text: '로그아웃', onclick: logout })) : null,
         h('button', { class: 'nav-out', text: isLight() ? '어둡게' : '밝게', onclick: toggleTheme }),
-        h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: () => startTour() }),
-        h('button', { class: 'plus', text: '+', onclick: () => {
-          // 온라인판 — 열린 수업이 있으면 그 수업을 먼저 골라 둔다(학생 대부분은 과제를 만든다)
-          const places = (S.me && S.me.places) || [];
-          S.draft = []; S.open = { type: 'newproject', place: places.length ? places[0].classId : '' }; render();
-        } }))),
+        h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: () => startTour() }))),
+    // 새 작품 «+» — 화면 한가운데(좁은 창에서도 잘리지 않게 줄을 따로 둔다)
+    h('div', { class: 'new-row' }, h('button', { class: 'plus big', text: '+', title: '새 작품', onclick: newProjectOpen })),
     h('div', { class: 'cards' }, S.projects.map((p) => h('div', {
       class: 'card', onclick: () => { S.pid = p.id; S.tab = '작업실'; S.project = null; pull(true); },
     },
@@ -322,7 +336,8 @@ function app() {
           h('button', { class: 'back', text: '‹', title: '작품 목록', onclick: goHome }),
           h('button', { class: 'top-name', text: p.name, onclick: goHome }),
           // 온라인판 — 강사 · 기관 관리자의 열람. 고치는 문은 서버가 막는다(이 표시는 알림일 뿐이다)
-          p.readOnly ? h('span', { class: 'mark', text: '읽기만' }) : null)),
+          p.readOnly ? h('span', { class: 'mark', text: '읽기만' }) : null),
+        whoLine()),
       h('div', { class: 'body' }, S.tab === '작업실' ? workshop() : S.tab === '단계' && p.workflow ? stagesView() : S.tab === '설정' ? settings() : trash()),
       lectureCard()));
 }
@@ -459,7 +474,12 @@ function stagePanel(close) {
       h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
       st.task ? h('div', null, h('div', { class: 'lab', text: '이 단계에서 하는 일' }), h('div', { text: st.task.replace(/\{n\}/g, ep ? String(ep) : 'N') })) : null,
-      st.card ? h('div', { class: 'when', text: st.card.what }) : null,
+      // 강의 카드(켜져 있을 때만) — 시작하기 전에 통째로 읽는다. 생성이 도는 동안에는 떠 있는 카드가 다시 짚는다.
+      st.card ? h('div', { class: 'card-box' },
+        h('div', { class: 'lab', text: '강의 카드' }),
+        h('div', { text: st.card.what }),
+        (st.card.look || []).length ? [h('div', { class: 'lab', text: '결과를 읽을 때 볼 점' }), st.card.look.map((x) => h('div', { text: '· ' + x }))] : null,
+        st.card.ask ? [h('div', { class: 'lab', text: '생각해 볼 질문' }), h('div', { text: st.card.ask })] : null) : null,
       st.prevPending && status === 'not_started' ? h('div', { class: 'notice', text: '앞 단계가 아직 승인 전입니다 — 그래도 시작할 수 있습니다' }) : null,
       cur && cur.upstreamChanged ? h('div', { class: 'notice', text: '⚠ 승인한 뒤 앞 단계 문서가 바뀌었습니다 — 다시 보거나 다시 생성해 보세요(자동으로 바뀌지 않습니다)' }) : null,
       per && !S.open.episode ? h('div', null, h('div', { class: 'lab', text: '몇 화' }), textbox('st-ep', '예: 1')) : null,

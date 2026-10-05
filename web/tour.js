@@ -25,10 +25,14 @@ function tourSteps(t) {
     return lab ? lab.parentElement : null;
   };
 
+  // 온라인판(계정으로 들어온 사람)과 개인판(내 PC)은 작품을 두는 자리가 다르다 — 첫 걸음의 말이 갈린다
+  const online = !!S.me;
   return [
     {
-      title: '작품 하나가 파일 하나',
-      say: '이 프로그램은 작품 하나를 내 컴퓨터의 파일 하나로 둡니다. 계정도, 클라우드도, 따로 낼 돈도 없습니다.\n'
+      title: online ? '작품은 내 계정에 쌓입니다' : '작품 하나가 파일 하나',
+      say: (online
+        ? '이 프로그램은 작품을 내 계정 안에 하나씩 둡니다. 어느 컴퓨터에서든 로그인하면 그 자리에서 이어 씁니다.\n'
+        : '이 프로그램은 작품 하나를 내 컴퓨터의 파일 하나로 둡니다. 계정도, 클라우드도, 따로 낼 돈도 없습니다.\n')
         + '지금부터 「대리 상주」라는 가상의 작품으로, 모형이 아니라 실제 화면을 그대로 보여 드립니다.',
       spot: '.cards .card',
       act() {
@@ -39,7 +43,7 @@ function tourSteps(t) {
     {
       title: '넣자마자 읽습니다',
       say: '작품을 만들며 넣은 자료는 쌓이기만 하지 않습니다. 만들자마자 한 번 읽고 정리한 문서를 남깁니다.\n'
-        + '왼쪽 줄은 지금 무엇을 하고 있는지와 얼마나 되었는지만 말합니다 — 진행률 막대를 두지 않은 것은 없는 숫자를 지어내지 않으려는 선택입니다.',
+        + '작업 줄은 지금 무엇을 하고 있는지와 얼마나 되었는지만 말합니다 — 진행률 막대를 두지 않은 것은 없는 숫자를 지어내지 않으려는 선택입니다.',
       spot: '.side-jobs .job',
       act() {
         S.pid = d.id; S.project = d; S.tab = '작업실'; S.open = null;
@@ -57,12 +61,35 @@ function tourSteps(t) {
       },
     },
     {
+      title: '정해진 길 — 16단계',
+      say: '자유롭게 문서를 짓는 대신 정해진 순서를 따라갈 수도 있습니다. 작품 규격에서 완성까지 16단계, 단계마다 생성 → 검토 → 수정 → 승인입니다.\n'
+        + '순서는 강제가 아닙니다 — 앞 단계가 승인 전이어도 시작할 수 있고, 단계의 결과는 작업실의 문서로 그대로 남습니다.',
+      spot: () => document.querySelector('.main .sec'),
+      act() {
+        S.open = null;
+        S.tab = '단계';
+        tourStageDone(d, 'study');            // 방금 읽은 «자료 분석»을 승인했다
+        tourStageDraft(d, 'world', 'd_world', TOUR_WORLD);
+      },
+    },
+    {
+      title: '승인과 확정본은 다릅니다',
+      say: '단계를 열면 이 단계에서 할 일과 앞 단계에서 추천한 참조가 보입니다. 생성하고 읽어 본 뒤 고칠 것은 고치고 승인합니다.\n'
+        + '승인은 «이 단계의 산출물로 인정», 확정본은 «참조에서 최우선 사실»입니다 — 확정본은 승인할 때 고른 경우에만 켜집니다.'
+        + (online ? '\n수업 작품이면 단계마다 강의 카드가 함께 보여, 결과를 읽을 때 볼 점을 짚어 줍니다.' : ''),
+      spot: () => { const b = document.querySelector('#layer1 .btn-red'); return b ? b.parentElement : null; },
+      act() {
+        S.open = { type: 'stage', key: 'world', episode: 0, refIds: ['d_study'], final: false };
+      },
+    },
+    {
       title: '붉은 스위치 — 설정이 흔들리지 않는 까닭',
       say: '이 붉은 스위치가 이 프로그램의 심장입니다. 켜 둔 문서는 일할 때마다 맨 먼저 다시 읽고 «최우선 사실»로 싣습니다.\n'
         + '제 판단보다 앞세우게 하고, 고치자고 제안하지도 못하게 합니다. 작가가 못 박은 것은 흔들리지 않습니다.',
       spot: () => document.querySelector('.sec .row.final'),
       act() {
         S.open = null;
+        S.tab = '작업실';
         doc('d_rule').isFinal = true;
         doc('d_char').isFinal = true;
         doc('d_treat').isFinal = true;
@@ -170,6 +197,34 @@ function tourSteps(t) {
   ];
 }
 
+// ---------------------------------------------------------------- 보기만 하는 스크롤
+// 각본이 도는 동안 진짜 화면은 눌리지 않는다(pointer-events: none — 고칠 수 없게). 그래서 휠 · 손가락 끌기가
+// 화면에 닿지 않아 창 아래가 잘린 채 남는다. 휠 · 끌기만 받아, 그 자리 밑에서 스크롤할 수 있는 칸을 대신 굴린다.
+const TOUR_SCROLLERS = ['#d-body', '#d-out', '#layer2 .panel-body', '#layer1 .panel-body', '.main'];
+function tourScrollAt(x, y, dy) {
+  const inside = (n) => { const r = n.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; };
+  const can = (n) => (dy > 0 ? n.scrollTop + n.clientHeight < n.scrollHeight - 1 : n.scrollTop > 0);
+  for (const sel of TOUR_SCROLLERS) {
+    for (const n of document.querySelectorAll(sel)) if (inside(n) && can(n)) { n.scrollTop += dy; return true; }
+  }
+  const page = document.scrollingElement;
+  if (page && can(page)) { page.scrollTop += dy; return true; }
+  return false;
+}
+const tourOnCard = (e) => !!(e.target && e.target.closest && e.target.closest('#tour-card'));
+window.addEventListener('wheel', (e) => {
+  if (!S.tour || tourOnCard(e)) return;
+  if (tourScrollAt(e.clientX, e.clientY, e.deltaY)) e.preventDefault();
+}, { passive: false });
+let tourTouchY = null;
+window.addEventListener('touchstart', (e) => { tourTouchY = S.tour && !tourOnCard(e) && e.touches.length === 1 ? e.touches[0].clientY : null; }, { passive: true });
+window.addEventListener('touchmove', (e) => {
+  if (tourTouchY == null || !S.tour) return;
+  const y = e.touches[0].clientY;
+  if (tourScrollAt(e.touches[0].clientX, y, tourTouchY - y)) e.preventDefault();
+  tourTouchY = y;
+}, { passive: false });
+
 // ---------------------------------------------------------------- 도는 틀
 
 function startTour() {
@@ -226,12 +281,16 @@ function tourExit() {
 // 눈길을 모을 자리를 잡는다 — 접혀 있거나 스크롤 밖에 있으면 먼저 보이게 끌어온다.
 // 다시 그리기가 모두 끝난 뒤에 불린다(app.js 의 render 끝).
 function tourFocus() {
+  // 말풍선 키를 재 둔다 — 창(panel)은 그 위까지만 서고, 화면 끝은 그만큼 더 내려 볼 수 있다(style.css --tour-h)
+  const card = $('tour-card');
+  if (card) document.body.style.setProperty('--tour-h', card.offsetHeight + 'px');
   const ring = $('tour-ring');
   if (!ring) return;
   const st = S.tour.steps[S.tour.i];
   const n = typeof st.spot === 'function' ? st.spot() : (st.spot ? document.querySelector(st.spot) : null);
   if (!n) { ring.style.display = 'none'; return; }
-  n.scrollIntoView({ block: 'center', inline: 'nearest' });
+  // 같은 걸음에서 다시 그릴 때는 끌어오지 않는다 — 사람이 내려 본 자리를 되돌리지 않게
+  if (S.tour.focused !== S.tour.i) { n.scrollIntoView({ block: 'center', inline: 'nearest' }); S.tour.focused = S.tour.i; }
   const r = n.getBoundingClientRect();
   if (!r.width || !r.height) { ring.style.display = 'none'; return; }
   const pad = 6;
@@ -243,18 +302,20 @@ function tourFocus() {
 }
 
 // 세 번째 겹 — 말풍선과 눈길 모으는 테. 진짜 화면 위에 얹힌다.
+// 말풍선은 접을 수 있다 — 접으면 제목과 단추만 남아 아래 화면이 다 보인다.
 function tourLayer() {
   const t = S.tour;
   const st = t.steps[t.i];
   const last = t.i === t.steps.length - 1;
   return h('div', { class: 'tour' },
     st.spot ? h('div', { class: 'tour-ring', id: 'tour-ring', style: 'display:none' }) : null,
-    h('div', { class: 'panel narrow tour-card' },
+    h('div', { class: 'panel narrow tour-card', id: 'tour-card' },
       h('div', { class: 'panel-head' },
         h('div', { class: 'name', text: st.title }),
-        h('div', { class: 'when', text: (t.i + 1) + ' / ' + t.steps.length })),
+        h('div', { class: 'when', text: (t.i + 1) + ' / ' + t.steps.length }),
+        h('button', { class: 'btn-text', text: t.mini ? '펴기' : '접기', onclick: () => { t.mini = !t.mini; render(); } })),
       h('div', { class: 'panel-body' },
-        h('div', { class: 'tour-say', text: st.say }),
+        t.mini ? null : h('div', { class: 'tour-say', text: st.say }),
         h('div', { class: 'line tour-foot' },
           h('button', { class: 'btn-line', text: '튜토리얼 나가기', onclick: tourExit }),
           t.i ? h('button', { class: 'btn-text', text: '이전', onclick: () => tourGo(t.i - 1) }) : null,

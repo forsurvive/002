@@ -159,7 +159,7 @@ button.top-name:hover { color: var(--blue); }
 /* 긴 이름은 «‹» 를 밀어내지도, 오른쪽 단추를 두 줄로 접지도 못한다 — 이름만 말줄임으로 깎인다. */
 .top > .line { flex: 1; min-width: 0; gap: 4px; flex-wrap: nowrap; }
 .top > button { flex: none; white-space: nowrap; }
-.body { padding: 26px 30px 96px; max-width: 1060px; }
+.body { padding: 26px 30px 96px; max-width: 1060px; margin-inline: auto; }   /* 넓은 창에서는 한가운데 */
 
 /* ---------------------------------------------------------------- 조각 */
 
@@ -178,7 +178,8 @@ button.top-name:hover { color: var(--blue); }
 .btn-line:hover { background: var(--group-on); }
 a.btn-line, a.btn-text { text-decoration: none; display: inline-block; }
 /* 위쪽 이동 문 — 쪽으로 가는 문은 알약(흑 글자), 로그아웃 · 밝기는 옅은 글자. 둘 사이에 금 하나. */
-.nav { display: flex; align-items: center; gap: 6px; }
+.nav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.nav-btn, .nav-out, .home-acts .btn-line { white-space: nowrap; }
 .nav-btn {
   background: var(--group); color: var(--ink); padding: 7px 14px;
   border-radius: var(--pill); font-size: 14px; font-weight: 600;
@@ -187,6 +188,16 @@ a.btn-line, a.btn-text { text-decoration: none; display: inline-block; }
 .nav-sep { width: 1px; height: 18px; background: var(--line); margin: 0 6px; }
 .nav-out { color: var(--dim); font-size: 14px; font-weight: 500; padding: 7px 8px; }
 .nav-out:hover { color: var(--ink); }
+/* 지금 들어와 있는 사람 — 아이디(흑) · 신분(옅게) */
+.who { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; font-size: 13px; color: var(--dim); margin-top: 6px; }
+.who-id { color: var(--ink); font-weight: 600; }
+.top > .who { margin-top: 0; }
+/* 첫 화면 — 좁은 창에서는 단추 줄이 제목 아래로 내려간다(오른쪽 끝에서 잘리지 않게) */
+.home-top { flex-wrap: wrap; align-items: flex-start; }
+.top.home-top > .home-acts { flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-end; }   /* .top > .line(한 줄 고정)을 이긴다 */
+.new-row { display: flex; justify-content: center; margin: 0 0 22px; }
+.plus.big { width: 46px; height: 46px; }
+@media (max-width: 760px) { .top.home-top > .home-acts { flex-basis: 100%; justify-content: flex-start; } }   /* 좁은 창 — 단추 줄은 제목 아래 한 줄로 */
 .btn-red {
   background: var(--red-tint); color: var(--red); padding: 9px 17px;
   border-radius: var(--pill); font-size: 15px; font-weight: 600;
@@ -204,7 +215,7 @@ a.btn-line, a.btn-text { text-decoration: none; display: inline-block; }
 }
 .plus::before, .plus::after {
   content: ''; position: absolute; top: 50%; left: 50%;
-  background: var(--paper); border-radius: 1.5px; transform: translate(-50%, -50%);
+  background: var(--on-color); border-radius: 1.5px; transform: translate(-50%, -50%);
 }
 .plus::before { width: 44%; height: 2px; }
 .plus::after { width: 2px; height: 44%; }
@@ -238,7 +249,7 @@ textarea { resize: vertical; min-height: 88px; line-height: 1.65; }
 .ck.on { background: var(--blue); border-color: var(--blue); }
 .ck.on::after {
   content: ''; position: absolute; left: 7.5px; top: 3.5px; width: 5px; height: 10px;
-  border: solid var(--paper); border-width: 0 2px 2px 0; transform: rotate(42deg);
+  border: solid var(--on-color); border-width: 0 2px 2px 0; transform: rotate(42deg);
 }
 /* 토글 = 애플 스위치 — 확정본에만 쓴다(그래서 적이다) */
 .tg {
@@ -424,6 +435,10 @@ details summary:hover { opacity: .7; }
   display: flex; flex-direction: column; gap: 8px; font-size: 14px; line-height: 1.6;
 }
 .lecture .lab { margin: 6px 0 0; }
+/* 단계 창 안의 강의 카드 — 시작하기 전에 읽는다 */
+.card-box { background: var(--blue-tint); border-radius: var(--r-m); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+.card-box .lab { margin: 6px 0 0; }
+.card-box .lab:first-child { margin-top: 0; }
 .peek {
   white-space: pre-wrap; word-break: break-word;
   background: var(--group); border-radius: var(--r-m);
@@ -454,6 +469,9 @@ details summary:hover { opacity: .7; }
 .tour-foot .btn-line { margin-right: auto; }
 /* 각본이 도는 동안에는 진짜 화면에 손이 닿지 않는다 — 눈으로는 다 보인다. */
 body.tour-on #root, body.tour-on #layer1, body.tour-on #layer2 { pointer-events: none; }
-/* 각본이 도는 동안 창은 위로 붙고 키를 줄인다 — 아래쪽은 말풍선 자리이기 때문이다. */
+/* 각본이 도는 동안 창은 위로 붙고 말풍선 위까지만 선다 — 아래쪽은 말풍선 자리이기 때문이다(--tour-h 는 tour.js 가 잰다).
+   잘린 아래는 휠 · 손가락 끌기로 내려 본다(tour.js «보기만 하는 스크롤»). 화면 끝도 말풍선 위로 올라올 만큼 여백을 둔다. */
 body.tour-on .layer { align-items: start; padding-top: 24px; }
-body.tour-on .panel { max-height: 58vh; }
+body.tour-on .panel { max-height: calc(100vh - var(--tour-h, 260px) - 64px); }
+body.tour-on .tour-card { max-height: none; }
+body.tour-on .body { padding-bottom: calc(var(--tour-h, 260px) + 60px); }
