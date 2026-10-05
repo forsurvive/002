@@ -9,7 +9,9 @@
     "test": "node tools/test.mjs",
     "test:online": "node online/test.mjs",
     "migrate": "node online/migrate.mjs",
-    "online": "node online/server.mjs"
+    "online": "node online/server.mjs",
+    "stop": "pkill -f '[o]nline/start.mjs' ; pkill -f '[t]ools/server.mjs' ; echo 'Stopped - press Run to start again'",
+    "update": "pkill -f '[o]nline/start.mjs' ; pkill -f '[t]ools/server.mjs' ; git pull origin claude/charming-keller-12p0c5 && echo 'Updated - press Run to start'"
   },
   "dependencies": {
     "pg": "^8.23.1"

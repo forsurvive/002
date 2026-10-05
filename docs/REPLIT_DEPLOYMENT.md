@@ -111,6 +111,9 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
 3. **[Run] → 미리보기를 새 탭으로** → (계정이 없으면 **Console 에 찍힌 `[SETUP] First-run setup code`** 를 설정 화면에 넣는다) → **처음 설정 화면**에서 아이디 · 이름 · 비밀번호 · Anthropic API 키를 넣는다.
    계정이 하나도 없을 때 한 번만 나오는 화면이고, 설정 코드를 넣은 요청만 받는다(온라인판은 출입 열쇠를 쓰지 않는다). 키는 서버에서 봉해 저장되고 다시 보이지 않는다.
 
+켜고 끄기(새 Replit 화면은 실행 중에 정지 단추를 숨긴다): 켜기는 초록 ▶(«실행»), 끄기는 Shell 에서 `npm run stop`,
+최신 코드 받기는 Shell 에서 `npm run update`(끄고 → `git pull`) 뒤 ▶. `pkill` 무늬는 `[o]nline/start.mjs` 꼴이라 제 명령 줄은 죽이지 않는다.
+
 그 뒤: 프로젝트를 만들면 «에이전트 준비»가 돌고, 문서의 [갱신] · 논의가 실제 AI 로 돈다.
 **게시(배포)할 때만** `data/online-master.key` 의 값을 Secrets 의 `CREDENTIALS_KEY_V1` 으로 옮긴다(다시 게시하면 파일이 사라질 수 있다 — 콘솔 `[NOTE]` 가 알려 준다).
 
