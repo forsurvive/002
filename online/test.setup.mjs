@@ -28,19 +28,38 @@ export async function run({ pool, ok, eq }) {
   const body = { loginId: 'owner', password: 'long-enough-owner', displayName: '주인', apiKey: FAKE_KEY };
   const post = (base, path, b, headers = {}) => fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(b) });
 
-  // ---------------- 바깥에 열고 출입 열쇠가 없으면 처음 설정을 받지 않는다(낯선 사람이 먼저 차지하지 못하게)
+  // ---------------- 바깥에 열면 출입 열쇠 없이 계정으로만 — 처음 설정은 서버 콘솔의 «설정 코드»가 있어야(낯선 사람이 먼저 차지하지 못하게)
+  {
+    ok('**온라인판은 SE2_ACCESS_KEY 가 있어도 출입 열쇠를 세우지 않는다(SE2_ONLINE_GATE=1 일 때만)**', !onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_ACCESS_KEY: 'k'.repeat(24) }).gate
+      && !!onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_ACCESS_KEY: 'k'.repeat(24), SE2_ONLINE_GATE: '1' }).gate);
+    const { srv, base } = await serve(pool, onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_ACCESS_KEY: 'k'.repeat(24) }), credentials);
+    const st = await (await fetch(base + '/api/setup')).json();
+    ok('바깥에 열면 «설정 필요 · 설정 코드 칸» 을 알린다', st.needed === true && st.code === true);
+    ok('설정 코드는 XXXX-XXXX-XXXX 꼴', /^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(srv.setupCode), srv.setupCode);
+    eq('**설정 코드 없이는 처음 설정 거절(403)**', (await post(base, '/api/setup', body)).status, 403);
+    eq('틀린 설정 코드도 거절', (await post(base, '/api/setup', { ...body, setupCode: 'AAAA-BBBB-CCCC' })).status, 403);
+    eq('계정이 생기지 않았다', (await pool.query('SELECT count(*)::int AS n FROM users')).rows[0].n, 0);
+    const r = await post(base, '/api/setup', { ...body, setupCode: srv.setupCode.toLowerCase() });
+    ok('**맞는 설정 코드면 처음 설정(소문자도)**', r.status === 200 && (await r.json()).ok);
+    ok('출입 열쇠 없이 화면 · 로그인이 열린다', (await fetch(base + '/login')).status !== 401 && (await post(base, '/api/auth/login', { loginId: body.loginId, password: body.password })).status === 200);
+    for (const path of ['/', '/school.html', '/manage.html']) {
+      const rr = await fetch(base + path, { redirect: 'manual' });
+      ok('로그인 전 ' + path + ' → 첫 화면(/login)', rr.status === 302 && rr.headers.get('location') === '/login');
+    }
+    await new Promise((r2) => srv.close(r2));
+    await pool.query('DELETE FROM sessions'); await pool.query('DELETE FROM audit_logs'); await pool.query('DELETE FROM provider_credentials'); await pool.query('DELETE FROM users');
+  }
   {
     const { srv, base } = await serve(pool, onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0' }), credentials);
-    eq('열쇠 없이 바깥에 열면 «설정 필요» 를 알리지 않는다', (await (await fetch(base + '/api/setup')).json()).needed, false);
-    eq('**열쇠 없이 바깥에 열면 처음 설정 거절(403)**', (await post(base, '/api/setup', body)).status, 403);
-    eq('계정이 생기지 않았다', (await pool.query('SELECT count(*)::int AS n FROM users')).rows[0].n, 0);
-    await new Promise((r) => srv.close(r));
+    for (let i = 0; i < 5; i++) await post(base, '/api/setup', { ...body, setupCode: 'WRNG-CODE-' + i });
+    eq('**설정 코드 맞히기는 몇 번 틀리면 잠시 막힌다**', (await post(base, '/api/setup', { ...body, setupCode: srv.setupCode })).status, 429);
+    await new Promise((r2) => srv.close(r2));
   }
 
   // ---------------- 출입 열쇠를 지나온 요청이면 처음 설정
   const gateKey = randomBytes(12).toString('hex');
   const basic = { authorization: 'Basic ' + Buffer.from('x:' + gateKey).toString('base64') };
-  const { srv, base } = await serve(pool, onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_ACCESS_KEY: gateKey }), credentials);
+  const { srv, base } = await serve(pool, onlinePlan({ SE2_HOST: '0.0.0.0', SE2_PORT: '0', SE2_ACCESS_KEY: gateKey, SE2_ONLINE_GATE: '1' }), credentials);
   try {
     eq('열쇠가 없으면 문 앞에서(401)', (await fetch(base + '/api/setup')).status, 401);
     const quiet = await fetch(base + '/api/edu', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"op":"invite.accept"}' });

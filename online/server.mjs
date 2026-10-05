@@ -10,7 +10,7 @@
 // 실행: DATABASE_URL=… SE2_HOST=0.0.0.0 node online/server.mjs   (docs/REPLIT_DEPLOYMENT.md · 콘솔은 ASCII 만)
 
 import { createServer } from 'node:http';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, extname, normalize } from 'node:path';
@@ -50,11 +50,12 @@ const READ_OPS = new Set(['peek', 'prompt.read']);
 
 /**
  * 호스팅 계획 — 개인판과 같은 해석(포트 · 붙을 주소 · 허락한 호스트 이름)을 쓴다.
- * 다만 온라인판은 앱 계정이 문을 지키므로 «바깥에 열면 출입 열쇠가 있어야 한다»는 조건은 두지 않는다
- * (SE2_ACCESS_KEY 를 주면 그 앞에 한 겹 더 선다 — 시험 운영에서 낯선 사람을 아예 못 오게 할 때).
+ * 다만 온라인판은 앱 계정(아이디 · 비밀번호)이 문을 지킨다 — 출입 열쇠는 쓰지 않는다(2026-10-05 사용자 결정).
+ * SE2_ACCESS_KEY 가 플랫폼 비밀값에 남아 있어도 무시한다. 굳이 한 겹 더 세우려면 SE2_ONLINE_GATE=1 을 함께 적는다.
  */
 export function onlinePlan(env = process.env) {
-  const plan = resolveHosting({ ...env, SE2_ALLOW_OPEN: '1' });
+  const gateOn = String(env.SE2_ONLINE_GATE || '') === '1';
+  const plan = resolveHosting({ ...env, SE2_ALLOW_OPEN: '1', SE2_ACCESS_KEY: gateOn ? env.SE2_ACCESS_KEY || '' : '' });
   plan.notes = plan.notes.filter((n) => !/SE2_ALLOW_OPEN|saved as files/.test(n));
   return plan;
 }
@@ -233,6 +234,18 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
     return json(res, 200, ok(), { 'set-cookie': cookie });
   }
 
+  // ---------------- 처음 설정 코드 — 바깥에 열었고 계정이 아직 없을 때. 서버를 켠 사람만 콘솔에서 본다(메모리에만, 켤 때마다 새로).
+  const CODE_ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const setupCode = plan.exposed && !plan.gate
+    ? Array.from(randomBytes(12), (b, i) => (i && i % 4 === 0 ? '-' : '') + CODE_ABC[b % CODE_ABC.length]).join('') : '';
+  const norm = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const setupCodeOk = (c) => {
+    if (!setupCode) return false;
+    const got = createHash('sha256').update(norm(c)).digest();
+    return timingSafeEqual(got, createHash('sha256').update(norm(setupCode)).digest());
+  };
+  const setupFails = new Map();
+
   async function handle(req, res) {
     try {
       const url = new URL(req.url, 'http://127.0.0.1');
@@ -267,15 +280,24 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         return json(res, 200, ok(), { 'set-cookie': auth.sessionCookie(r.token, { secure }) });
       }
       // ---------------- 처음 설정 — 계정이 하나도 없을 때 한 번만. 운영자 계정(+ 그 계정의 AI 키)을 화면에서 만든다.
-      // 출입 열쇠(SE2_ACCESS_KEY)를 지나온 요청이거나 이 컴퓨터 안(루프백)에서 온 요청만 받는다 — 낯선 사람이 먼저 차지하지 못하게.
+      // 이 컴퓨터 안(루프백)의 요청 · 출입 열쇠를 지나온 요청 · 서버 콘솔에 찍힌 «설정 코드»를 넣은 요청만 받는다
+      // — 바깥에 연 서버를 낯선 사람이 먼저 차지하지 못하게.
       if (url.pathname === '/api/setup') {
         const empty = (await pool.query('SELECT count(*)::int AS n FROM users')).rows[0].n === 0;
         // 바깥에 열었으면(플랫폼 앞단을 거치면 소켓 주소가 루프백일 수 있다) 출입 열쇠만 믿는다
         const trusted = !!plan.gate || (!plan.exposed && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || ''));
-        if (req.method === 'GET') return json(res, 200, ok({ needed: empty && trusted, ai: !!credentials }));
+        if (req.method === 'GET') return json(res, 200, ok({ needed: empty && (trusted || !!setupCode), code: empty && !trusted && !!setupCode, ai: !!credentials }));
         if (req.method !== 'POST') return json(res, 405, bad('POST 만 받습니다'));
         if (!empty) return json(res, 409, bad('이미 설정을 마쳤습니다 — 로그인해 주세요'));
-        if (!trusted) return json(res, 403, bad('출입 열쇠(SE2_ACCESS_KEY)를 정한 뒤에 설정할 수 있습니다'));
+        if (!trusted) {
+          const ip = ipOf(req);
+          const f = setupFails.get(ip);
+          if (f && f.n >= 5 && f.until > Date.now()) return json(res, 429, bad('잠시 뒤에 다시 시도해 주세요', 'rate_limited'));
+          if (!setupCodeOk(body.setupCode)) {
+            if (!f || f.until <= Date.now()) setupFails.set(ip, { n: 1, until: Date.now() + 15 * 60 * 1000 }); else f.n += 1;
+            return json(res, 403, bad('설정 코드가 맞지 않습니다 — 서버 콘솔(Console)에 찍힌 코드를 넣어 주세요', 'setup_code'));
+          }
+        }
         const made = await auth.createUser(pool, { loginId: body.loginId, password: body.password, displayName: body.displayName || '', isPlatformAdmin: true });
         if (!made.ok) return json(res, made.code === 'conflict' ? 409 : 422, bad(made.error, made.code));
         await auth.audit(pool, { actor: made.user.id, action: 'setup.first_admin', targetType: 'user', targetId: made.user.id, ip: ipOf(req) });
@@ -324,7 +346,8 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
 
       if (!user) {
         if (url.pathname.startsWith('/api')) return json(res, 401, bad('로그인이 필요합니다', 'login'));
-        if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+        // 로그인 전에는 첫 화면(로그인 · 초대 코드 · 계정 만들기) 하나로 모은다
+        if (req.method === 'GET' && ['/', '/index.html', '/school.html', '/manage.html'].includes(url.pathname)) {
           return send(res, 302, '', 'text/plain; charset=utf-8', { location: '/login' });
         }
       }
@@ -403,7 +426,9 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
     }
   }
 
-  return createServer((req, res) => { handle(req, res); });
+  const server = createServer((req, res) => { handle(req, res); });
+  server.setupCode = setupCode;   // main() 이 (계정이 없을 때) 콘솔에 찍는다
+  return server;
 }
 
 // 직접 띄울 때 — 마이그레이션을 앞으로만 적용하고(SE_MIGRATE_ON_BOOT=0 이면 건너뜀) 연다.
@@ -438,6 +463,7 @@ export async function main(env = process.env) {
   for (const n of plan.notes) console.log('  [NOTE] ' + n);
   const users = (await pool.query('SELECT count(*)::int AS n FROM users')).rows[0].n;
   if (!users) console.log('  [NOTE] No account yet - open the app in a browser to finish the first-run setup');
+  if (!users && srv.setupCode) console.log('  [SETUP] First-run setup code: ' + srv.setupCode + '  (type it on the setup screen; a new one each start)');
   const bye = async () => { srv.close(); if (worker) await worker.stop(); pool.end().finally(() => process.exit(0)); };
   process.on('SIGINT', bye); process.on('SIGTERM', bye);
   return srv;
