@@ -208,14 +208,15 @@ const provOf = (k) => S.prov[k] || 'anthropic';
 const providerPick = (k) => h('div', { class: 'line', style: 'margin-top:10px' },
   Object.entries(AI_CO).map(([p, name]) => h('button', { class: provOf(k) === p ? 'btn' : 'btn-line', text: name, onclick: () => { S.prov[k] = p; render(); } })));
 // 쓸 AI 회사 고르기 — 키가 없는 회사는 «키 없음»을 단다(골라도 키를 넣기 전에는 «연결 필요»로 멈춘다)
+// 키를 넣은 회사만 고른다(서버도 막는다). 처음 넣은 키의 회사가 저절로 기본이 된다.
 function aiChoice(label, current, keys, save, allowed) {
   const have = new Set((keys || []).filter((x) => x.status === 'active').map((x) => x.provider));
+  const list = Object.entries(AI_CO).filter(([p]) => have.has(p) && (!allowed || allowed.includes(p)));
   return h('div', { style: 'margin-top:12px' },
     h('div', { class: 'lab', text: label }),
-    h('div', { class: 'line' }, Object.entries(AI_CO).filter(([p]) => !allowed || allowed.includes(p)).map(([p, name]) => h('button', {
-      class: current === p ? 'btn' : 'btn-line', text: name + (have.has(p) ? '' : ' (키 없음)'), onclick: () => save(p),
-    }))),
-    current ? null : h('div', { class: 'when', style: 'margin-top:4px', text: '아직 고르지 않았습니다 — 고르기 전에는 키를 넣어 둔 회사 가운데 하나를 씁니다.' }));
+    list.length ? h('div', { class: 'line' }, list.map(([p, name]) => h('button', {
+      class: (current || list[0][0]) === p ? 'btn' : 'btn-line', text: name, onclick: () => save(p),
+    }))) : h('div', { class: 'when', text: '아직 AI 키가 없습니다 — 아래에서 키를 넣으면 그 회사가 기본이 됩니다' }));
 }
 
 // 등급 — 화면은 이름만(실제 모델은 회사 · 설정이 정한다). 기관 기본 등급은 새 수업 작품의 시작 등급이 된다.
@@ -258,11 +259,12 @@ function myKeyBox() {
     const r = await edu('me.key.set', { provider: provOf(k), apiKey: val('mk-key') });
     if ($('mk-key')) $('mk-key').value = '';
     if (!r.ok) return tell(r.error);
+    if (S.me && r.aiProvider != null) S.me.aiProvider = r.aiProvider;
     S.myKeys = (await edu('me.key.list')).credentials || [];
     tell('저장했습니다');
   };
   return section('내 AI 키',
-    keyRows(S.myKeys, 'me.key', {}, async () => { S.myKeys = (await edu('me.key.list')).credentials || []; render(); }),
+    keyRows(S.myKeys, 'me.key', {}, load),
     h('div', { class: 'when', style: 'margin-top:4px', text: '내 개인 작품의 AI 는 이 키로 돌고 비용은 키 주인에게 나갑니다. 수업 작품은 기관 키로 돕니다. 만 14세 이상만 넣어 주세요.' }),
     aiChoice('개인 작품에 쓸 AI 회사(작품마다 설정 탭에서 바꿀 수 있습니다)', (S.me && S.me.aiProvider) || '', S.myKeys, async (p) => {
       const r = await edu('me.ai.set', { provider: p });
@@ -346,100 +348,224 @@ function opsBox() {
 
 // ---------------------------------------------------------------- 기관 관리
 
-function orgBox(id) {
-  const { org, lic, classes, keys } = S.orgs[id];
-  const live = (lic.licenses || []).find((l) => l.status === 'active' && (!l.ends_at || new Date(l.ends_at) > new Date()));
-  const addClass = async () => { const r = await edu('class.create', { orgId: id, name: val('nc-' + id), startsAt: val('ncs-' + id), endsAt: val('nce-' + id) }); if (!r.ok) return tell(r.error); await load(); };
+// ---------------------------------------------------------------- 기관 관리 — 상태 카드 하나 + 탭 넷(수업 · 사용자 · AI · 설정)
+// 한 눈에: 맨 위 카드가 «지금 이 기관이 돌아가는가»(이용 기간 · AI 키 · 시작 등급)를 보이고, 빠진 것은 붉게 짚어 그 탭으로 데려간다.
+
+const liveOf = (orgId) => ((S.orgs[orgId] && S.orgs[orgId].lic || {}).licenses || []).find((l) => l.status === 'active' && (!l.ends_at || new Date(l.ends_at) > new Date()));
+const pausedLic = (orgId) => ((S.orgs[orgId] && S.orgs[orgId].lic || {}).licenses || []).find((l) => l.status === 'suspended' && (!l.ends_at || new Date(l.ends_at) > new Date()));
+const keyedOf = (keys) => [...new Set((keys || []).filter((x) => x.status === 'active').map((x) => x.provider))];
+const tabRow = (list, cur, pick) => h('div', { class: 'line', style: 'margin:4px 0 14px' },
+  list.map(([k, name]) => h('button', { class: cur === k ? 'btn' : 'btn-line', text: name, onclick: () => pick(k) })));
+const toggleRow = (label, on, flip, note) => h('div', { style: 'padding:10px 0;border-bottom:1px solid var(--line-soft)' },
+  h('div', { class: 'line' }, h('div', { class: 'name', style: 'flex:1', text: label }), flip ? h('button', { class: 'tg' + (on ? ' on' : ''), onclick: flip }) : h('span', { class: 'mark', text: on ? '켜짐' : '꺼짐' })),
+  note ? h('div', { class: 'when', style: 'margin-top:2px', text: note }) : null);
+S.sub = {};
+
+function orgView(id) {
+  const o = S.orgs[id];
+  // 처음 열 때 — AI 키가 없으면 [AI] 부터(그것 없이는 학생 작업이 돌지 않는다), 있으면 [수업]
+  const tab = S.sub[id] || (keyedOf(o.keys).length ? '수업' : 'AI');
+  const go = (t) => { S.sub[id] = t; render(); };
+  return h('div', null,
+    orgCard(id, go),
+    tabRow([['수업', '수업'], ['사용자', '사용자'], ['AI', 'AI'], ['설정', '설정']], tab, go),
+    tab === '수업' ? classesTab(id) : tab === '사용자' ? usersTab(id) : tab === 'AI' ? aiTab(id) : settingsTab(id));
+}
+
+// 상태 카드 — 이용 기간 · AI · 시작 등급. 빠진 것은 붉게, 누르면 고칠 자리로.
+function orgCard(id, go) {
+  const { org, lic, keys } = S.orgs[id];
+  const live = liveOf(id);
+  const keyed = keyedOf(keys);
+  const prov = (org.settings && org.settings.ai_provider) || '';
+  const tier = (org.settings && org.settings.ai_tier) || 'balanced';
+  const item = (label, text, bad, onclick) => h('div', { style: 'min-width:150px;flex:1;cursor:' + (onclick ? 'pointer' : 'default'), onclick },
+    h('div', { class: 'lab', text: label }),
+    h('div', { style: 'font-weight:600' + (bad ? ';color:var(--red)' : ''), text }));
+  return h('div', { class: 'card-box', style: 'margin-bottom:14px' },
+    h('div', { class: 'line', style: 'margin-bottom:8px' },
+      h('div', { class: 'name', style: 'flex:1;font-size:18px;font-weight:700', text: org.name }),
+      org.status !== 'active' ? h('span', { class: 'mark', style: 'color:var(--red)', text: '멈춤' }) : null),
+    h('div', { class: 'line', style: 'align-items:flex-start' },
+      item('이용 기간', live ? '~ ' + (live.ends_at ? day(live.ends_at) : '기한 없음') + ' · 학생 ' + (lic.seatsUsed || 0) + (live.seat_limit ? '/' + live.seat_limit : '') : '없음 — ' + (S.me.platformAdmin ? '아래에서 여세요' : '운영자에게 요청'), !live),
+      item('AI', keyed.length ? (AI_CO[prov] || AI_CO[keyed[0]]) + ' 사용' : '키 없음 — 넣기', !keyed.length, () => go('AI')),
+      item('새 수업 작품 시작 등급', TIER_CO[tier], false, () => go('AI'))),
+    S.me.platformAdmin ? operatorRow(id) : null);
+}
+
+// 운영자만 — 이용 기간(기본값 90일 · 40자리 · 범위 모두) · 범위 · 멈추기
+function operatorRow(id) {
+  const { org } = S.orgs[id];
+  const live = liveOf(id); const paused = pausedLic(id);
+  const k = 'lic-' + id;
+  if (!S.lim[id]) { const l = live || {}; S.lim[id] = { p: [...(l.allowed_providers || [])], t: [...(l.allowed_model_tiers || [])] }; }
+  const lim = S.lim[id];
+  const flip = (xs, x) => { const i = xs.indexOf(x); if (i < 0) xs.push(x); else xs.splice(i, 1); render(); };
+  const issue = async () => {
+    const days = Number(val('ld-' + id)) || 90;
+    if (live && !confirm('이미 이용 기간이 있습니다. 오늘부터 ' + days + '일짜리 이용 기간을 새로 열까요?')) return;
+    const r = await edu('license.issue', { orgId: id, days, seatLimit: Number(val('ls-' + id)) || null, allowedProviders: lim.p, allowedTiers: lim.t });
+    if (!r.ok) return tell(r.error);
+    S.open[k] = false;
+    S.say = org.name + ' — 이용 기간을 열었습니다(~ ' + day(r.license.ends_at) + ' · 학생 ' + (r.license.seat_limit || '제한 없음') + '자리)';
+    await load();
+  };
+  const saveLimits = async () => {
+    const r = await edu('license.limits', { licenseId: live.id, allowedProviders: lim.p, allowedTiers: lim.t });
+    if (!r.ok) return tell(r.error);
+    S.open[k] = false; S.say = '쓸 수 있는 범위를 바꿨습니다'; await load();
+  };
+  const orgStatus = async () => {
+    const to = org.status === 'active' ? 'suspended' : 'active';
+    if (to === 'suspended' && !confirm(org.name + ' — 기관 이용을 멈출까요? 새 작품 · AI 작업이 서지 않습니다(작품은 그대로).')) return;
+    const r = await edu('org.status', { orgId: id, status: to });
+    if (!r.ok) return tell(r.error);
+    S.say = org.name + (to === 'active' ? ' — 다시 열었습니다' : ' — 멈췄습니다'); await load();
+  };
+  const licStatus = async (l, to) => {
+    if (to === 'suspended' && !confirm('이용 기간을 멈출까요? 새 작품 · AI 작업이 서지 않습니다.')) return;
+    const r = await edu('license.status', { licenseId: l.id, status: to });
+    if (!r.ok) return tell(r.error);
+    S.say = org.name + ' 이용 기간 — ' + (to === 'active' ? '다시 열었습니다' : '멈췄습니다'); await load();
+  };
+  const chip = (xs, x, name) => h('button', { class: xs.includes(x) ? 'btn' : 'btn-line', text: name, onclick: () => flip(xs, x) });
+  return h('div', { style: 'margin-top:12px;padding-top:10px;border-top:1px solid var(--line-soft)' },
+    h('div', { class: 'line' },
+      h('span', { class: 'when', text: '운영자' }),
+      h('button', { class: 'btn-line', text: S.open[k] ? '닫기' : live ? '이용 기간 · 범위' : '이용 기간 열기', onclick: () => { S.open[k] = !S.open[k]; render(); } }),
+      live ? h('button', { class: 'btn-text red', text: '이용 기간 멈추기', onclick: () => licStatus(live, 'suspended') })
+        : paused ? h('button', { class: 'btn-text', text: '이용 기간 다시 열기', onclick: () => licStatus(paused, 'active') }) : null,
+      h('button', { class: 'btn-text' + (org.status === 'active' ? ' red' : ''), text: org.status === 'active' ? '기관 멈추기' : '기관 다시 열기', onclick: orgStatus })),
+    S.open[k] ? h('div', { style: 'margin-top:10px' },
+      h('div', { class: 'lab', text: '쓸 수 있는 AI · 등급(아무것도 고르지 않으면 모두)' }),
+      h('div', { class: 'line' }, Object.entries(AI_CO).map(([p, n]) => chip(lim.p, p, n)), h('span', { class: 'when', text: '·' }), Object.entries(TIER_CO).map(([t, n]) => chip(lim.t, t, n))),
+      live ? h('div', { class: 'line', style: 'margin-top:6px' }, h('button', { class: 'btn-line', text: '지금 이용 기간에 범위 적용', onclick: saveLimits })) : null,
+      h('div', { class: 'line', style: 'margin-top:10px;align-items:flex-end' },
+        field('이용 일수', 'ld-' + id, 'text', { value: '90' }), field('학생 자리', 'ls-' + id, 'text', { value: '40' }),
+        h('button', { class: 'btn-red', text: live ? '새 이용 기간 열기' : '이용 기간 열기', onclick: issue }))) : null);
+}
+
+// 수업 — 한 줄에 이름 · 기간 · 학생 수와 자주 쓰는 둘(학생 초대 코드 · 현황). 나머지는 [더보기].
+function classesTab(id) {
+  const { classes } = S.orgs[id];
+  const nk = 'nc-open-' + id;
+  const addClass = async () => {
+    const r = await edu('class.create', { orgId: id, name: val('nc-' + id), startsAt: val('ncs-' + id), endsAt: val('nce-' + id) });
+    if (!r.ok) return tell(r.error);
+    S.open[nk] = false; S.say = '«' + r.class.name + '» 수업을 만들었습니다 — [학생 초대 코드]로 학생을 부르세요'; await load();
+  };
   const saveDates = async (c) => {
     const r = await edu('class.dates', { classId: c.id, startsAt: val('cds-' + c.id), endsAt: val('cde-' + c.id) });
     if (!r.ok) return tell(r.error);
-    S.dates[c.id] = false; S.say = '수업 기간을 바꿨습니다';
-    await load();
+    S.dates[c.id] = false; S.say = '수업 기간을 바꿨습니다'; await load();
   };
-  const saveKey = async () => {
-    const r = await edu('org.key.set', { orgId: id, provider: provOf('ok-' + id), apiKey: val('ok-' + id) });
-    $('ok-' + id).value = '';
+  const archive = async (c) => {
+    const closing = c.status === 'active';
+    if (closing && !confirm('«' + c.name + '» 수업을 닫을까요?\n닫으면 이 수업에 새 작품을 만들거나 초대 코드로 새로 들어올 수 없습니다.\n이미 든 학생과 작품은 그대로 남고, «다시 열기»로 되돌릴 수 있습니다.')) return;
+    const r = await edu('class.archive', { classId: c.id, reopen: !closing });
     if (!r.ok) return tell(r.error);
-    S.say = 'AI 키를 저장했습니다(다시 보이지 않습니다)';
+    S.say = '«' + c.name + '» ' + (closing ? '수업을 닫았습니다' : '수업을 다시 열었습니다'); await load();
+  };
+  const sorted = [...classes].sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1));
+  return h('div', null,
+    S.open[nk] ? h('div', { class: 'card-box', style: 'margin-bottom:12px' },
+      h('div', { class: 'line', style: 'align-items:flex-end' }, field('수업 이름', 'nc-' + id),
+        field('시작하는 날(선택)', 'ncs-' + id, 'date'), field('끝나는 날(선택)', 'nce-' + id, 'date')),
+      h('div', { class: 'line', style: 'margin-top:10px' }, h('button', { class: 'btn-red', text: '만들기', onclick: addClass }),
+        h('button', { class: 'btn-text', text: '취소', onclick: () => { S.open[nk] = false; render(); } })))
+      : h('button', { class: 'btn', style: 'margin-bottom:12px', text: '+ 새 수업', onclick: () => { S.open[nk] = true; render(); } }),
+    sorted.length ? sorted.map((c) => {
+      const more = S.open['more-' + c.id];
+      return h('div', { style: 'padding:10px 0;border-bottom:1px solid var(--line-soft)' + (c.status === 'active' ? '' : ';opacity:.6') },
+        h('div', { class: 'line' },
+          h('div', { class: 'name', style: 'flex:1;font-weight:600', text: c.name + (c.status === 'active' ? '' : ' (닫힘)') }),
+          period(c) ? h('span', { class: 'when', text: period(c) }) : null,
+          h('span', { class: 'mark', text: '학생 ' + (c.students || 0) }),
+          c.status === 'active' ? h('button', { class: 'btn-text', text: '학생 초대 코드', onclick: () => makeInvite('s-' + c.id, id, c.id, 'student') }) : null,
+          h('button', { class: 'btn-text', text: S.progress[c.id] ? '현황 닫기' : '현황', onclick: () => showProgress(c) }),
+          h('button', { class: 'btn-text', text: more ? '접기' : '더보기', onclick: () => { S.open['more-' + c.id] = !more; render(); } })),
+        more ? h('div', { class: 'line', style: 'margin-top:6px' },
+          c.status === 'active' ? h('button', { class: 'btn-line', text: '강사 초대 코드', onclick: () => makeInvite('i-' + c.id, id, c.id, 'instructor') }) : null,
+          h('button', { class: 'btn-line', text: S.dates[c.id] ? '기간 닫기' : '수업 기간', onclick: () => { S.dates[c.id] = !S.dates[c.id]; render(); } }),
+          inviteList('c-' + c.id, id, c.id),
+          h('button', { class: 'btn-text' + (c.status === 'active' ? ' red' : ''), text: c.status === 'active' ? '수업 닫기' : '다시 열기', onclick: () => archive(c) })) : null,
+        S.dates[c.id] ? h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
+          field('시작하는 날', 'cds-' + c.id, 'date', { value: ymd(c.starts_at) }), field('끝나는 날', 'cde-' + c.id, 'date', { value: ymd(c.ends_at, true) }),
+          h('button', { class: 'btn-line', text: '저장', onclick: () => saveDates(c) })) : null,
+        codeBox('s-' + c.id), codeBox('i-' + c.id), progressBox(c));
+    }) : h('div', { class: 'when', text: '아직 수업이 없습니다 — [+ 새 수업]으로 만드세요' }));
+}
+
+// 사용자 — 목록은 열면 바로 보인다. 학생은 수업의 초대 코드로, 강사 · 기관 관리자는 여기서.
+function usersTab(id) {
+  if (!S.members[id] && !S.open['ml-' + id]) { S.open['ml-' + id] = true; showMembers(id).finally(() => { S.open['ml-' + id] = false; }); }
+  return h('div', null,
+    h('div', { class: 'line', style: 'margin-bottom:10px' },
+      makeMemberBox(id),
+      S.open['mk-' + id] ? null : h('button', { class: 'btn-line', text: '+ 기관 관리자 초대 코드', onclick: () => makeInvite('a-' + id, id, null, 'organization_admin') })),
+    codeBox('mk-' + id), codeBox('a-' + id),
+    S.members[id] ? membersBox(id, { fixed: true }) : h('div', { class: 'when', text: '불러오는 중…' }),
+    h('div', { style: 'margin-top:14px' }, inviteList('o-' + id, id, null)));
+}
+
+// AI — ① 쓰는 회사(키가 있는 회사만) ② 키 ③ 시작 등급(기본 Balanced) ④ 사용량
+function aiTab(id) {
+  const { org, keys } = S.orgs[id];
+  const live = liveOf(id);
+  const keyed = keyedOf(keys).filter((p) => !(live && live.allowed_providers) || live.allowed_providers.includes(p));
+  const prov = (org.settings && org.settings.ai_provider) || '';
+  const tier = (org.settings && org.settings.ai_tier) || 'balanced';
+  const kk = 'ok-' + id;
+  const saveKey = async () => {
+    const r = await edu('org.key.set', { orgId: id, provider: provOf(kk), apiKey: val(kk) });
+    if ($(kk)) $(kk).value = '';
+    if (!r.ok) return tell(r.error);
+    S.open['addkey-' + id] = false;
+    S.say = AI_CO[provOf(kk)] + ' 키를 저장했습니다(다시 보이지 않습니다) — [연결 확인]으로 확인해 보세요';
     await load();
   };
-  const readable = !!(org.settings && org.settings.admin_can_read_projects);
-  return section(org.name + ' — 기관 관리',
-    h('div', { class: 'lab', text: '이용 기간' }),
-    h('div', { class: 'when', text: live ? '~ ' + (live.ends_at ? day(live.ends_at) : '기한 없음') + ' · 학생 ' + (lic.seatsUsed || 0) + (live.seat_limit ? ' / ' + live.seat_limit : '') : '유효한 이용 기간이 없습니다 — 새 작품 · AI 작업이 멈춥니다' }),
-    live && limitText(live) ? h('div', { class: 'when', text: '쓸 수 있는 범위: ' + limitText(live) }) : null,
-    h('div', { class: 'lab', style: 'margin-top:16px', text: '수업' }),
-    classes.map((c) => h('div', { style: 'padding:8px 0;border-bottom:1px solid var(--line-soft)' },
-      h('div', { class: 'line' },
-        h('div', { class: 'name', style: 'flex:1', text: c.name }),
-        period(c) ? h('span', { class: 'when', text: period(c) }) : null,
-        h('span', { class: 'mark', text: '학생 ' + (c.students || 0) }),
-        c.status !== 'active' ? h('span', { class: 'mark', text: '닫힘' }) : null,
-        h('button', { class: 'btn-text', text: S.progress[c.id] ? '현황 닫기' : '현황', onclick: () => showProgress(c) }),
-        h('button', { class: 'btn-text', text: S.dates[c.id] ? '기간 닫기' : '기간', onclick: () => { S.dates[c.id] = !S.dates[c.id]; render(); } }),
-        h('button', { class: 'btn-text', text: '학생 초대', onclick: () => makeInvite('s-' + c.id, id, c.id, 'student') }),
-        h('button', { class: 'btn-text', text: '강사 초대', onclick: () => makeInvite('i-' + c.id, id, c.id, 'instructor') }),
-        h('button', { class: 'btn-text' + (c.status === 'active' ? ' red' : ''), text: c.status === 'active' ? '닫기' : '다시 열기',
-          onclick: async () => {
-            const closing = c.status === 'active';
-            if (closing && !confirm('«' + c.name + '» 수업을 닫을까요?\n닫으면 이 수업에 새 작품을 만들거나 초대 코드로 새로 들어올 수 없습니다.\n이미 든 학생과 작품은 그대로 남고, «다시 열기»로 되돌릴 수 있습니다.')) return;
-            const r = await edu('class.archive', { classId: c.id, reopen: !closing });
-            if (!r.ok) return tell(r.error);
-            S.say = '«' + c.name + '» ' + (closing ? '수업을 닫았습니다' : '수업을 다시 열었습니다'); await load();
-          } })),
-      S.dates[c.id] ? h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
-        field('시작하는 날', 'cds-' + c.id, 'date', { value: ymd(c.starts_at) }), field('끝나는 날', 'cde-' + c.id, 'date', { value: ymd(c.ends_at, true) }),
-        h('button', { class: 'btn-line', text: '저장', onclick: () => saveDates(c) })) : null,
-      codeBox('s-' + c.id), codeBox('i-' + c.id), progressBox(c))),
-    h('div', { class: 'line', style: 'margin-top:10px;align-items:flex-end' }, field('새 수업 이름', 'nc-' + id),
-      field('시작하는 날(선택)', 'ncs-' + id, 'date'), field('끝나는 날(선택)', 'nce-' + id, 'date'), h('button', { class: 'btn-line', text: '수업 만들기', onclick: addClass })),
-    h('div', { class: 'lab', style: 'margin-top:16px', text: '기관 관리자' }),
-    h('div', { class: 'line' }, h('button', { class: 'btn-line', text: '기관 관리자 초대 코드', onclick: () => makeInvite('a-' + id, id, null, 'organization_admin') })),
-    codeBox('a-' + id),
-    h('div', { class: 'lab', style: 'margin-top:16px', text: '초대 코드' }),
-    inviteList('o-' + id, id, null),
-    h('div', { class: 'lab', style: 'margin-top:16px', text: '기관 AI 키(학생 작업이 이 키로 돕니다)' }),
+  const tiers = START_TIERS.filter((t) => !(live && live.allowed_model_tiers) || live.allowed_model_tiers.includes(t));
+  return h('div', null,
+    h('div', { class: 'lab', text: '이 기관 작품에 쓰는 AI' }),
+    keyed.length ? h('div', { class: 'line' }, keyed.map((p) => h('button', {
+      class: (prov || keyed[0]) === p ? 'btn' : 'btn-line', text: AI_CO[p],
+      onclick: async () => { const r = await edu('org.settings', { orgId: id, aiProvider: p }); if (!r.ok) return tell(r.error); S.say = AI_CO[p] + '를 씁니다'; await load(); },
+    }))) : h('div', { class: 'notice', text: '아직 AI 키가 없습니다 — 아래에서 키를 넣으면 그 회사가 기본이 됩니다' }),
+    h('div', { class: 'lab', style: 'margin-top:16px', text: '키(학생 작업이 이 키로 돕니다 · 다시 보이지 않습니다)' }),
     keyRows(keys, 'org.key', { orgId: id }, load),
-    providerPick('ok-' + id),
-    h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
-      field(AI_KEY_LABEL[provOf('ok-' + id)], 'ok-' + id, 'password', { autocomplete: 'off', spellcheck: 'false' }), h('button', { class: 'btn-line', text: '저장', onclick: saveKey })),
-    aiChoice('이 기관 작품에 쓸 AI 회사', (org.settings && org.settings.ai_provider) || '', keys, async (p) => {
-      const r = await edu('org.settings', { orgId: id, aiProvider: p });
-      if (!r.ok) return tell(r.error);
-      S.say = AI_CO[p] + '를 씁니다';
-      await load();
-    }, live && live.allowed_providers),
-    h('div', { style: 'margin-top:12px' },
-      h('div', { class: 'lab', text: '새 수업 작품의 시작 등급(학생이 작품마다 바꿀 수 있습니다)' }),
-      h('div', { class: 'line' }, START_TIERS.filter((t) => !(live && live.allowed_model_tiers) || live.allowed_model_tiers.includes(t)).map((t) => h('button', {
-        class: ((org.settings && org.settings.ai_tier) || '') === t ? 'btn' : 'btn-line', text: TIER_CO[t],
-        onclick: async () => { const r = await edu('org.settings', { orgId: id, aiTier: t }); if (!r.ok) return tell(r.error); S.say = TIER_CO[t] + '로 시작합니다'; await load(); },
-      })))),
-    h('div', { class: 'lab', style: 'margin-top:16px', text: '사용자' }),
-    h('div', { class: 'line', style: 'margin-bottom:8px' }, makeMemberBox(id)),
-    codeBox('mk-' + id),
-    membersBox(id),
-    h('div', { class: 'lab', style: 'margin-top:16px', text: '사용량(기관 키)' }),
+    S.open['addkey-' + id] ? h('div', { class: 'card-box', style: 'margin-top:8px' },
+      providerPick(kk),
+      h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
+        field(AI_KEY_LABEL[provOf(kk)], kk, 'password', { autocomplete: 'off', spellcheck: 'false' }),
+        h('button', { class: 'btn-red', text: '저장', onclick: saveKey }),
+        h('button', { class: 'btn-text', text: '취소', onclick: () => { S.open['addkey-' + id] = false; render(); } })))
+      : h('button', { class: 'btn-line', style: 'margin-top:8px', text: '+ 키 넣기', onclick: () => { S.open['addkey-' + id] = true; render(); } }),
+    h('div', { class: 'lab', style: 'margin-top:16px', text: '새 수업 작품의 시작 등급(학생이 작품마다 바꿀 수 있습니다)' }),
+    h('div', { class: 'line' }, tiers.map((t) => h('button', {
+      class: tier === t ? 'btn' : 'btn-line', text: TIER_CO[t] + (t === 'balanced' ? ' (기본)' : ''),
+      onclick: async () => { const r = await edu('org.settings', { orgId: id, aiTier: t }); if (!r.ok) return tell(r.error); S.say = TIER_CO[t] + '로 시작합니다'; await load(); },
+    }))),
+    h('div', { class: 'lab', style: 'margin-top:16px', text: '사용량(이 기관 키)' }),
     S.usage['o-' + id] ? h('button', { class: 'btn-line', text: '사용량 닫기', onclick: () => { delete S.usage['o-' + id]; render(); } })
       : h('button', { class: 'btn-line', text: '사용량 보기', onclick: () => showUsage('o-' + id, id) }),
-    usageRows('o-' + id),
+    usageRows('o-' + id));
+}
+
+// 설정 — 켜고 끄기(기본값이 적혀 있다) · 단계와 강의 카드 · 감사 기록
+function settingsTab(id) {
+  const { org } = S.orgs[id];
+  const st = org.settings || {};
+  const set = (patch) => async () => { const r = await edu('org.settings', { orgId: id, ...patch }); if (!r.ok) return tell(r.error); await load(); };
+  const readable = !!st.admin_can_read_projects;
+  return h('div', null,
+    toggleRow('학생에게 작업 중 강의 카드 보이기', st.student_cards !== false, set({ studentCards: st.student_cards === false }), '기본: 켬'),
+    toggleRow('학생이 수업 작품을 개인 작품으로 복사해 갈 수 있게', st.allow_copy !== false, set({ allowCopy: st.allow_copy === false }), '기본: 켬 — 복사본의 AI 는 학생 본인의 키로 돕니다'),
+    toggleRow('기관 관리자가 학생 작품을 읽을 수 있게', readable, S.me.platformAdmin ? set({ adminCanReadProjects: !readable }) : null, '기본: 끔 — 최상위 관리자만 바꿉니다'),
+    h('div', { class: 'lab', style: 'margin-top:16px', text: '단계 · 강의 카드 고쳐 쓰기(이 기관만 — 원문은 남습니다)' }),
+    wfEditor(id),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '감사 기록(누가 무엇을 바꿨나)' }),
     h('button', { class: 'btn-line', text: S.audit['o-' + id] ? '감사 기록 닫기' : '감사 기록 보기', onclick: () => toggleAudit('o-' + id, id) }),
-    auditRows('o-' + id),
-    h('div', { class: 'line', style: 'margin-top:16px' },
-      h('div', { class: 'lab', style: 'margin:0', text: '학생에게 작업 중 강의 카드 보이기' }),
-      h('button', { class: 'tg' + (!(org.settings && org.settings.student_cards === false) ? ' on' : ''),
-        onclick: async () => { await edu('org.settings', { orgId: id, studentCards: !!(org.settings && org.settings.student_cards === false) }); await load(); } })),
-    h('div', { class: 'line', style: 'margin-top:16px' },
-      h('div', { class: 'lab', style: 'margin:0', text: '학생이 수업 작품을 개인 작품으로 복사해 갈 수 있게' }),
-      h('button', { class: 'tg' + (!(org.settings && org.settings.allow_copy === false) ? ' on' : ''),
-        onclick: async () => { await edu('org.settings', { orgId: id, allowCopy: !!(org.settings && org.settings.allow_copy === false) }); await load(); } })),
-    h('div', { class: 'lab', style: 'margin-top:16px', text: '단계 · 강의 카드 고쳐 쓰기(이 기관)' }),
-    wfEditor(id),
-    // 학생 작품 열람 — 최상위 관리자만 바꾼다. 기관 관리자는 지금 상태만 본다.
-    h('div', { class: 'line', style: 'margin-top:16px' },
-      h('div', { class: 'lab', style: 'margin:0', text: '기관 관리자가 학생 작품을 읽을 수 있게' + (S.me && S.me.platformAdmin ? '' : ' — ' + (readable ? '켜짐' : '꺼짐') + '(최상위 관리자가 정함)') }),
-      S.me && S.me.platformAdmin ? h('button', { class: 'tg' + (readable ? ' on' : ''), onclick: async () => { await edu('org.settings', { orgId: id, adminCanReadProjects: !readable }); await load(); } }) : null));
+    auditRows('o-' + id));
 }
 
 // ---------------------------------------------------------------- 사용자(기관 관리자) — 한 사람 한 계정
@@ -480,7 +606,7 @@ function makeMemberBox(orgId) {
   const k = 'mk-' + orgId;
   const o = S.orgs[orgId];
   const st = S.open[k];
-  if (!st) return h('button', { class: 'btn-line', text: '강사 계정 만들기', onclick: () => { S.open[k] = { role: 'instructor', classId: '' }; render(); } });
+  if (!st) return h('button', { class: 'btn-line', text: '+ 강사 계정 만들기', onclick: () => { S.open[k] = { role: 'instructor', classId: '' }; render(); } });
   const pick = (patch) => { Object.assign(st, patch); render(); };
   setTimeout(() => wireIdCheck(k + '-id'), 0);   // 그리기가 끝난 뒤
   const go = async () => {
@@ -507,7 +633,7 @@ function makeMemberBox(orgId) {
     h('div', { class: 'when', style: 'margin-top:6px', text: '임시 비밀번호가 한 번만 보입니다 — 본인에게 전하고 «내 계정»에서 바꾸게 해 주세요. 학생은 초대 코드로 들어옵니다.' }));
 }
 
-function membersBox(orgId) {
+function membersBox(orgId, { fixed = false } = {}) {
   const list = S.members[orgId];
   if (!list) return h('button', { class: 'btn-line', text: '사용자 목록', onclick: () => showMembers(orgId) });
   const reset = async (m) => {
@@ -524,8 +650,9 @@ function membersBox(orgId) {
     await showMembers(orgId);
   };
   return h('div', null,
-    h('button', { class: 'btn-line', text: '사용자 목록 닫기', onclick: () => { delete S.members[orgId]; render(); } }),
+    fixed ? null : h('button', { class: 'btn-line', text: '사용자 목록 닫기', onclick: () => { delete S.members[orgId]; render(); } }),
     h('div', { class: 'when', style: 'margin-top:8px', text: '학생 · 강사는 저마다 제 아이디로 들어옵니다(초대 코드는 수업에 들어오는 열쇠일 뿐 계정이 아닙니다).' }),
+    list.length ? null : h('div', { class: 'when', style: 'margin-top:8px', text: '아직 사용자가 없습니다 — 학생은 [수업] 탭의 «학생 초대 코드»로, 강사는 [+ 강사 계정 만들기]로' }),
     list.map((m) => h('div', { style: 'padding:6px 0;border-bottom:1px solid var(--line-soft)' },
       h('div', { class: 'line' },
         h('div', { class: 'name', style: 'flex:1', text: (m.name || m.loginId) + ' · ' + m.loginId }),
@@ -651,86 +778,78 @@ function wfEditor(orgId) {
 
 // ---------------------------------------------------------------- 운영(플랫폼 관리자)
 
-function platformBox() {
-  if (!S.me || !S.me.platformAdmin) return null;
-  const addOrg = async () => { const r = await edu('org.create', { name: val('no-name'), slug: val('no-slug') }); if (!r.ok) return tell(r.error); await load(); };
-  // 쓸 수 있는 AI 회사 · 등급 — 아무것도 고르지 않으면 모두
-  const liveOf = (orgId) => ((S.orgs[orgId].lic || {}).licenses || []).find((l) => l.status === 'active' && (!l.ends_at || new Date(l.ends_at) > new Date()));
-  const limOf = (orgId) => {
-    if (!S.lim[orgId]) { const l = liveOf(orgId) || {}; S.lim[orgId] = { p: [...(l.allowed_providers || [])], t: [...(l.allowed_model_tiers || [])] }; }
-    return S.lim[orgId];
-  };
-  const flip = (xs, x) => { const i = xs.indexOf(x); if (i < 0) xs.push(x); else xs.splice(i, 1); render(); };
-  const issue = async (orgId) => {
-    const lim = limOf(orgId);
-    const days = Number(val('ld-' + orgId)) || 30;
-    // 이미 이용 기간이 있으면 새 기간을 하나 더 연다(가장 늦게 끝나는 것이 쓰인다) — 늘리기로 쓰인다
-    if (liveOf(orgId) && !confirm('이미 이용 기간이 있습니다. 오늘부터 ' + days + '일짜리 이용 기간을 새로 열까요?')) return;
-    const r = await edu('license.issue', { orgId, days, seatLimit: Number(val('ls-' + orgId)) || null, allowedProviders: lim.p, allowedTiers: lim.t });
-    if (!r.ok) return tell(r.error);
-    S.say = (S.orgs[orgId].org.name) + ' — 이용 기간을 열었습니다(~ ' + day(r.license.ends_at) + ' · 학생 ' + (r.license.seat_limit || '제한 없음') + '자리)';
-    await load();
-  };
-  const saveLimits = async (orgId) => {
-    const l = liveOf(orgId); const lim = limOf(orgId);
-    const r = await edu('license.limits', { licenseId: l.id, allowedProviders: lim.p, allowedTiers: lim.t });
-    if (!r.ok) return tell(r.error);
-    S.say = '쓸 수 있는 범위를 바꿨습니다';
-    await load();
-  };
-  const limRow = (orgId) => {
-    const lim = limOf(orgId);
-    const chip = (xs, x, name) => h('button', { class: xs.includes(x) ? 'btn' : 'btn-line', text: name, onclick: () => flip(xs, x) });
-    return h('div', { class: 'line', style: 'margin:4px 0 6px' },
-      h('span', { class: 'when', text: '쓸 수 있는 AI' }), Object.entries(AI_CO).map(([p, n]) => chip(lim.p, p, n)),
-      h('span', { class: 'when', text: '등급' }), Object.entries(TIER_CO).map(([t, n]) => chip(lim.t, t, n)),
-      h('span', { class: 'when', text: lim.p.length || lim.t.length ? '' : '(고르지 않으면 모두)' }),
-      liveOf(orgId) ? h('button', { class: 'btn-text', text: '지금 이용 기간에 적용', onclick: () => saveLimits(orgId) }) : null);
-  };
-  const orgStatus = async (org) => {
-    const to = org.status === 'active' ? 'suspended' : 'active';
-    if (to === 'suspended' && !confirm(org.name + ' — 기관 이용을 멈출까요? 새 작품 · AI 작업이 서지 않습니다(작품은 그대로).')) return;
-    const r = await edu('org.status', { orgId: org.id, status: to });
-    if (!r.ok) return tell(r.error);
-    S.say = org.name + (to === 'active' ? ' — 다시 열었습니다' : ' — 멈췄습니다'); await load();
-  };
-  const licStatus = async (org, l, to) => {
-    const r = await edu('license.status', { licenseId: l.id, status: to });
-    if (!r.ok) return tell(r.error);
-    S.say = org.name + ' 이용 기간 — ' + (to === 'active' ? '다시 열었습니다' : '멈췄습니다'); await load();
-  };
+// ---------------------------------------------------------------- 운영(최상위 관리자) — 현황 · 감사 기록 · 단계(전체) · 계정
+S.opsTab = '현황';
+function opsView() {
+  const t = S.opsTab;
+  if (t === '현황' && !S.ops && !S.open.opsLoading) { S.open.opsLoading = true; edu('ops.overview').then((r) => { S.open.opsLoading = false; if (r.ok) { S.ops = r; render(); } }); }
+  if (t === '감사 기록' && !S.audit.all && !S.open.auditLoading) { S.open.auditLoading = true; edu('audit.list', {}).then((r) => { S.open.auditLoading = false; if (r.ok) { S.audit.all = r.entries; render(); } }); }
   const userStatus = async (status) => {
     const loginId = val('us-id');
     if (!loginId) return tell('아이디를 적어 주세요');
     if (status === 'disabled' && !confirm(loginId + ' — 계정을 멈출까요? 곧바로 로그아웃되고 다시 열 때까지 들어올 수 없습니다.')) return;
     const r = await edu('user.status', { loginId, status });
     if (!r.ok) return tell(r.error);
-    S.say = r.loginId + (status === 'disabled' ? ' — 멈췄습니다' : ' — 다시 열었습니다'); $('us-id').value = ''; await load();
+    S.say = r.loginId + (status === 'disabled' ? ' — 멈췄습니다' : ' — 다시 열었습니다'); $('us-id').value = ''; render();
   };
-  const pausedLic = (orgId) => ((S.orgs[orgId].lic || {}).licenses || []).find((l) => l.status === 'suspended' && (!l.ends_at || new Date(l.ends_at) > new Date()));
-  return section('운영 — 기관 · 이용 기간 · 단계',
-    h('div', { class: 'line' },
-      h('button', { class: 'btn-line', text: S.ops ? '운영 현황 닫기' : '운영 현황(작업 · 실패 · 사용량)', onclick: toggleOps }),
-      h('button', { class: 'btn-line', text: S.audit.all ? '감사 기록 닫기' : '감사 기록(전체)', onclick: () => toggleAudit('all', null) })),
-    opsBox(), auditRows('all'),
-    h('div', { class: 'lab', style: 'margin-top:16px', text: '계정 멈추기(곧바로 로그아웃 · 작품은 그대로)' }),
-    h('div', { class: 'line', style: 'align-items:flex-end' }, field('아이디', 'us-id', 'text', { autocapitalize: 'none', spellcheck: 'false' }),
-      h('button', { class: 'btn-red', text: '멈추기', onclick: () => userStatus('disabled') }),
-      h('button', { class: 'btn-line', text: '다시 열기', onclick: () => userStatus('active') })),
-    h('div', { class: 'lab', style: 'margin-top:16px', text: '단계 · 강의 카드 고쳐 쓰기(전체 기본 — 모든 기관 · 개인에게)' }),
-    wfEditor(null),
-    h('div', { class: 'lab', style: 'margin-top:16px', text: '기관' }),
-    h('div', { class: 'line', style: 'align-items:flex-end' }, field('기관 이름', 'no-name'), field('영문 약칭(선택 — 비워 두면 자동)', 'no-slug', 'text', { placeholder: '예: sea-school', autocapitalize: 'none', spellcheck: 'false' }),
-      h('button', { class: 'btn-line', text: '기관 만들기', onclick: addOrg })),
-    Object.values(S.orgs).map(({ org }) => [h('div', { class: 'line', style: 'margin-top:10px;align-items:flex-end' },
-      h('div', { class: 'name', style: 'flex:1;font-weight:600', text: org.name }),
-      org.status !== 'active' ? h('span', { class: 'mark', style: 'color:var(--red)', text: '멈춤' }) : null,
-      h('span', { class: 'when', text: liveOf(org.id) ? '이용 중 ~ ' + (liveOf(org.id).ends_at ? day(liveOf(org.id).ends_at) : '기한 없음') : '이용 기간 없음' }),
-      h('button', { class: 'btn-text' + (org.status === 'active' ? ' red' : ''), text: org.status === 'active' ? '기관 멈추기' : '기관 다시 열기', onclick: () => orgStatus(org) }),
-      liveOf(org.id) ? h('button', { class: 'btn-text red', text: '이용 기간 멈추기', onclick: () => licStatus(org, liveOf(org.id), 'suspended') })
-        : pausedLic(org.id) ? h('button', { class: 'btn-text', text: '이용 기간 다시 열기', onclick: () => licStatus(org, pausedLic(org.id), 'active') }) : null,
-      field('이용 일수', 'ld-' + org.id, 'text', { value: '90' }), field('학생 자리', 'ls-' + org.id, 'text', { value: '40' }),
-      h('button', { class: 'btn-line', text: liveOf(org.id) ? '새 이용 기간 열기' : '이용 기간 열기', onclick: () => issue(org.id) })), limRow(org.id)]));
+  const orgList = Object.values(S.orgs);
+  return h('div', null,
+    tabRow([['현황', '현황'], ['감사 기록', '감사 기록'], ['단계', '단계 · 강의 카드(전체)'], ['계정', '계정 멈추기']], t, (k) => { S.opsTab = k; if (k === '현황') S.ops = null; render(); }),
+    t === '현황' ? h('div', null,
+      h('div', { class: 'lab', text: '기관' }),
+      orgList.length ? orgList.map(({ org }) => {
+        const live = liveOf(org.id); const keyed = keyedOf(S.orgs[org.id].keys);
+        return h('div', { class: 'row', onclick: () => { S.sel = org.id; render(); } },
+          h('div', { class: 'name', text: org.name }),
+          org.status !== 'active' ? h('span', { class: 'mark', style: 'color:var(--red)', text: '멈춤' }) : null,
+          h('span', { class: 'mark', style: live ? '' : 'color:var(--red)', text: live ? '~ ' + (live.ends_at ? day(live.ends_at) : '기한 없음') : '이용 기간 없음' }),
+          h('span', { class: 'mark', style: keyed.length ? '' : 'color:var(--red)', text: keyed.length ? keyed.map((p) => AI_CO[p]).join(' · ') : 'AI 키 없음' }),
+          h('div', { class: 'when', text: '수업 ' + S.orgs[org.id].classes.filter((c) => c.status === 'active').length }));
+      }) : h('div', { class: 'when', text: '아직 기관이 없습니다 — 위의 [+ 새 기관]으로 만드세요' }),
+      S.ops ? opsBox() : h('div', { class: 'when', style: 'margin-top:10px', text: '불러오는 중…' })) : null,
+    t === '감사 기록' ? (S.audit.all ? auditRows('all') : h('div', { class: 'when', text: '불러오는 중…' })) : null,
+    t === '단계' ? h('div', null, h('div', { class: 'when', style: 'margin-bottom:8px', text: '모든 기관 · 개인에게 쓰이는 기본입니다(기관은 그 위에 다시 고쳐 쓸 수 있습니다). 원문은 남습니다.' }), wfEditor(null)) : null,
+    t === '계정' ? h('div', null,
+      h('div', { class: 'when', style: 'margin-bottom:8px', text: '멈추면 곧바로 로그아웃되고 다시 열 때까지 들어올 수 없습니다. 작품은 그대로입니다.' }),
+      h('div', { class: 'line', style: 'align-items:flex-end' }, field('아이디', 'us-id', 'text', { autocapitalize: 'none', spellcheck: 'false' }),
+        h('button', { class: 'btn-red', text: '멈추기', onclick: () => userStatus('disabled') }),
+        h('button', { class: 'btn-line', text: '다시 열기', onclick: () => userStatus('active') }))) : null);
+}
+
+// 새 기관 — 이용 기간을 바로 연다(기본값 90일 · 학생 40자리 — 끄면 기관만)
+function newOrgView() {
+  if (S.open.withLic == null) S.open.withLic = true;
+  const go = async () => {
+    const r = await edu('org.create', { name: val('no-name'), slug: val('no-slug') });
+    if (!r.ok) return tell(r.error);
+    if (S.open.withLic) {
+      const l = await edu('license.issue', { orgId: r.organization.id, days: Number(val('no-days')) || 90, seatLimit: Number(val('no-seats')) || null });
+      if (!l.ok) S.say = '기관은 만들었지만 이용 기간을 열지 못했습니다 — ' + l.error;
+    }
+    S.sel = r.organization.id; S.sub[r.organization.id] = 'AI';
+    if (!S.say) S.say = '«' + r.organization.name + '» 기관을 만들었습니다' + (S.open.withLic ? ' · 이용 기간을 열었습니다' : '') + ' — 다음으로 AI 키를 넣으세요';
+    await load();
+  };
+  return h('div', { class: 'card-box' },
+    h('div', { class: 'line', style: 'align-items:flex-end' }, field('기관 이름', 'no-name'),
+      field('영문 약칭(선택 — 비워 두면 자동)', 'no-slug', 'text', { placeholder: '예: sea-school', autocapitalize: 'none', spellcheck: 'false' })),
+    h('div', { class: 'line', style: 'margin-top:12px;gap:6px;cursor:pointer', onmousedown: () => { S.open.withLic = !S.open.withLic; render(); } },
+      h('button', { class: 'ck' + (S.open.withLic ? ' on' : '') }), h('span', { text: '이용 기간도 바로 열기' })),
+    S.open.withLic ? h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
+      field('이용 일수', 'no-days', 'text', { value: '90' }), field('학생 자리', 'no-seats', 'text', { value: '40' })) : null,
+    h('div', { class: 'line', style: 'margin-top:12px' }, h('button', { class: 'btn-red', text: '기관 만들기', onclick: go })));
+}
+
+// 관리 화면 — 맨 위 줄에서 고른다(운영 · 기관마다 · 새 기관). 기관이 하나뿐인 기관 관리자는 줄 없이 곧바로.
+function manageView() {
+  const ids = Object.keys(S.orgs);
+  const admin = !!S.me.platformAdmin;
+  if (!S.sel || (S.sel !== 'ops' && S.sel !== 'new' && !S.orgs[S.sel])) S.sel = admin ? 'ops' : ids[0];
+  const pills = [...(admin ? [['ops', '운영']] : []), ...ids.map((id) => [id, S.orgs[id].org.name]), ...(admin ? [['new', '+ 새 기관']] : [])];
+  return h('div', null,
+    pills.length > 1 ? h('div', { class: 'line', style: 'margin-bottom:16px;flex-wrap:wrap' },
+      pills.map(([k, name]) => h('button', { class: S.sel === k ? 'nav-btn on' : 'nav-btn', style: S.sel === k ? 'background:var(--blue);color:var(--on-color)' : '', text: name, onclick: () => { S.sel = k; render(); } }))) : null,
+    S.sel === 'ops' ? opsView() : S.sel === 'new' ? newOrgView() : orgView(S.sel));
 }
 
 // 화면 밝기 — 기본은 어둡게, 고르면 이 브라우저가 기억한다
@@ -766,7 +885,7 @@ function render() {
     $('root').replaceChildren(h('div', { class: 'body' }, head('관리'), notice,
       !S.loggedIn ? h('div', { class: 'when', text: '로그인이 필요합니다' })
         : !can ? h('div', { class: 'when', text: '관리 권한이 없습니다 — 운영자나 기관 관리자만 들어옵니다' })
-          : [platformBox(), Object.keys(S.orgs).map(orgBox)]));
+          : manageView()));
     return;
   }
   if (PAGE === 'account') {

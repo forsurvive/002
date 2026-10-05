@@ -747,8 +747,9 @@ function aiCompany(p) {
     h('div', { class: 'lab', text: '이 작품에 쓸 AI 회사' }),
     h('div', { class: 'line' },
       h('button', { class: !a.provider ? 'btn' : 'btn-line', text: '내 기본' + (a.ownerDefault ? '(' + name(a.ownerDefault) + ')' : ''), onclick: () => set('') }),
-      Object.keys(AI_CO).map((x) => h('button', { class: a.provider === x ? 'btn' : 'btn-line', text: name(x) + (keys.has(x) ? '' : ' (키 없음)'), onclick: () => set(x) }))),
-    !keys.size ? h('div', { class: 'when', style: 'margin-top:4px', text: '키는 «내 계정 → 내 AI 키»에서 넣습니다' }) : null);
+      // 키를 넣은 회사만 고를 수 있다(서버도 막는다)
+      Object.keys(AI_CO).filter((x) => keys.has(x)).map((x) => h('button', { class: a.provider === x ? 'btn' : 'btn-line', text: name(x), onclick: () => set(x) }))),
+    h('div', { class: 'when', style: 'margin-top:4px', text: keys.size ? '다른 회사를 쓰려면 «내 계정»에서 그 회사의 키를 넣으세요' : '아직 AI 키가 없습니다 — «내 계정»에서 넣으면 그 회사가 기본이 됩니다' }));
 }
 
 function settings() {

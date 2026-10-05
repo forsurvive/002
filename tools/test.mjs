@@ -331,6 +331,11 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 업로드는 글만(명세 §63) — 바이너리(NUL)는 자료 · 문서로 받지 않는다. 화면은 txt · md · 2MB 로 먼저 거른다.
   eq('**글이 아닌 것은 문서로 받지 않는다**', (await post('doc.create', { pid, title: 'x', body: 'PK\u0003\u0004\u0000\u0000' })).ok, false);
   eq('**글이 아닌 자료도 받지 않는다**', (await post('project.create', { name: 'x', spec: { form: '단편' }, materials: [{ name: 'a.hwp', text: 'HWP\u0000\u0000' }] })).ok, false);
+  {
+    const sj = src(join(ROOT, 'web', 'school.js'));
+    ok('관리 화면 — 기관마다 탭 넷(수업 · 사용자 · AI · 설정)과 운영 탭', sj.includes("[['수업', '수업'], ['사용자', '사용자'], ['AI', 'AI'], ['설정', '설정']]") && sj.includes("['현황', '현황'], ['감사 기록', '감사 기록']"));
+    ok('AI 회사는 키를 넣은 회사만 고른다(관리 · 내 계정 · 작품 설정)', sj.includes('have.has(p) && (!allowed') && sj.includes('keyedOf(keys).filter(') && src(join(ROOT, 'web', 'app.js')).includes('.filter((x) => keys.has(x))'));
+  }
   ok('화면은 txt · md · 2MB 만 고른다', src(join(ROOT, 'web', 'app.js')).includes("accept: '.txt,.md,.markdown,.text,text/plain,text/markdown'") && src(join(ROOT, 'web', 'app.js')).includes('const FILE_MAX = 2 * 1024 * 1024;'));
 
   // 작품 통째로 — 내려받은 파일을 가져오면 새 작품(새 id)으로 문서 · 판 · 참조 · 논의가 그대로
