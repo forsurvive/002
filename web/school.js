@@ -339,7 +339,7 @@ h('div', { class: 'when', style: 'margin-top:6px', text: '금액은 모델 가�
 
 const ACT = {
   'org.create': '기관 만듦', 'org.settings': '기관 설정', 'org.status': '기관 상태', 'license.issue': '이용 기간 엶', 'license.status': '이용 기간 상태',
-  'license.limits': '쓸 수 있는 AI 바꿈', 'class.create': '수업 만듦', 'class.dates': '수업 기간', 'class.archive': '수업 닫음', 'class.reopen': '수업 다시 엶', 'invite.create': '초대 코드',
+  'license.limits': '쓸 수 있는 AI 바꿈', 'class.create': '수업 만듦', 'class.dates': '수업 기간', 'class.archive': '수업 닫음', 'class.reopen': '수업 다시 엶', 'class.assign': '강사 맡김', 'class.unassign': '강사 뺌', 'invite.create': '초대 코드',
   'invite.revoke': '초대 코드 거둠', 'invite.accept': '초대로 들어옴', 'credential.set': 'AI 키 넣음', 'credential.revoke': 'AI 키 지움', 'member.create': '계정 만듦',
   'member.remove': '사용자 뺌', 'member.reset_password': '비밀번호 재설정', 'workflow.save': '단계 고침', 'project.create': '작품 만듦', 'project.delete': '작품 지움',
   'project.copy_personal': '개인 작품으로 복사', 'project.import': '작품 가져옴', 'ai.choose': 'AI 회사 고름', 'auth.login': '로그인', 'auth.login_failed': '로그인 실패',
@@ -490,6 +490,33 @@ function operatorRow(id) {
         h('button', { class: 'btn-red', text: live ? '새 이용 기간 열기' : '이용 기간 열기', onclick: issue }))) : null);
 }
 
+// 맡은 강사 — 그 기관의 강사 가운데 골라 [넣기], 맡은 사람 옆 [빼기](그 수업에서만 빠진다). 링크 없이 관리자가 바로 정한다.
+S.cinst = {};
+async function loadClassInstructors(c) {
+  const r = await edu('class.instructors', { classId: c.id });
+  if (!r.ok) return tell(r.error);
+  S.cinst[c.id] = r.instructors; render();
+}
+function classInstructors(c, orgId) {
+  const list = S.cinst[c.id];
+  if (!list) { S.cinst[c.id] = []; loadClassInstructors(c); return null; }
+  const assign = async (x, on) => {
+    if (!on && !confirm((x.name || x.loginId) + ' 강사를 «' + c.name + '» 수업에서 뺄까요? 기관 · 다른 수업에는 그대로 남습니다.')) return;
+    const r = await edu('class.assign', { classId: c.id, userId: x.userId, on });
+    if (!r.ok) return tell(r.error);
+    S.sayGood = true; S.say = (x.name || x.loginId) + ' — «' + c.name + '» ' + (on ? '수업을 맡겼습니다' : '수업에서 뺐습니다');
+    await loadClassInstructors(c);
+  };
+  const mine = list.filter((x) => x.assigned); const rest = list.filter((x) => !x.assigned);
+  return h('div', { style: 'width:100%;margin-top:8px' },
+    h('div', { class: 'lab', text: '맡은 강사' }),
+    mine.length ? h('div', { class: 'line' }, mine.map((x) => h('span', { class: 'chip' }, h('span', { text: x.name + ' · ' + x.loginId }), h('button', { text: '×', title: '이 수업에서 빼기', onclick: () => assign(x, false) }))))
+      : h('div', { class: 'when', text: '아직 없습니다' }),
+    rest.length ? h('div', { class: 'line', style: 'margin-top:6px' }, h('span', { class: 'when', text: '넣기:' }),
+      rest.map((x) => h('button', { class: 'btn-line', text: '+ ' + x.name, onclick: () => assign(x, true) })))
+      : list.length ? null : h('div', { class: 'when', text: '이 기관에 강사가 없습니다 — [사용자] 탭의 [+ 강사 초대 링크]로 먼저 부르세요' }));
+}
+
 // 수업 — 한 줄에 이름 · 기간 · 학생 수와 자주 쓰는 둘(학생 초대 코드 · 현황). 나머지는 [더보기].
 function classesTab(id) {
   const { classes } = S.orgs[id];
@@ -528,11 +555,12 @@ function classesTab(id) {
           h('span', { class: 'mark', text: '학생 ' + (c.students || 0) }),
           c.status === 'active' ? h('button', { class: 'btn-text', text: '학생 초대 링크', onclick: () => makeInvite('s-' + c.id, id, c.id, 'student') }) : null,
           h('button', { class: 'btn-text', text: S.progress[c.id] ? '현황 닫기' : '현황', onclick: () => showProgress(c) }),
-          h('button', { class: 'btn-text', text: more ? '접기' : '더보기', onclick: () => { S.open['more-' + c.id] = !more; render(); } })),
+          h('button', { class: 'btn-text', text: more ? '접기' : '더보기', onclick: () => { S.open['more-' + c.id] = !more; if (!more) delete S.cinst[c.id]; render(); } })),
         more ? h('div', { class: 'line', style: 'margin-top:6px' },
           c.status === 'active' ? h('button', { class: 'btn-line', text: '강사 초대 링크', onclick: () => makeInvite('i-' + c.id, id, c.id, 'instructor') }) : null,
           h('button', { class: 'btn-line', text: S.dates[c.id] ? '기간 닫기' : '수업 기간', onclick: () => { S.dates[c.id] = !S.dates[c.id]; render(); } }),
           inviteList('c-' + c.id, id, c.id),
+          classInstructors(c, id),
           h('button', { class: 'btn-text' + (c.status === 'active' ? ' red' : ''), text: c.status === 'active' ? '수업 닫기' : '다시 열기', onclick: () => archive(c) })) : null,
         S.dates[c.id] ? h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
           field('시작하는 날', 'cds-' + c.id, 'date', { value: ymd(c.starts_at) }), field('끝나는 날', 'cde-' + c.id, 'date', { value: ymd(c.ends_at, true) }),

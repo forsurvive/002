@@ -532,6 +532,31 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       return ok();
     },
 
+    // ---------------- 수업의 맡은 강사 — 관리자가 링크 없이 바로 정한다(2026-10-05 사용자 결정). 그 기관의 강사만.
+    async 'class.instructors'(user, b) {
+      const c = isUuid(b.classId) ? await one('SELECT id, organization_id FROM classes WHERE id = $1', [b.classId]) : null;
+      if (!c || !(await isAdmin(user, c.organization_id))) return NOT_FOUND;
+      const rows = (await pool.query(
+        `SELECT u.id, u.login_id, u.display_name, EXISTS (SELECT 1 FROM class_members cm WHERE cm.class_id = $2 AND cm.user_id = u.id AND cm.role = 'instructor') AS assigned
+           FROM organization_members m JOIN users u ON u.id = m.user_id
+          WHERE m.organization_id = $1 AND m.role = 'instructor' AND m.status = 'active' AND u.status = 'active'
+          ORDER BY u.display_name, u.login_id`, [c.organization_id, c.id])).rows;
+      return ok({ instructors: rows.map((r) => ({ userId: r.id, loginId: r.login_id, name: r.display_name || r.login_id, assigned: r.assigned })) });
+    },
+    async 'class.assign'(user, b, ip) {
+      const c = isUuid(b.classId) ? await one('SELECT id, organization_id, name FROM classes WHERE id = $1', [b.classId]) : null;
+      if (!c || !isUuid(b.userId) || !(await isAdmin(user, c.organization_id))) return NOT_FOUND;
+      if (!(await rolesIn(b.userId, c.organization_id)).has('instructor')) return no(422, '그 기관의 강사만 수업을 맡을 수 있습니다', 'validation');
+      if (b.on === false) {
+        await pool.query(`DELETE FROM class_members WHERE class_id = $1 AND user_id = $2 AND role = 'instructor'`, [c.id, b.userId]);
+      } else {
+        const r = await pool.query(`INSERT INTO class_members (class_id, organization_id, user_id, role) VALUES ($1,$2,$3,'instructor') ON CONFLICT (class_id, user_id) DO NOTHING`, [c.id, c.organization_id, b.userId]);
+        if (!r.rowCount && !(await one(`SELECT 1 FROM class_members WHERE class_id = $1 AND user_id = $2 AND role = 'instructor'`, [c.id, b.userId]))) return no(409, '그 사람은 이 수업의 학생입니다', 'conflict');
+      }
+      await log(user, c.organization_id, b.on === false ? 'class.unassign' : 'class.assign', 'class', c.id, { userId: b.userId }, ip);
+      return ok();
+    },
+
     // ---------------- 단계 고쳐 쓰기(관리 화면) — 운영자는 전체 기본, 기관 관리자는 제 기관. 원문(설정 파일)은 남는다.
     async 'workflow.view'(user, b) {
       if (!wfs) return no(503, '단계 흐름을 쓸 수 없습니다', 'unavailable');

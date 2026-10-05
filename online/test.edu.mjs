@@ -78,6 +78,19 @@ export async function run({ pool, ok, eq }) {
     ok('강사 초대 → 수락', (await edu(null, 'invite.accept', { code: invI.code, loginId: 'edu-in', password: 'long-enough-in', displayName: '김 강사' })).ok);
     eq('**강사는 맡지 않은 수업에 초대하지 못한다**', (await edu('edu-in', 'invite.create', { orgId: org.id, classId: c2.id, role: 'student' })).status, 404);
     eq('**강사는 강사를 초대하지 못한다**', (await edu('edu-in', 'invite.create', { orgId: org.id, classId: c1.id, role: 'instructor' })).status, 404);
+    // ---------------- 수업의 맡은 강사 — 관리자가 링크 없이 바로 넣고 뺀다
+    {
+      const inId = (await pool.query("SELECT id FROM users WHERE login_id = 'edu-in'")).rows[0].id;
+      const ci = await edu('edu-oa', 'class.instructors', { classId: c2.id });
+      ok('맡은 강사 목록 — 그 기관의 강사 · 이 수업을 맡았는지', ci.ok && ci.instructors.some((x) => x.loginId === 'edu-in' && x.assigned === false));
+      eq('**강사는 맡은 강사를 정하지 못한다**', (await edu('edu-in', 'class.assign', { classId: c2.id, userId: inId })).status, 404);
+      ok('**기관 관리자가 강사를 2반에 넣는다**', (await edu('edu-oa', 'class.assign', { classId: c2.id, userId: inId })).ok
+        && (await edu('edu-in', 'class.progress', { classId: c2.id })).ok);
+      ok('두 번 넣어도 한 번', (await edu('edu-oa', 'class.assign', { classId: c2.id, userId: inId })).ok && (await edu('edu-oa', 'class.instructors', { classId: c2.id })).instructors.find((x) => x.loginId === 'edu-in').assigned);
+      ok('**빼면 그 수업에서만 빠진다(1반은 그대로 · 기관에도 남는다)**', (await edu('edu-oa', 'class.assign', { classId: c2.id, userId: inId, on: false })).ok
+        && (await edu('edu-in', 'class.progress', { classId: c2.id })).status === 404 && (await edu('edu-in', 'class.progress', { classId: c1.id })).ok);
+      eq('**강사가 아닌 사람은 넣지 못한다**', (await edu('edu-oa', 'class.assign', { classId: c2.id, userId: (await pool.query("SELECT id FROM users WHERE login_id = 'edu-plain'")).rows[0].id })).status, 422);
+    }
     eq('학생 초대는 수업을 골라야', (await edu('edu-oa', 'invite.create', { orgId: org.id, role: 'student' })).status, 422);
 
     // ---------------- 학생 — 자리 상한(2)

@@ -150,6 +150,7 @@
 | `run.list` `{pid, docId}` | 그 작품을 읽을 수 있는 사람 | 만든 기록 — 이 문서를 지은 부르기(최근 20)마다 때 · 결과 판 · 등급 이름 · 이번 요청 · 본 것(역할 · 제목 · **그때의 판 번호**) · 잘렸을 수 있음. 비용 · 모델 id · 키 없음. 문서 창 [만든 기록](온라인) |
 | `audit.list` `{orgId?, action?, limit?}` | 플랫폼 관리자(전체) · 기관 관리자(제 기관) | 감사 기록 — 언제 · 누가(아이디) · 무엇을. IP 는 내주지 않는다 · details 는 처음부터 가린 값 |
 | `class.create` `{orgId, name, startsAt?, endsAt?}` · `class.list` · `class.archive` `{…, reopen}` | 기관 관리자(목록은 멤버도) | 수업 — 이용 기간(라이선스)이 없으면 403 `license_inactive` |
+| `class.instructors` `{classId}` · `class.assign` `{classId, userId, on?}` | 기관 관리자 · 운영자 | 수업의 맡은 강사 — 그 기관의 강사 가운데 골라 링크 없이 바로 넣고(`on` 기본), `on:false` 면 그 수업에서만 뺀다(기관 · 다른 수업은 그대로). 화면: [수업] → 수업 줄 [더보기] → «맡은 강사» (2026-10-05) |
 | `class.dates` `{classId, startsAt?, endsAt?}` | 기관 관리자 | 수업 기간(`YYYY-MM-DD`, 한국 날짜 · 끝 날 24시까지, 비우면 기한 없음). 시작 전 · 끝난 뒤에는 그 수업에 새 작품을 만들지 않는다(`class_not_started`/`class_ended`) — 만든 작품은 계속 쓴다 |
 | `class.progress` `{classId}` | 맡은 강사 · 기관 관리자 | 학생마다 프로젝트 · 문서 수 · 최근 작업 상태(비용 칸 없음) |
 | `invite.create` `{orgId, classId?, role, days, maxUses}` | 기관 관리자(모든 역할) · 강사(맡은 수업 학생만) | 코드(`ABCD-EFGH-JKLM`). `invite.list` 가 봉해 둔 코드를 열어 다시 보인다(2026-10-05) · 닫은 수업의 코드는 `class_closed` |
