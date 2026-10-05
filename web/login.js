@@ -17,70 +17,115 @@ function h(tag, attrs, ...kids) {
   return n;
 }
 
+// 첫 화면 — 계정이 있으면 아이디 · 비밀번호, 처음이면 초대 코드 → (맞으면) 그 자리에서 계정 만들기.
+// 시험 운영(출입 열쇠)이면 열쇠 칸이 맨 위에 하나 더 붙고, 어느 단추든 열쇠부터 넘긴다.
+const S = { gate: false, invite: null, say: '' };
+const $ = (id) => document.getElementById(id);
+const v = (id) => ($(id) ? $(id).value.trim() : '');
+const post = async (url, body) => {
+  const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null);
+  return r ? r.json().catch(() => ({ ok: false, error: '응답 없음' })) : { ok: false, error: '연결되지 않습니다' };
+};
+const tell = (text) => { S.say = text || ''; const n = $('say'); if (n) n.textContent = S.say; };
+
+// 출입 열쇠를 넘긴다 — 넘기면 칸을 거두고, 계정이 하나도 없으면 처음 설정으로
+async function passGate() {
+  if (!S.gate) return true;
+  if (!v('gt-key')) { tell('출입 열쇠를 넣어 주세요'); return false; }
+  const out = await post('/api/gate', { key: $('gt-key').value });
+  if (!out.ok) { tell(out.error || '출입 열쇠가 맞지 않습니다'); return false; }
+  S.gate = false;
+  if ($('gt-box')) $('gt-box').remove();
+  const st = await fetch('/api/setup').then((r) => r.json()).catch(() => ({}));
+  if (st.needed) { draw(setupForm(st.ai)); return false; }
+  return true;
+}
+
 async function enter(e) {
   e.preventDefault();
-  const say = document.getElementById('say');
-  say.textContent = '';
-  const r = await fetch('/api/auth/login', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ loginId: document.getElementById('lg-id').value, password: document.getElementById('lg-pw').value }),
-  }).catch(() => null);
-  const out = r ? await r.json().catch(() => ({ ok: false })) : { ok: false, error: '연결되지 않습니다' };
+  tell('');
+  if (!v('lg-id') || !$('lg-pw').value) return tell('아이디와 비밀번호를 넣어 주세요');
+  if (!(await passGate())) return;
+  const out = await post('/api/auth/login', { loginId: v('lg-id'), password: $('lg-pw').value });
   if (out.ok) { location.href = '/'; return; }
-  if (out.code === 'gate') { location.reload(); return; }   // 출입 열쇠는 페이지를 다시 열 때 묻는다
-  say.textContent = out.error || '들어가지 못했습니다';
+  if (out.code === 'gate') { location.reload(); return; }
+  tell(out.error || '들어가지 못했습니다');
+}
+
+// 초대 코드 — 먼저 맞는지만 본다(쓰지 않는다). 맞으면 계정 만들기 칸을 연다.
+async function checkCode(e) {
+  e.preventDefault();
+  tell('');
+  if (!v('iv-code')) return tell('초대 코드를 넣어 주세요');
+  if (!(await passGate())) return;
+  const out = await post('/api/edu', { op: 'invite.check', code: v('iv-code') });
+  if (out.code === 'gate') { location.reload(); return; }
+  if (!out.ok) return tell(out.error || '초대 코드를 확인하지 못했습니다');
+  S.invite = { code: v('iv-code'), ...out };
+  draw(mainForms());
+  if ($('nu-id')) $('nu-id').focus();
+}
+
+async function join(e) {
+  e.preventDefault();
+  tell('');
+  if (!v('nu-id') || !$('nu-pw').value) return tell('아이디와 비밀번호를 정해 넣어 주세요');
+  if ($('nu-pw').value !== $('nu-pw2').value) return tell('비밀번호가 서로 다릅니다');
+  const out = await post('/api/edu', { op: 'invite.accept', code: S.invite.code, loginId: v('nu-id'), displayName: v('nu-name'), password: $('nu-pw').value });
+  if (out.ok) { location.href = '/'; return; }
+  if (out.code === 'gate') { location.reload(); return; }
+  tell(out.error || '계정을 만들지 못했습니다');
 }
 
 // 처음 설정 — 계정이 하나도 없을 때만 서버가 needed 를 준다. 운영자 계정과 (있으면) AI 키를 한 번에.
 // 키는 서버가 봉해 저장하고 다시 돌려주지 않는다 — 이 화면도 보낸 뒤 칸을 비운다.
 async function setup(e) {
   e.preventDefault();
-  const say = document.getElementById('say');
-  const v = (id) => document.getElementById(id).value;
-  say.textContent = '';
-  if (v('st-pw') !== v('st-pw2')) { say.textContent = '비밀번호가 서로 다릅니다'; return; }
-  const r = await fetch('/api/setup', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ loginId: v('st-id'), password: v('st-pw'), displayName: v('st-name'), apiKey: v('st-key') }),
-  }).catch(() => null);
-  document.getElementById('st-key').value = '';
-  const out = r ? await r.json().catch(() => ({ ok: false })) : { ok: false, error: '연결되지 않습니다' };
+  tell('');
+  if ($('st-pw').value !== $('st-pw2').value) return tell('비밀번호가 서로 다릅니다');
+  const out = await post('/api/setup', { loginId: v('st-id'), password: $('st-pw').value, displayName: v('st-name'), apiKey: v('st-key') });
+  $('st-key').value = '';
   if (out.ok) { if (out.note) alert(out.note); location.href = '/'; return; }
   if (out.code === 'gate') { location.reload(); return; }
-  say.textContent = out.error || '설정하지 못했습니다';
+  tell(out.error || '설정하지 못했습니다');
 }
 
 const field = (label, id, type, extra = {}) => [
   h('div', { class: 'lab', style: 'margin-top:14px', text: label }),
   h('input', { id, type, ...extra }),
 ];
+const sayLine = () => h('div', { id: 'say', class: 'notice', style: 'min-height:22px;margin:10px 0', text: S.say });
+const ROLE = { student: '학생', instructor: '강사', organization_admin: '기관 관리자' };
 
-// 출입 열쇠(시험 운영 중에만) — 운영자에게 받은 열쇠를 한 번 넣으면 이 브라우저는 30일 동안 묻지 않는다
-async function gate(e) {
-  e.preventDefault();
-  const say = document.getElementById('say');
-  say.textContent = '';
-  const r = await fetch('/api/gate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: document.getElementById('gt-key').value }) }).catch(() => null);
-  const out = r ? await r.json().catch(() => ({ ok: false })) : { ok: false, error: '연결되지 않습니다' };
-  if (out.ok) { location.reload(); return; }
-  say.textContent = out.error || '들어가지 못했습니다';
+function mainForms() {
+  const inv = S.invite;
+  return h('div', null,
+    S.gate ? h('div', { id: 'gt-box', style: 'margin-bottom:22px' },
+      h('div', { class: 'lab', text: '출입 열쇠' }),
+      h('input', { id: 'gt-key', type: 'password', autocomplete: 'off', spellcheck: 'false' }),
+      h('div', { class: 'when', style: 'margin-top:6px', text: '시험 운영 중 — 운영자에게 받은 열쇠(이 브라우저는 한 번만)' })) : null,
+    h('form', { onsubmit: enter },
+      h('div', { class: 'lab', text: '아이디' }),
+      h('input', { id: 'lg-id', type: 'text', autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
+      h('div', { class: 'lab', style: 'margin-top:14px', text: '비밀번호' }),
+      h('input', { id: 'lg-pw', type: 'password', autocomplete: 'current-password' }),
+      h('div', { class: 'line', style: 'margin-top:14px' }, h('button', { class: 'btn-red', type: 'submit', text: '로그인' }))),
+    sayLine(),
+    h('div', { style: 'margin-top:18px;padding-top:18px;border-top:1px solid var(--line-soft)' },
+      h('div', { class: 'lab', text: '처음 오셨나요? 초대 코드' }),
+      inv ? h('form', { onsubmit: join },
+        h('div', { class: 'when', style: 'margin-top:4px', text: [inv.organizationName, inv.className, ROLE[inv.role] || ''].filter(Boolean).join(' · ') + ' — 쓸 계정을 만듭니다' }),
+        field('아이디(영문 소문자 · 숫자)', 'nu-id', 'text', { autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
+        field('이름', 'nu-name', 'text'),
+        field('비밀번호(10자 이상)', 'nu-pw', 'password', { autocomplete: 'new-password' }),
+        field('비밀번호 한 번 더', 'nu-pw2', 'password', { autocomplete: 'new-password' }),
+        h('div', { class: 'line', style: 'margin-top:14px' },
+          h('button', { class: 'btn-red', type: 'submit', text: '계정 만들고 들어가기' }),
+          h('button', { class: 'btn-text', type: 'button', text: '다른 코드', onclick: () => { S.invite = null; draw(mainForms()); } })))
+        : h('form', { onsubmit: checkCode, class: 'line', style: 'align-items:center' },
+          h('input', { id: 'iv-code', type: 'text', placeholder: 'ABCD-EFGH-JKLM', autocapitalize: 'characters', spellcheck: 'false', style: 'flex:1' }),
+          h('button', { class: 'btn-line', type: 'submit', text: '다음' }))));
 }
-
-const gateForm = () => h('form', { onsubmit: gate },
-  h('div', { class: 'lab', text: '출입 열쇠' }),
-  h('input', { id: 'gt-key', type: 'password', autocomplete: 'off', spellcheck: 'false' }),
-  h('div', { class: 'when', style: 'margin-top:8px', text: '지금은 시험 운영 중입니다. 운영자에게 받은 열쇠를 넣어 주세요.' }),
-  h('div', { id: 'say', class: 'notice', style: 'min-height:22px;margin:10px 0' }),
-  h('button', { class: 'btn-red', type: 'submit', text: '들어가기' }));
-
-const loginForm = () => h('form', { onsubmit: enter },
-  h('div', { class: 'lab', text: '아이디' }),
-  h('input', { id: 'lg-id', type: 'text', autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
-  h('div', { class: 'lab', style: 'margin-top:14px', text: '비밀번호' }),
-  h('input', { id: 'lg-pw', type: 'password', autocomplete: 'current-password' }),
-  h('div', { id: 'say', class: 'notice', style: 'min-height:22px;margin:10px 0' }),
-  h('button', { class: 'btn-red', type: 'submit', text: '들어가기' }),
-  h('div', { class: 'when', style: 'margin-top:18px' }, h('a', { href: '/school.html', text: '초대 코드로 처음 들어오기' })));
 
 const setupForm = (ai) => h('form', { onsubmit: setup },
   h('div', { class: 'when', text: '처음 설정 — 쓸 계정을 만듭니다. 이 화면은 한 번만 나옵니다.' }),
@@ -89,15 +134,20 @@ const setupForm = (ai) => h('form', { onsubmit: setup },
   field('비밀번호(10자 이상)', 'st-pw', 'password', { autocomplete: 'new-password' }),
   field('비밀번호 한 번 더', 'st-pw2', 'password', { autocomplete: 'new-password' }),
   ai ? field('Anthropic API 키(나중에 넣어도 됩니다)', 'st-key', 'password', { autocomplete: 'off', spellcheck: 'false' }) : h('input', { id: 'st-key', type: 'hidden' }),
-  h('div', { id: 'say', class: 'notice', style: 'min-height:22px;margin:10px 0' }),
+  sayLine(),
   h('button', { class: 'btn-red', type: 'submit', text: '만들고 들어가기' }));
+
+function draw(form) {
+  const root = $('root');
+  root.textContent = '';
+  root.appendChild(h('div', { class: 'body', style: 'max-width:380px;margin:0 auto;padding-top:12vh;padding-bottom:40px' },
+    h('div', { class: 'top-name', style: 'font-size:30px;margin-bottom:24px', text: '스토리 엔진' }), form));
+}
 
 (async () => {
   const st = await fetch('/api/setup').then((r) => r.json()).catch(() => ({}));
-  document.getElementById('root').appendChild(
-    h('div', { class: 'body', style: 'max-width:380px;margin:0 auto;padding-top:14vh' },
-      h('div', { class: 'top-name', style: 'font-size:30px;margin-bottom:24px', text: '스토리 엔진' }),
-      st.code === 'gate' ? gateForm() : st.needed ? setupForm(st.ai) : loginForm()));
-  const boot = document.getElementById('boot');
+  S.gate = st.code === 'gate';
+  draw(st.needed ? setupForm(st.ai) : mainForms());
+  const boot = $('boot');
   if (boot) boot.remove();
 })();
