@@ -336,6 +336,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     ok('관리 화면 — 기관마다 탭 넷(수업 · 사용자 · AI · 설정)과 운영 탭', sj.includes("[['수업', '수업'], ['사용자', '사용자'], ['AI', 'AI'], ['설정', '설정']]") && sj.includes("['현황', '현황'], ['감사 기록', '감사 기록']"));
     ok('AI 회사는 키를 넣은 회사만 고른다(관리 · 내 계정 · 작품 설정)', sj.includes('have.has(p) && (!allowed') && sj.includes('keyedOf(keys).filter(') && src(join(ROOT, 'web', 'app.js')).includes('.filter((x) => keys.has(x))'));
   }
+  ok('초대 · 재설정 코드는 링크로도 보낸다(재설정은 1:1 안내) · 링크로 오면 첫 화면이 코드를 채운다',
+    src(join(ROOT, 'web', 'school.js')).includes("'/login?invite='") && src(join(ROOT, 'web', 'school.js')).includes("'/login?reset='") && src(join(ROOT, 'web', 'school.js')).includes('1:1로 보내세요')
+    && src(join(ROOT, 'web', 'login.js')).includes("q.get('invite')") && src(join(ROOT, 'web', 'login.js')).includes("q.get('reset')"));
   ok('화면은 txt · md · 2MB 만 고른다', src(join(ROOT, 'web', 'app.js')).includes("accept: '.txt,.md,.markdown,.text,text/plain,text/markdown'") && src(join(ROOT, 'web', 'app.js')).includes('const FILE_MAX = 2 * 1024 * 1024;'));
 
   // 작품 통째로 — 내려받은 파일을 가져오면 새 작품(새 id)으로 문서 · 판 · 참조 · 논의가 그대로

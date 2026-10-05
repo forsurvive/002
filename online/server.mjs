@@ -371,7 +371,9 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       };
 
       if (req.method === 'GET' && (url.pathname === '/login' || url.pathname === '/login.html')) {
-        if (user) return send(res, 302, '', 'text/plain; charset=utf-8', { location: '/' });
+        // 이미 들어와 있는 사람이 초대 링크를 열면 — 지금 계정으로 참여하는 자리(내 계정 «새 수업 코드 넣기»)로 코드를 들고 간다
+        const inv = url.searchParams.get('invite');
+        if (user) return send(res, 302, '', 'text/plain; charset=utf-8', { location: inv ? '/account.html?invite=' + encodeURIComponent(inv) : '/' });
         return staticFile(res, 'login.html');
       }
       // ---------------- 교육기관판의 일(기관 · 라이선스 · 수업 · 초대 · 수업 현황 · 기관 키) — online/edu.mjs

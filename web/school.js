@@ -45,6 +45,13 @@ const done = (text) => tell(text, true);
 
 // ---------------------------------------------------------------- 불러오기
 
+// 초대 링크를 들고 «내 계정»으로 왔으면(이미 로그인한 사람) 코드를 채워 둔다
+{
+  const q = new URLSearchParams(location.search);
+  S.linkInvite = PAGE === 'account' ? q.get('invite') || '' : '';
+  if (S.linkInvite) { history.replaceState(null, '', location.pathname); S.sayGood = true; S.say = '초대 링크로 왔습니다 — 아래 «새 수업 코드 넣기»의 [들어가기]를 누르면 지금 계정으로 참여합니다'; }
+}
+
 async function load() {
   const m = await edu('me.memberships');
   S.loggedIn = m.ok === true;
@@ -75,7 +82,18 @@ const section = (title, ...body) => h('div', { class: 'sec' },
 const codeBox = (key, note = '«초대 코드 목록»에서도 다시 볼 수 있습니다') => (S.shown[key] ? h('div', { class: 'line', style: 'margin-top:10px' },
   h('div', { class: 'mark', style: 'font-size:15px;padding:6px 10px', text: S.shown[key] }),
   copyBtn(S.shown[key]),
+  // 초대 코드면 링크로도 보낸다(누르면 코드가 채워진 «계정 만들기»가 열린다). 계정 · 비밀번호(mk-)는 링크로 보내지 않는다.
+  key.startsWith('mk-') ? null : linkBtns(inviteUrl(S.shown[key]), '스토리 엔진 초대'),
   h('div', { class: 'when', text: note })) : null);
+// 링크로 보내기 — 코드를 손으로 옮기지 않게. [링크 복사]는 어디서나, [보내기]는 휴대폰의 공유 창(카카오톡 · 문자 …)이 있을 때만.
+const inviteUrl = (code) => location.origin + '/login?invite=' + encodeURIComponent(code);
+const resetUrl = (code, loginId) => location.origin + '/login?reset=' + encodeURIComponent(code) + '&id=' + encodeURIComponent(loginId || '');
+const linkBtns = (url, title) => [
+  h('button', { class: 'btn-text', text: '링크 복사', onclick: async () => {
+    try { await navigator.clipboard.writeText(url); done('링크를 복사했습니다 — 카카오톡 · 문자 · 메일에 붙여 넣어 보내세요'); } catch { tell('복사하지 못했습니다 — ' + url); }
+  } }),
+  navigator.share ? h('button', { class: 'btn-text', text: '보내기', onclick: () => navigator.share({ title, url }).catch(() => {}) }) : null,
+];
 // 복사 — 안 되는 브라우저(보안 연결이 아닌 곳 등)에서는 조용히 넘어간다(코드는 화면에 그대로 있다)
 const copyBtn = (code) => h('button', { class: 'btn-text', text: '복사', onclick: async () => {
   try { await navigator.clipboard.writeText(code); done('복사했습니다'); } catch { tell('복사하지 못했습니다 — 화면의 코드를 적어 주세요'); }
@@ -105,6 +123,7 @@ function inviteList(key, orgId, classId) {
     rows.length ? rows.map((x) => h('div', { class: 'row', style: 'cursor:default' },
       x.code ? h('div', { class: 'mark', style: 'font-size:14px;padding:4px 8px', text: x.code }) : h('span', { class: 'when', text: '(코드를 다시 보일 수 없는 옛 코드)' }),
       x.code ? copyBtn(x.code) : null,
+      x.code ? linkBtns(inviteUrl(x.code), '스토리 엔진 초대') : null,
       h('div', { class: 'name', text: (ROLE_SAY[x.role] || x.role) + (x.className ? ' · ' + x.className : '') }),
       h('span', { class: 'mark', text: x.used + ' / ' + x.max + '명' }),
       h('div', { class: 'when', text: '~ ' + day(x.expiresAt) + (x.madeBy ? ' · ' + x.madeBy : '') }),
@@ -136,7 +155,7 @@ function joinBox() {
   };
   return section('새 수업 코드 넣기',
     h('div', { class: 'line', style: 'align-items:flex-end' },
-      field('초대 코드', 'j-code', 'text', { placeholder: 'ABCD-EFGH-JKLM', autocapitalize: 'characters', spellcheck: 'false' }),
+      field('초대 코드', 'j-code', 'text', { placeholder: 'ABCD-EFGH-JKLM', autocapitalize: 'characters', spellcheck: 'false', value: S.linkInvite || '' }),
       h('button', { class: 'btn-red', text: '들어가기', onclick: go })));
 }
 
@@ -156,7 +175,7 @@ function progressBox(c) {
       h('div', { class: 'when', text: s.updatedAt ? day(s.updatedAt) : '' }),
       s.projectId && p.canRead ? h('a', { class: 'btn-text', href: '/?pid=' + encodeURIComponent(s.projectId), text: '읽기' }) : null,
       h('button', { class: 'btn-text', text: '비밀번호 재설정 코드', onclick: () => giveResetCode(p.class.organizationId, { userId: s.userId, name: s.name, loginId: s.loginId }, () => reloadProgress(c)) }),
-      resetLine(s.resetCode),
+      resetLine(s.resetCode, s.loginId),
       s.stage && s.stage.teachingNote ? h('button', { class: 'btn-text', text: '강의 포인트', onclick: () => { S.open['tn-' + s.userId] = !S.open['tn-' + s.userId]; render(); } }) : null,
       S.open['tn-' + s.userId] && s.stage ? h('div', { class: 'when', style: 'width:100%;white-space:normal', text: s.stage.title + ' — ' + s.stage.teachingNote }) : null))
     : h('div', { class: 'when', text: '아직 학생이 없습니다' }));
@@ -661,9 +680,10 @@ async function giveResetCode(orgId, m, after) {
   done('재설정 코드를 만들었습니다 — 본인에게 전해 주세요');
   await after();
 }
-const resetLine = (code) => (code ? h('div', { class: 'line', style: 'margin-top:6px' },
+const resetLine = (code, loginId) => (code ? h('div', { class: 'line', style: 'margin-top:6px' },
   h('div', { class: 'mark', style: 'font-size:14px;padding:4px 8px', text: code }), copyBtn(code),
-  h('div', { class: 'when', text: '재설정 코드 — 본인이 로그인 화면 «비밀번호를 잊었어요»에 넣습니다(7일 · 한 번)' })) : null);
+  linkBtns(resetUrl(code, loginId), '스토리 엔진 비밀번호 재설정'),
+  h('div', { class: 'when', text: '재설정 코드(7일 · 한 번) — 링크는 그 사람에게만 1:1로 보내세요(단체방에 올리지 않습니다)' })) : null);
 
 function membersBox(orgId, { fixed = false } = {}) {
   const list = S.members[orgId];
@@ -687,7 +707,7 @@ function membersBox(orgId, { fixed = false } = {}) {
           h('button', { class: 'btn-text', text: '비밀번호 재설정 코드', onclick: () => giveResetCode(orgId, m, () => showMembers(orgId)) }),
           h('button', { class: 'btn-text red', text: '내보내기', onclick: () => remove(m) }),
         ]),
-      resetLine(m.resetCode))),
+      resetLine(m.resetCode, m.loginId))),
     h('button', { class: 'btn-text', style: 'margin-top:8px', text: '다시 불러오기', onclick: () => showMembers(orgId) }));
 }
 

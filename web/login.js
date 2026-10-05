@@ -219,7 +219,21 @@ function draw(form) {
 (async () => {
   const st = await fetch('/api/setup').then((r) => r.json()).catch(() => ({}));
   S.gate = st.code === 'gate';
+  // 링크로 왔으면(초대 링크 · 재설정 링크) 코드를 채워 둔다 — 주소창에서는 지운다(뒤에 남는 화면 · 스크린샷에 코드가 덜 보이게)
+  const q = new URLSearchParams(location.search);
+  const linkInvite = q.get('invite') || ''; const linkReset = q.get('reset') || ''; const linkId = q.get('id') || '';
+  if (linkInvite || linkReset) history.replaceState(null, '', '/login');
+  if (linkReset && !st.needed) S.forgot = true;
   draw(st.needed ? setupForm(st.ai, st.code) : mainForms());
+  if (!st.needed && linkReset) {
+    if ($('rs-id')) $('rs-id').value = linkId;
+    if ($('rs-code')) $('rs-code').value = linkReset;
+    if ($('rs-pw')) $('rs-pw').focus();
+    tell('재설정 링크로 왔습니다 — 새 비밀번호만 정하면 됩니다');
+  } else if (!st.needed && linkInvite && $('iv-code')) {
+    $('iv-code').value = linkInvite;
+    await checkCode({ preventDefault() {} });   // 맞으면 곧바로 «계정 만들기» 칸이 열린다
+  }
   const boot = $('boot');
   if (boot) boot.remove();
 })();

@@ -120,6 +120,9 @@ export async function run({ pool, ok, eq }) {
     ok('**DB 에는 봉한 것만 — 원문은 여전히 없다**', !JSON.stringify((await pool.query('SELECT * FROM invites WHERE id = $1', [rv.id])).rows).includes(rv.code.replace(/-/g, '')) && !JSON.stringify((await pool.query('SELECT * FROM invites WHERE id = $1', [rv.id])).rows).includes(rv.code));
     await pool.query("UPDATE invites SET code_sealed = jsonb_set(code_sealed, '{tag}', '\"AAAAAAAAAAAAAAAAAAAAAA==\"') WHERE id = $1", [rv.id]);
     ok('봉한 것이 깨졌으면 빈칸(목록은 그대로 선다)', (await edu('edu-oa', 'invite.list', { orgId: org.id })).invites.find((x) => x.id === rv.id).code === '');
+    const ln = await fetch(base + '/login?invite=' + rv.code, { headers: { cookie: jar['edu-s1'] }, redirect: 'manual' });
+    ok('**이미 로그인한 사람이 초대 링크를 열면 «내 계정»으로 코드를 들고 간다**', ln.status === 302 && ln.headers.get('location') === '/account.html?invite=' + rv.code);
+    ok('로그인 전에는 초대 링크가 첫 화면을 연다', (await fetch(base + '/login?invite=' + rv.code, { redirect: 'manual' })).status === 200);
     eq('**학생은 초대 코드 목록을 못 본다**', (await edu('edu-s1', 'invite.list', { orgId: org.id })).status, 404);
     ok('강사는 제 수업 것만 본다', (await edu('edu-in', 'invite.list', { orgId: org.id })).invites.every((x) => x.classId === c1.id));
     await edu('edu-oa', 'invite.revoke', { inviteId: rv.id });
