@@ -102,7 +102,7 @@ export function createCredentialService({ store, keys }) {
       if (!/^[\x21-\x7e]+$/.test(key)) return { ok: false, error: 'key_chars' };   // 헤더에 실을 수 없는 글자 — 부르는 순간 끊긴다
       // 워크스페이스 ID — Anthropic 만(워크스페이스에 묶이지 않은 키는 이것을 헤더로 보내야 한다). 비밀이 아니라 봉하지 않는다.
       const ws = provider === 'anthropic' ? cleanKey(workspaceId) : '';
-      if (ws && !/^[A-Za-z0-9_-]{4,100}$/.test(ws)) return { ok: false, error: 'workspace' };
+      if (ws && !/^wrkspc_[A-Za-z0-9_-]{2,100}$/.test(ws)) return { ok: false, error: 'workspace' };   // 진짜 ID 는 wrkspc_ 로 시작한다 — 자동 채움으로 들어온 아이디 따위를 거른다
       const old = await store.findActive(ownerType, String(ownerId), provider);
       const id = newCredId();
       const sealed = seal(key, keys, { ownerType, ownerId: String(ownerId), provider, id });

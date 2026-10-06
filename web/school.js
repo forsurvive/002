@@ -13,6 +13,18 @@ try { if (localStorage.getItem('se-theme') === 'light') document.documentElement
 const PAGE = ['manage', 'account'].includes(document.body.dataset.page) ? document.body.dataset.page : 'school';
 const S = { me: null, loggedIn: false, orgs: {}, progress: {}, shown: {}, say: '', open: {}, usage: {}, members: {}, wf: {}, wfOpen: {}, invites: {} };
 
+// 브라우저 자동 채움 막기 — 크롬은 autocomplete="off" 를 무시하고 저장된 로그인 아이디를 아무 칸에나 넣는다(2026-10-06 워크스페이스 칸에 아이디가 들어간 일).
+// 읽기 전용 칸은 채우지 않으므로, 로그인용(username · current-password · new-password)이 아닌 칸은 누르기 전까지 읽기 전용으로 둔다.
+const FILL_OK = ['username', 'current-password', 'new-password'];
+function noAutofill(n, attrs) {
+  const a = attrs || {};
+  if (['hidden', 'checkbox', 'radio', 'file', 'range', 'color'].includes(a.type) || a.readonly || FILL_OK.includes(a.autocomplete)) return;
+  n.setAttribute('autocomplete', 'off');
+  n.readOnly = true;
+  const open = () => { n.readOnly = false; };
+  n.addEventListener('pointerdown', open);
+  n.addEventListener('focus', open);
+}
 function h(tag, attrs, ...kids) {
   const n = document.createElement(tag);
   for (const k in attrs || {}) {
@@ -24,6 +36,7 @@ function h(tag, attrs, ...kids) {
     else n.setAttribute(k, v);
   }
   for (const c of kids.flat(Infinity)) if (c != null && c !== false) n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  if (tag === 'input') noAutofill(n, attrs);
   return n;
 }
 const $ = (id) => document.getElementById(id);

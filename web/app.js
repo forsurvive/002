@@ -57,6 +57,18 @@ const guideBlock = () => h('details', { open: S.fold['guide'] ? 'open' : null },
 
 // ---------------------------------------------------------------- 뼈대 도구
 
+// 브라우저 자동 채움 막기 — 크롬은 autocomplete="off" 를 무시하고 저장된 로그인 아이디를 아무 칸에나 넣는다(2026-10-06 워크스페이스 칸에 아이디가 들어간 일).
+// 읽기 전용 칸은 채우지 않으므로, 로그인용(username · current-password · new-password)이 아닌 칸은 누르기 전까지 읽기 전용으로 둔다.
+const FILL_OK = ['username', 'current-password', 'new-password'];
+function noAutofill(n, attrs) {
+  const a = attrs || {};
+  if (['hidden', 'checkbox', 'radio', 'file', 'range', 'color'].includes(a.type) || a.readonly || FILL_OK.includes(a.autocomplete)) return;
+  n.setAttribute('autocomplete', 'off');
+  n.readOnly = true;
+  const open = () => { n.readOnly = false; };
+  n.addEventListener('pointerdown', open);
+  n.addEventListener('focus', open);
+}
 function h(tag, attrs, ...kids) {
   const n = document.createElement(tag);
   if (attrs) {
@@ -77,6 +89,7 @@ function h(tag, attrs, ...kids) {
     if (kid == null || kid === false) continue;
     n.appendChild(typeof kid === 'string' ? document.createTextNode(kid) : kid);
   }
+  if (tag === 'input') noAutofill(n, attrs);
   return n;
 }
 const $ = (id) => document.getElementById(id);

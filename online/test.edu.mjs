@@ -235,6 +235,7 @@ export async function run({ pool, ok, eq }) {
     const nows = await edu('edu-s2', 'me.key.test', { provider: 'anthropic' });
     ok('**워크스페이스가 필요한 키는 그렇게 말한다**', nows.verified === false && nows.reason === 'workspace' && /워크스페이스 ID/.test(nows.say), JSON.stringify(nows));
     eq('워크스페이스 ID 꼴이 아니면 받지 않는다', (await edu('edu-s2', 'me.key.set', { provider: 'anthropic', apiKey: 'sk-ant-noscope-0001', workspaceId: '워크 스페이스' })).status, 422);
+    eq('**로그인 아이디 같은 것이 들어오면 받지 않는다(브라우저 자동 채움)**', (await edu('edu-s2', 'me.key.set', { provider: 'anthropic', apiKey: 'sk-ant-noscope-0001', workspaceId: 'nnagry' })).status, 422);
     ok('**워크스페이스 ID 와 함께 넣으면 붙는다**', (await edu('edu-s2', 'me.key.set', { provider: 'anthropic', apiKey: 'sk-ant-noscope-0001', workspaceId: ' wrkspc_01Abc ' })).ok
       && (await edu('edu-s2', 'me.key.test', { provider: 'anthropic' })).verified === true
       && (await edu('edu-s2', 'me.key.list')).credentials.find((c) => c.provider === 'anthropic' && c.status === 'active').workspaceId === 'wrkspc_01Abc');
