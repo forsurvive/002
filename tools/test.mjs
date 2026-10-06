@@ -2259,7 +2259,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('비우면 CLI 로 돌아온다', (await engP.callOnce({ pid: pj, code: 'F-UPDATE', request: '써 다오' })).text.startsWith('(모의)'));
 
   // ── Anthropic 어댑터 — 망 · 키 없이, 이 프로세스가 띄운 가짜 Messages API 로 시험한다
-  const { createAnthropicProvider, reasonOf } = await import('../ai/anthropic.mjs');
+  const anthMod = await import('../ai/anthropic.mjs');
+  const { createAnthropicProvider, reasonOf } = anthMod;
   const FAKE_KEY = 'sk-ant-test-' + 'x'.repeat(24);
   let mode = 'ok'; let lastReq = null;
   const sse = (evs) => evs.map((e) => 'event: ' + e.type + '\ndata: ' + JSON.stringify(e) + '\n\n').join('');
@@ -2313,7 +2314,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   mode = 'credit'; eq('잔액 부족은 credit', (await ask()).reason, 'credit');
   mode = 'model'; eq('없는 모델은 model', (await ask()).reason, 'model');
   mode = 'auth'; let vc = await anth.validateCredential({ apiKey: FAKE_KEY }, { model: 'm' });
-  ok('연결 시험 실패는 상태 번호 · 오류 종류만 남긴다(키 · 원문 없음)', !vc.ok && vc.reason === 'auth' && /^HTTP 401 authentication_error$/.test(vc.detail) && !JSON.stringify(vc).includes(FAKE_KEY), JSON.stringify(vc));
+  ok('연결 시험 실패는 상태 번호 · 오류 종류 · 회사 설명을 남긴다(키 없음)', !vc.ok && vc.reason === 'auth' && /^HTTP 401 authentication_error: /.test(vc.detail) && !JSON.stringify(vc).includes(FAKE_KEY), JSON.stringify(vc));
+  eq('회사 설명에서 키처럼 생긴 토막은 가린다', anthMod.plainMessage('bad key sk-ant-abcdef123456 \u00e9x'), 'bad key sk-*** x');
+  mode = 'auth'; ok('일반 호출 결과에는 회사 설명을 싣지 않는다', (await ask()).detail === 'HTTP 401 authentication_error');
   vc = await anth.validateCredential({ apiKey: 'sk-ant-\u20ac' + 'x'.repeat(20) }, { model: 'm' });
   ok('헤더에 실을 수 없는 키는 throw 없이 other + 갈래 이름', !vc.ok && vc.reason === 'other' && /^[A-Za-z0-9_ ]+$/.test(vc.detail), JSON.stringify(vc));
   mode = 'cut'; eq('연결이 끊기면 other — throw 하지 않는다', (await ask()).reason, 'other');

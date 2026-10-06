@@ -25,11 +25,14 @@ export function reasonOf(status, type = '', message = '') {
   return 'other';
 }
 
+// 회사 설명 문구를 화면에 실을 꼴로 — ASCII 만, 키처럼 생긴 토막은 가리고, 짧게.
+export const plainMessage = (m) => String(m || '').replace(/sk-[A-Za-z0-9_\-]{6,}/g, 'sk-***').replace(/[^\x20-\x7e]/g, '').slice(0, 200).trim();
+
 export function createAnthropicProvider({ baseUrl = 'https://api.anthropic.com', fetchImpl = globalThis.fetch } = {}) {
   return {
     id: 'anthropic',
 
-    async generate({ model, systemPrompt = '', userPrompt = '', credential = null, maxOutputTokens = 0, temperature, signal = null, timeoutMs = DEFAULT_TIMEOUT_MS, onProgress = null } = {}) {
+    async generate({ model, systemPrompt = '', userPrompt = '', credential = null, maxOutputTokens = 0, temperature, signal = null, timeoutMs = DEFAULT_TIMEOUT_MS, onProgress = null, explain = false } = {}) {
       const started = Date.now();
       const done = (r) => ({ ...r, elapsedMs: Date.now() - started });
       if (!String(userPrompt || '').trim()) return done(failure('empty', SAY.empty));
@@ -65,7 +68,8 @@ export function createAnthropicProvider({ baseUrl = 'https://api.anthropic.com',
           try { err = ((await res.json()) || {}).error || {}; } catch { /* 본문이 JSON 이 아님 */ }
           const reason = reasonOf(res.status, err.type, err.message);
           // detail — 상태 번호와 오류 종류만(원문 문구는 싣지 않는다). 연결 시험에서 까닭을 가리는 데 쓴다.
-          return done(failure(reason, SAY[reason], { providerRequestId: requestId, retryAfterMs: retryAfterOf(res), detail: ('HTTP ' + res.status + ' ' + String(err.type || '').replace(/[^A-Za-z_]/g, '')).trim() }));
+          const head = ('HTTP ' + res.status + ' ' + String(err.type || '').replace(/[^A-Za-z_]/g, '')).trim();
+          return done(failure(reason, SAY[reason], { providerRequestId: requestId, retryAfterMs: retryAfterOf(res), detail: explain && err.message ? head + ': ' + plainMessage(err.message) : head }));
         }
 
         let text = '';
@@ -102,7 +106,8 @@ export function createAnthropicProvider({ baseUrl = 'https://api.anthropic.com',
 
     // 연결 시험 — 가장 작은 호출 하나. 키는 돌려주지 않는다.
     async validateCredential(credential, { model } = {}) {
-      const r = await this.generate({ model, userPrompt: '.', credential, maxOutputTokens: 1 });
+      // 연결 시험만 회사의 설명을 붙인다(explain) — 프롬프트가 «.» 뿐이라 원고가 섞일 일이 없다
+      const r = await this.generate({ model, userPrompt: '.', credential, maxOutputTokens: 16, explain: true });
       const fine = r.ok || r.reason === 'empty';
       return { ok: fine, reason: fine ? '' : r.reason, error: fine ? '' : r.error, detail: fine ? '' : (r.detail || '') };
     },
