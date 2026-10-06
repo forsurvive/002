@@ -16,14 +16,18 @@
 | [SECURITY.md](SECURITY.md) | 위협 모델 · 지금 있는 것 · 인증 · 권한 매트릭스 · credential 암호화 · **사람이 정할 정책** |
 | [TEST_PLAN.md](TEST_PLAN.md) | 시험 돌리는 법 · 규칙 · 지금 있는 것 · 단계별로 더할 시험 |
 
-## 진행 상태 (2026-10-04)
+## 진행 상태 (2026-10-06)
 
 | 단계 | 상태 |
 |---|---|
-| Sprint 0 — 분석 · 기준선 | 완료: 원본 이력 37커밋 보존, 시험 676/0, 이 문서들, 루트 `CLAUDE.md` |
-| Sprint 1 — Replit 에서 지금 판 실행 | 완료. [Run] 은 `online/start.mjs` — 데이터베이스가 있으면 온라인판, 없으면 개인판. 처음 설정 화면 · 자동 npm ci · 마스터 키 파일 대체 · 모델 표(`config/models.json`) 포함(REPLIT_DEPLOYMENT §4-1 — 사람이 할 일 셋) |
-| Sprint 2 — Core 분리 | 완료(에이전트 준비는 Provider 단계에서): ① `model`·`assemble`·id 를 `core/` 로 옮김 · ② `planCall()` 추출(프롬프트 옮기기 전후 동일 확인) · ③ 생성 실행을 `core/generation` 으로(저장·호출을 넣어 받음, 시험 750/0) · ④ 작업 = 종류 + 매개변수(`core/generation/kinds.mjs`, 시험 760/0) |
-| Sprint 3~5 · 11 일부 — AI Provider · 카탈로그 · credential | 코드 완료: 계약(`ai/provider.mjs`) · CLI 어댑터(`ai/local-cli.mjs`) · 모든 호출이 `engine.callModel` 한 자리를 지남 · Anthropic · OpenAI · Gemini 어댑터(`ai/anthropic.mjs` · `ai/openai.mjs` · `ai/gemini.mjs`, 공식 명세 확인 후 가짜 API 로 시험, 시험 813/0) · 모델 카탈로그(`ai/catalog.mjs` + `config/models.example.json`) · 자격증명 봉인/해석(`ai/credentials.mjs`) · Provider 라우터(`ai/router.mjs`, 시험 837/0) → 남은 것: 실제 키 연기 시험 · 앱 연결(온라인 서버 · DB 와 함께) |
-| Sprint 6~8 — PostgreSQL · 인증 · 개인 프로젝트 온라인 저장 | 진행 중: 첫 스키마(`migrations/001_initial_schema.sql`) · 마이그레이션 실행기 · 앱 계정/세션(`online/auth.mjs`) · 실제 PostgreSQL 시험(`online/test.mjs`, CI 에도) · 프로젝트 저장소(`online/store.mjs` + `migrations/002_aggregate_ids_trash.sql` — 표에서 Core 덩어리를 짓고 바뀐 행만 한 트랜잭션으로 씀, Core 연산 왕복 시험 105/0) · 온라인 서버(`online/server.mjs` — 로그인 · 프로젝트 소유 검사 404 · 개인판과 한 벌의 문 표 `tools/ops.mjs` · 로그인 화면 · 운영자 계정 발급 `online/admin.mjs`, 온라인 시험 158/0, 브라우저 확인) · 개인판 JSON 가져오기(`online/import.mjs` — 다시 지어 견준 보고서 · 끊긴 참조 걸러 내기 · 못 옮기는 꼴이면 아무것도 쓰지 않음, 온라인 시험 174/0) → 다음: Sprint 9 |
-| Sprint 9 — 영속 작업 · worker | 완료(파일럿 꼴): 작업 큐(`online/jobs.mjs` — 대상당 활성 하나 · 멱등 키 · SKIP LOCKED · lease/heartbeat · 울타리 · 회수 · 갈래별 재시도 · 기관 동시 상한) · worker(`online/worker.mjs` — Core 작업 표 그대로 · 다음 호출 앞 일시중지 · 취소 시 호출 끊기 · 키 없음은 «AI 연결 필요») · 부르기(`online/call.mjs` — 생성 기록 + 참조 판 스냅샷) · 자격증명 PostgreSQL 저장 · 운영자 키 등록, 온라인 시험 271/0 → 에이전트 준비도 온라인에서(Core 로 옮김) · 합평 패널 체크포인트 · 남은 것: 실제 키 연기 시험 |
-| Sprint 10~12 — 기관 · 수업 · 라이선스 · 기관 키 | 서버 완료: `migrations/004_education.sql` · 접근 판정 한 곳(`online/tenancy.mjs` — 주인 / 맡은 수업 강사 읽기 / 정책이 허락한 기관 관리자 읽기 / 나머지 «없음») · 라이선스는 AI 작업 등록 때와 worker 실행 직전 두 번 · 기관 일(`online/edu.mjs`, `POST /api/edu` — 기관 · 라이선스 · 수업 · 초대 코드(해시만 저장 · 1회용 경쟁 안전 · 맞히기 고삐) · 학생 자리 상한 · 수업 현황(비용 칸 없음) · 기관 키 쓰기 전용 · 감사 로그), 온라인 시험 392/0 · 화면(`web/school.html` «기관 · 수업» — 초대 코드로 들어오기(새 계정) · 내 수업 · 수업에 새 작품 · 수업 현황 · 초대 코드 만들기 · 기관 키 · 열람 정책 · 운영자의 기관/이용 기간, 강사 열람은 «읽기만» 표시) → 남은 것: 사용량 장부 · DB RLS(2차 격리) |
+| Sprint 0~2 — 분석 · Replit 실행 · Core 분리 | 완료 |
+| Sprint 3~5 — AI Provider(Claude · ChatGPT · Gemini) · 카탈로그 · credential | 완료 · Claude 실제 키 연결 확인(2026-10-06, 워크스페이스 ID 지원) · ChatGPT · Gemini 실제 키는 운영자 확인 대기 |
+| Sprint 6~8 — PostgreSQL · 인증 · 개인 작품 온라인 저장 · JSON 가져오기 | 완료 |
+| Sprint 9 — 영속 작업 · worker(`npm run worker` 따로 띄우기 가능) | 완료 |
+| Sprint 10~12 — 기관 · 수업 · 라이선스 · 기관 키 · 계정(초대 링크 · 운영자 직접 발급 · 재설정 코드) · 사용량(생성 기록 기준 추정) | 완료 |
+| Sprint 13~14 — 워크플로우 단계 · 강의 카드 · 강사/기관 관리자/운영 화면 | 완료 |
+| Phase 9 — 작품 파일 내보내기/가져오기 · 글 파일(txt/md) 자료 | 완료 · docx/pdf 자료 · 파일 저장소는 아직 |
+| Sprint 15~16 — 파일럿 · production | 게시 중(Replit). 사람 검수 → 파일럿 |
+
+남은 것(검수를 막지 않음): DB RLS(2차 격리 — 1차는 서버 판정 한 곳 `online/tenancy.mjs` + 시험) · 별도 사용량 장부 표(지금은 `generation_runs` 로 집계) ·
+상태 알림을 폴링 대신 SSE/NOTIFY 로 · 키별 호출 속도 고삐 · docx/pdf 자료 · 파일 저장소. 사람이 정할 것: SECURITY.md §7(개인정보 · 보존 · 미성년자 · 결제).
