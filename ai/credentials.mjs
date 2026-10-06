@@ -108,6 +108,8 @@ export function createCredentialService({ store, keys }) {
         sealed, lastVerifiedAt: 0, lastErrorCode: '', createdBy, createdAt: Date.now(),
       });
       if (old) await store.update(old.id, { status: 'revoked', revokedAt: Date.now() });
+      // 앞서 «키가 맞지 않음»으로 남은 행도 거둔다 — 새 키를 넣었는데 옛 줄이 남아 지워지지 않는 일이 없게
+      for (const x of await store.list(ownerType, String(ownerId))) if (x.provider === provider && x.status === 'invalid' && x.id !== id) await store.update(x.id, { status: 'revoked', revokedAt: Date.now() });
       return { ok: true, credential: viewOf(row) };
     },
 

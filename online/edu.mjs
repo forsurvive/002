@@ -666,7 +666,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
   }
   async function revokeKey(user, ownerType, ownerId, orgId, provider, ip) {
     if (!credentials) return no(503, '지금은 할 수 없습니다', 'unavailable');
-    const live = (await credentials.list(ownerType, ownerId)).filter((c) => c.status === 'active' && c.provider === provider);
+    const live = (await credentials.list(ownerType, ownerId)).filter((c) => (c.status === 'active' || c.status === 'invalid') && c.provider === provider);   // «키가 맞지 않음» 행도 지운다
     if (!live.length) return NOT_FOUND;
     for (const c of live) await credentials.revoke(c.id);
     await log(user, orgId, 'credential.revoke', ownerType, ownerId, { provider, ownerType }, ip);

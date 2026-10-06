@@ -2462,6 +2462,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   await creds.set({ ownerType: 'user', ownerId: 'u_paste', provider: 'google', apiKey: ' "sk-paste-\u200b' + 'p'.repeat(20) + '\n" ' });
   eq('붙여 넣은 키의 군더더기를 걷는다', (await creds.resolve({ ownerUserId: 'u_paste' }, 'google')).credential.apiKey, 'sk-paste-' + 'p'.repeat(20));
   eq('키에 한글 등이 섞이면 저장하지 않는다', (await creds.set({ ownerType: 'user', ownerId: 'u_paste', provider: 'openai', apiKey: 'sk-키' + 'q'.repeat(20) })).error, 'key_chars');
+  const badRow = await creds.set({ ownerType: 'user', ownerId: 'u_inv', provider: 'anthropic', apiKey: 'sk-bad-' + 'b'.repeat(20) });
+  await creds.markVerified(badRow.credential.id, { ok: false, reason: 'auth' });
+  await creds.set({ ownerType: 'user', ownerId: 'u_inv', provider: 'anthropic', apiKey: 'sk-good-' + 'g'.repeat(20) });
+  ok('새 키를 넣으면 «키가 맞지 않음»으로 남은 옛 키도 거둔다', (await creds.list('user', 'u_inv')).filter((c) => c.status !== 'revoked').length === 1);
   eq('연결하지 않은 provider 는 «연결 필요»', (await creds.resolve({ ownerUserId: 'u_1' }, 'openai')).reason, 'credential_missing');
   // 행을 바꿔치기하면(다른 소유자의 행에 남의 봉인을 옮겨 붙이면) 열리지 않는다
   const orgRow = cstore._rows.find((r) => r.ownerType === 'organization');

@@ -222,9 +222,14 @@ export async function run({ pool, ok, eq }) {
     ok('**연결 확인 — 틀린 키는 «키가 맞지 않습니다»**', bad.ok && bad.verified === false && bad.say === '키가 맞지 않습니다', JSON.stringify(bad));
     await edu('edu-s2', 'me.key.set', { provider: 'openai', apiKey: 'sk-good-openai-0001' });
     const good = await edu('edu-s2', 'me.key.test', { provider: 'openai' });
+    ok('**새 키를 넣으면 «키가 맞지 않음»이던 옛 줄은 사라진다**', (await edu('edu-s2', 'me.key.list')).credentials.filter((c) => c.provider === 'openai' && c.status !== 'revoked').length === 1);
     ok('**연결 확인 — 맞는 키는 «연결됩니다», 확인한 때가 남는다**', good.verified === true && (await edu('edu-s2', 'me.key.list')).credentials.find((c) => c.provider === 'openai' && c.status === 'active').lastVerifiedAt > 0);
     ok('**키 지우기 — 그 회사 키가 끊긴다**', (await edu('edu-s2', 'me.key.revoke', { provider: 'openai' })).ok
       && !(await edu('edu-s2', 'me.key.list')).credentials.some((c) => c.provider === 'openai' && c.status === 'active'));
+    await edu('edu-s2', 'me.key.set', { provider: 'openai', apiKey: 'sk-fake-openai-0002' });
+    await edu('edu-s2', 'me.key.test', { provider: 'openai' });
+    ok('**«키가 맞지 않음»으로 남은 키도 지운다**', (await edu('edu-s2', 'me.key.revoke', { provider: 'openai' })).ok
+      && !(await edu('edu-s2', 'me.key.list')).credentials.some((c) => c.provider === 'openai' && c.status !== 'revoked'));
     // ---------------- AI 회사 고르기 — 사람 기본 · 작품마다 · 기관
     ok('사람마다 기본 회사를 고른다', (await edu('edu-s2', 'me.ai.set', { provider: 'google' })).ok && (await edu('edu-s2', 'me.memberships')).aiProvider === 'google');
     eq('모르는 회사는 고르지 못한다', (await edu('edu-s2', 'me.ai.set', { provider: 'mystery' })).status, 422);
