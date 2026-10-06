@@ -58,7 +58,11 @@ export function createAnthropicProvider({ baseUrl = 'https://api.anthropic.com',
       try {
         const res = await fetchImpl(baseUrl.replace(/\/+$/, '') + '/v1/messages', {
           method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-api-key': credential.apiKey, 'anthropic-version': ANTHROPIC_VERSION },
+          headers: {
+            'content-type': 'application/json', 'x-api-key': credential.apiKey, 'anthropic-version': ANTHROPIC_VERSION,
+            // 워크스페이스에 묶이지 않은 키는 어느 워크스페이스로 부를지 함께 알려야 한다(없으면 400)
+            ...(credential.workspaceId ? { 'anthropic-workspace-id': String(credential.workspaceId) } : {}),
+          },
           body: JSON.stringify(body),
           signal: ctl.signal,
         });

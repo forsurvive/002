@@ -79,7 +79,7 @@ export interface AIProvider {
 | 항목 | Anthropic (Messages) | OpenAI (Responses) | Google Gemini (generateContent) |
 |---|---|---|---|
 | 끝점 | `POST https://api.anthropic.com/v1/messages` | `POST https://api.openai.com/v1/responses` | `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` (스트림 `:streamGenerateContent?alt=sse`) |
-| 인증 | `x-api-key` + `anthropic-version` 헤더 | `Authorization: Bearer` | `x-goog-api-key` |
+| 인증 | `x-api-key` + `anthropic-version` 헤더(워크스페이스에 묶이지 않은 키는 `anthropic-workspace-id` 도 — 키와 함께 저장, 비밀 아님) | `Authorization: Bearer` | `x-goog-api-key` |
 | 시스템 프롬프트 | `system`(블록에 `cache_control` 로 캐시 지점) | `instructions` | `systemInstruction.parts[].text` |
 | 사용자 프롬프트 | `messages:[{role:'user', content}]` | `input` | `contents:[{role:'user', parts:[{text}]}]` |
 | 출력 상한 | `max_tokens`(필수) | `max_output_tokens` | `generationConfig.maxOutputTokens` |

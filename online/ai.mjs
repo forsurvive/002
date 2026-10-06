@@ -46,6 +46,8 @@ export function createKeyTester({ catalog, credentials, providers, log = () => {
     const cred = await credentials.resolve(owner, provider);
     if (!cred.ok) return { ok: false, reason: cred.reason };
     const r = await adapter.validateCredential(cred.credential, { model: entry.modelId });
+    // 워크스페이스에 묶이지 않은 Anthropic 키 — 갈래를 따로 두어 화면이 할 일을 말하게 한다
+    if (!r.ok && /not scoped to a workspace/i.test(r.detail || '')) r.reason = 'workspace';
     await credentials.markVerified(cred.credentialId, { ok: r.ok, reason: r.reason || '' });
     // 운영 로그에는 회사 · 갈래 · 상태 번호만(키 · 원문 없음) — «왜 안 붙나»를 Console 에서 가릴 수 있게
     if (!r.ok) log('key test ' + provider + ' ' + entry.modelId + ': ' + (r.reason || 'other') + (r.detail ? ' (' + r.detail + ')' : ''));

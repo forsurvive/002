@@ -4,7 +4,7 @@
 const toRow = (r) => r && ({
   id: r.id, ownerType: r.owner_type, ownerId: r.owner_id, provider: r.provider, label: r.label, status: r.status,
   keyHint: r.key_hint, sealed: r.sealed, lastVerifiedAt: r.last_verified_at ? new Date(r.last_verified_at).getTime() : 0,
-  lastErrorCode: r.last_error_code, createdBy: r.created_by, createdAt: new Date(r.created_at).getTime(),
+  lastErrorCode: r.last_error_code, workspaceId: r.workspace_id || '', createdBy: r.created_by, createdAt: new Date(r.created_at).getTime(),
 });
 
 const COLS = { status: 'status', label: 'label', lastVerifiedAt: 'last_verified_at', lastErrorCode: 'last_error_code', revokedAt: 'revoked_at' };
@@ -17,9 +17,9 @@ export function pgCredentialStore(pool) {
       await pool.query(`UPDATE provider_credentials SET status = 'revoked', revoked_at = now()
                          WHERE owner_type = $1 AND owner_id = $2 AND provider = $3 AND status = 'active'`, [row.ownerType, row.ownerId, row.provider]);
       const { rows } = await pool.query(
-        `INSERT INTO provider_credentials (id, owner_type, owner_id, provider, label, status, key_hint, sealed, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [row.id, row.ownerType, row.ownerId, row.provider, row.label || '', row.status || 'active', row.keyHint || '', row.sealed, String(row.createdBy || '')]);
+        `INSERT INTO provider_credentials (id, owner_type, owner_id, provider, label, status, key_hint, sealed, created_by, workspace_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [row.id, row.ownerType, row.ownerId, row.provider, row.label || '', row.status || 'active', row.keyHint || '', row.sealed, String(row.createdBy || ''), row.workspaceId || '']);
       return toRow(rows[0]);
     },
     async update(id, patch) {

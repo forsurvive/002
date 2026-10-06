@@ -66,7 +66,7 @@ const hintOf = (k) => (String(k).length >= 8 ? '…' + String(k).slice(-4) : '�
 // 화면에 내보내는 꼴 — 원문은 절대 싣지 않는다
 export const viewOf = (row) => ({
   id: row.id, provider: row.provider, ownerType: row.ownerType, status: row.status,
-  keyHint: row.keyHint, lastVerifiedAt: row.lastVerifiedAt || 0, lastErrorCode: row.lastErrorCode || '',
+  keyHint: row.keyHint, workspaceId: row.workspaceId || '', lastVerifiedAt: row.lastVerifiedAt || 0, lastErrorCode: row.lastErrorCode || '',
 });
 
 // ---------------------------------------------------------------- 저장소(메모리 구현 — 개발 · 시험용, 온라인은 같은 모양의 PostgreSQL 구현)
@@ -94,18 +94,21 @@ const newCredId = () => 'cred_' + Date.now().toString(36) + (++seq).toString(36)
  */
 export function createCredentialService({ store, keys }) {
   return {
-    async set({ ownerType, ownerId = '', provider, apiKey, label = '', createdBy = '' }) {
+    async set({ ownerType, ownerId = '', provider, apiKey, label = '', createdBy = '', workspaceId = '' }) {
       if (!OWNERS.includes(ownerType)) return { ok: false, error: 'owner' };
       if (!PROVIDER_IDS.includes(provider)) return { ok: false, error: 'provider' };
       const key = cleanKey(apiKey);
       if (key.length < 8) return { ok: false, error: 'key' };
       if (!/^[\x21-\x7e]+$/.test(key)) return { ok: false, error: 'key_chars' };   // 헤더에 실을 수 없는 글자 — 부르는 순간 끊긴다
+      // 워크스페이스 ID — Anthropic 만(워크스페이스에 묶이지 않은 키는 이것을 헤더로 보내야 한다). 비밀이 아니라 봉하지 않는다.
+      const ws = provider === 'anthropic' ? cleanKey(workspaceId) : '';
+      if (ws && !/^[A-Za-z0-9_-]{4,100}$/.test(ws)) return { ok: false, error: 'workspace' };
       const old = await store.findActive(ownerType, String(ownerId), provider);
       const id = newCredId();
       const sealed = seal(key, keys, { ownerType, ownerId: String(ownerId), provider, id });
       const row = await store.insert({
         id, ownerType, ownerId: String(ownerId), provider, label, status: 'active', keyHint: hintOf(key),
-        sealed, lastVerifiedAt: 0, lastErrorCode: '', createdBy, createdAt: Date.now(),
+        sealed, lastVerifiedAt: 0, lastErrorCode: '', createdBy, createdAt: Date.now(), workspaceId: ws,
       });
       if (old) await store.update(old.id, { status: 'revoked', revokedAt: Date.now() });
       // 앞서 «키가 맞지 않음»으로 남은 행도 거둔다 — 새 키를 넣었는데 옛 줄이 남아 지워지지 않는 일이 없게
@@ -119,7 +122,7 @@ export function createCredentialService({ store, keys }) {
       if (!row) return { ok: false, reason: 'credential_missing', ownerType, ownerId };
       try {
         const apiKey = cleanKey(open(row.sealed, keys, { ownerType, ownerId, provider, id: row.id }));   // 앞서 섞여 들어온 줄바꿈도 걷는다
-        return { ok: true, credential: { apiKey }, credentialId: row.id, ownerType, ownerId };
+        return { ok: true, credential: { apiKey, workspaceId: row.workspaceId || '' }, credentialId: row.id, ownerType, ownerId };
       } catch {
         return { ok: false, reason: 'credential_unreadable', ownerType, ownerId };
       }

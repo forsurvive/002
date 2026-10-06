@@ -19,7 +19,9 @@ export async function run({ pool, ok, eq }) {
   const credentials = createCredentialService({ store: pgCredentialStore(pool), keys: { keys: new Map([[1, randomBytes(32)]]), current: 1 } });
   // 키 연결 시험 — 가짜 회사: «sk-good» 으로 시작하는 키만 맞다
   const fakeCo = { validateCredential: async (c) => (c.apiKey.startsWith('sk-good') ? { ok: true } : { ok: false, reason: 'auth' }) };
-  const keyTester = createKeyTester({ catalog: createCatalog([{ provider: 'openai', tier: 'fast', modelId: 'gpt-fake' }]), credentials, providers: { openai: fakeCo } });
+  // 가짜 Anthropic: 워크스페이스에 묶이지 않은 키 — 워크스페이스 ID 가 있어야 붙는다(2026-10-06 실제 오류 문구)
+  const fakeAnth = { validateCredential: async (c) => (c.workspaceId ? { ok: true } : { ok: false, reason: 'invalid', detail: 'HTTP 400 invalid_request_error: This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header' }) };
+  const keyTester = createKeyTester({ catalog: createCatalog([{ provider: 'openai', tier: 'fast', modelId: 'gpt-fake' }, { provider: 'anthropic', tier: 'fast', modelId: 'claude-fake' }]), credentials, providers: { openai: fakeCo, anthropic: fakeAnth } });
   const codeKeys = { keys: new Map([[1, randomBytes(32)]]), current: 1 };
   const srv = createOnlineServer({ pool, plan: onlinePlan({}), credentials, keyTester, codeKeys });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -228,6 +230,15 @@ export async function run({ pool, ok, eq }) {
       && !(await edu('edu-s2', 'me.key.list')).credentials.some((c) => c.provider === 'openai' && c.status === 'active'));
     await edu('edu-s2', 'me.key.set', { provider: 'openai', apiKey: 'sk-fake-openai-0002' });
     await edu('edu-s2', 'me.key.test', { provider: 'openai' });
+    // 워크스페이스에 묶이지 않은 Claude 키 — 할 일을 말하고, ID 를 함께 넣으면 붙는다
+    await edu('edu-s2', 'me.key.set', { provider: 'anthropic', apiKey: 'sk-ant-noscope-0001' });
+    const nows = await edu('edu-s2', 'me.key.test', { provider: 'anthropic' });
+    ok('**워크스페이스가 필요한 키는 그렇게 말한다**', nows.verified === false && nows.reason === 'workspace' && /워크스페이스 ID/.test(nows.say), JSON.stringify(nows));
+    eq('워크스페이스 ID 꼴이 아니면 받지 않는다', (await edu('edu-s2', 'me.key.set', { provider: 'anthropic', apiKey: 'sk-ant-noscope-0001', workspaceId: '워크 스페이스' })).status, 422);
+    ok('**워크스페이스 ID 와 함께 넣으면 붙는다**', (await edu('edu-s2', 'me.key.set', { provider: 'anthropic', apiKey: 'sk-ant-noscope-0001', workspaceId: ' wrkspc_01Abc ' })).ok
+      && (await edu('edu-s2', 'me.key.test', { provider: 'anthropic' })).verified === true
+      && (await edu('edu-s2', 'me.key.list')).credentials.find((c) => c.provider === 'anthropic' && c.status === 'active').workspaceId === 'wrkspc_01Abc');
+    await edu('edu-s2', 'me.key.revoke', { provider: 'anthropic' });
     ok('**«키가 맞지 않음»으로 남은 키도 지운다**', (await edu('edu-s2', 'me.key.revoke', { provider: 'openai' })).ok
       && !(await edu('edu-s2', 'me.key.list')).credentials.some((c) => c.provider === 'openai' && c.status !== 'revoked'));
     // ---------------- AI 회사 고르기 — 사람 기본 · 작품마다 · 기관

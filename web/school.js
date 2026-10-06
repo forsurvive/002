@@ -240,6 +240,8 @@ async function copyWork(w) {
 
 // AI 회사 — 키를 넣을 때 고른다. 여럿 넣어 두면 Claude → ChatGPT → Gemini 차례로 쓴다(서버 ai/router.mjs).
 const AI_CO = { anthropic: 'Claude', openai: 'ChatGPT', google: 'Gemini' };
+// Claude 만 — 워크스페이스에 묶이지 않은 키는 워크스페이스 ID 를 함께 보내야 한다(비우면 보내지 않는다)
+const wsField = (k, id) => (provOf(k) === 'anthropic' ? field('워크스페이스 ID(필요할 때만)', id, 'text', { autocomplete: 'off', spellcheck: 'false', placeholder: 'wrkspc_…' }) : null);
 const AI_KEY_LABEL = { anthropic: 'Claude(Anthropic) API 키', openai: 'ChatGPT(OpenAI) API 키', google: 'Gemini(Google) API 키' };
 S.prov = {};
 S.lim = {};
@@ -269,7 +271,7 @@ const limitText = (l) => (l && (l.allowed_providers || l.allowed_model_tiers)
   : '');
 
 // 넣어 둔 키 — 회사 · 끝 네 자리 · 확인 상태, 그리고 [연결 확인] [지우기]
-const KEY_ERR = { auth: '키가 맞지 않음', credit: '잔액 없음', rate: '요청 많음', model: '모델 표 없음', overloaded: '회사 서버 바쁨', timeout: '응답 늦음', invalid: '요청 거절', other: '서버에 닿지 못함' };
+const KEY_ERR = { auth: '키가 맞지 않음', credit: '잔액 없음', rate: '요청 많음', model: '모델 표 없음', overloaded: '회사 서버 바쁨', timeout: '응답 늦음', workspace: '워크스페이스 ID 필요', invalid: '요청 거절', other: '서버에 닿지 못함' };
 function keyRows(list, op, extra, reload) {
   const live = (list || []).filter((x) => x.status === 'active' || x.status === 'invalid');
   if (!live.length) return h('div', { class: 'when', text: '아직 없습니다' });
@@ -287,7 +289,7 @@ function keyRows(list, op, extra, reload) {
     await reload();
   };
   return live.map((x) => h('div', { class: 'row', style: 'cursor:default' },
-    h('div', { class: 'name', text: (AI_CO[x.provider] || x.provider) + ' ' + x.keyHint }),
+    h('div', { class: 'name', text: (AI_CO[x.provider] || x.provider) + ' ' + x.keyHint + (x.workspaceId ? ' · ' + x.workspaceId : '') }),
     h('span', { class: 'mark', text: x.status === 'invalid' ? '키가 맞지 않음' : x.lastErrorCode ? (KEY_ERR[x.lastErrorCode] || '연결 안 됨') : x.lastVerifiedAt ? '확인됨 ' + day(x.lastVerifiedAt) : '확인 전' }),
     h('button', { class: 'btn-text', text: '연결 확인', onclick: () => test(x) }),
     h('button', { class: 'btn-text red', text: '지우기', onclick: () => revoke(x) })));
@@ -298,8 +300,9 @@ function myKeyBox() {
   const k = 'mykey';
   if (!S.open[k] && PAGE !== 'account') return h('button', { class: 'btn-text', text: '내 AI 키', onclick: async () => { S.myKeys = (await edu('me.key.list')).credentials || []; S.open[k] = true; render(); } });
   const save = async () => {
-    const r = await edu('me.key.set', { provider: provOf(k), apiKey: val('mk-key') });
+    const r = await edu('me.key.set', { provider: provOf(k), apiKey: val('mk-key'), workspaceId: $('mk-ws') ? val('mk-ws') : '' });
     if ($('mk-key')) $('mk-key').value = '';
+    if (r.ok && $('mk-ws')) $('mk-ws').value = '';
     if (!r.ok) return tell(r.error);
     if (S.me && r.aiProvider != null) S.me.aiProvider = r.aiProvider;
     S.myKeys = (await edu('me.key.list')).credentials || [];
@@ -316,6 +319,7 @@ function myKeyBox() {
     providerPick(k),
     h('div', { class: 'line', style: 'align-items:flex-end;margin-top:10px' },
       field(AI_KEY_LABEL[provOf(k)], 'mk-key', 'password', { autocomplete: 'off', spellcheck: 'false' }),
+      wsField(k, 'mk-ws'),
       h('button', { class: 'btn-red', text: '저장', onclick: save })));
 }
 
@@ -593,7 +597,7 @@ function aiTab(id) {
   const tier = (org.settings && org.settings.ai_tier) || 'balanced';
   const kk = 'ok-' + id;
   const saveKey = async () => {
-    const r = await edu('org.key.set', { orgId: id, provider: provOf(kk), apiKey: val(kk) });
+    const r = await edu('org.key.set', { orgId: id, provider: provOf(kk), apiKey: val(kk), workspaceId: $(kk + '-ws') ? val(kk + '-ws') : '' });
     if ($(kk)) $(kk).value = '';
     if (!r.ok) return tell(r.error);
     S.open['addkey-' + id] = false;
@@ -613,6 +617,7 @@ function aiTab(id) {
       providerPick(kk),
       h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
         field(AI_KEY_LABEL[provOf(kk)], kk, 'password', { autocomplete: 'off', spellcheck: 'false' }),
+        wsField(kk, kk + '-ws'),
         h('button', { class: 'btn-red', text: '저장', onclick: saveKey }),
         h('button', { class: 'btn-text', text: '취소', onclick: () => { S.open['addkey-' + id] = false; render(); } })))
       : h('button', { class: 'btn-line', style: 'margin-top:8px', text: '+ 키 넣기', onclick: () => { S.open['addkey-' + id] = true; render(); } }),
