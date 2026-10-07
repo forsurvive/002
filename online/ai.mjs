@@ -51,7 +51,7 @@ export function buildAi(pool, env = process.env, { providers: given, file, log }
       return r;
     },
   };
-  return { generator: createProviderRouter({ catalog, credentials, providers }), credentials, catalog, aliasTiers, problems, keyTester: createKeyTester({ catalog, credentials, providers, log }), subscription: sub };
+  return { generator: createProviderRouter({ catalog, credentials, providers, perKey: Number(env.SE_KEY_CONCURRENCY) || 4 }), credentials, catalog, aliasTiers, problems, keyTester: createKeyTester({ catalog, credentials, providers, log }), subscription: sub };
 }
 
 // 키 연결 시험 — 그 회사의 가장 싼 등급(fast, 없으면 balanced)으로 아주 짧게 한 번 부른다. 결과는 키 행에 적는다(markVerified).

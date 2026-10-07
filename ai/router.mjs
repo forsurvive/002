@@ -16,7 +16,36 @@ import { SAY } from './http.mjs';
  *   policy    { providers, tiers, allowPick, managedAi } — 기관 정책 · 라이선스가 정한 허용 범위
  *   model     { pick, agent, stage, project, org } — 각 { provider?, tier? }
  */
-export function createProviderRouter({ catalog, credentials, providers }) {
+// 키마다 동시 부르기 고삐 — 한 기관 키에 수업 전체가 한꺼번에 몰려 429 가 줄줄이 나는 것을 막는다(명세: credential 별 속도 고삐).
+// 넘치면 차례를 기다린다(작업을 세우면 기다리던 자리에서 곧바로 물러난다). 한 프로세스 안의 고삐다 — worker 를 여럿 띄우면 그 수만큼 곱해진다.
+function createGates(limit) {
+  const gates = new Map();   // credentialId → { n, wait: [] }
+  return {
+    async enter(id, signal) {
+      if (signal && signal.aborted) return false;   // 들어오기 전에 이미 세워졌다
+      if (!id || !(limit > 0)) return true;
+      const g = gates.get(id) || { n: 0, wait: [] };
+      gates.set(id, g);
+      if (g.n < limit) { g.n += 1; return true; }
+      return new Promise((resolve) => {
+        const w = { resolve };
+        g.wait.push(w);
+        if (signal) signal.addEventListener('abort', () => { const i = g.wait.indexOf(w); if (i >= 0) { g.wait.splice(i, 1); resolve(false); } }, { once: true });
+      });
+    },
+    leave(id) {
+      const g = id && gates.get(id);
+      if (!g) return;
+      const w = g.wait.shift();
+      if (w) { w.resolve(true); return; }   // 자리를 그대로 넘긴다
+      g.n -= 1;
+      if (!g.n) gates.delete(id);
+    },
+  };
+}
+
+export function createProviderRouter({ catalog, credentials, providers, perKey = 4 }) {
+  const gates = createGates(perKey);
   return {
     id: 'router',
     async generate(input = {}) {
@@ -59,12 +88,16 @@ export function createProviderRouter({ catalog, credentials, providers }) {
       routing.ownerType = cred.ownerType || '';
       if (!cred.ok) return { ...failure('credential', 'AI 연결이 필요합니다'), routing };
       routing.credentialId = cred.credentialId;
-      const r = await adapter.generate({
-        ...input,
-        model: entry.modelId,
-        maxOutputTokens: input.maxOutputTokens || entry.maxOutputTokens || 0,
-        credential: cred.credential,
-      });
+      if (!(await gates.enter(cred.credentialId, input.signal))) return { ...failure('stopped', SAY.stopped), routing };
+      let r;
+      try {
+        r = await adapter.generate({
+          ...input,
+          model: entry.modelId,
+          maxOutputTokens: input.maxOutputTokens || entry.maxOutputTokens || 0,
+          credential: cred.credential,
+        });
+      } finally { gates.leave(cred.credentialId); }
       const cost = r.ok && r.costUsd == null && entry.price ? estimateCost(r.usage, entry.price) : r.costUsd;
       return { ...r, costUsd: cost == null ? null : cost, costSource: r.costSource !== 'none' ? r.costSource : cost == null ? 'none' : 'estimated', routing };
     },

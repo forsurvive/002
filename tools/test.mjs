@@ -2527,6 +2527,23 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   rr = await router3.generate({ userPrompt: '써라', metadata: { project: { ownerUserId: 'u_gem' }, model: { project: { provider: 'openai' }, org: { provider: 'google' } } } });
   ok('라우터: 작품이 고른 회사가 기본보다 앞선다', rr.ok && rr.routing.provider === 'openai');
 
+  // ── 키마다 동시 부르기 고삐 — 같은 키로는 perKey 개까지만, 넘치면 기다린다. 기다리다 세우면 곧바로 물러난다.
+  {
+    let live = 0, peak = 0;
+    const slow = { id: 'anthropic', generate: async () => { live++; peak = Math.max(peak, live); await new Promise((x) => setTimeout(x, 40)); live--; return prov.success({ text: '답' }); } };
+    const rg = createProviderRouter({ catalog: C3, credentials: creds, providers: { anthropic: slow }, perKey: 2 });
+    await creds.set({ ownerType: 'user', ownerId: 'u_gate', provider: 'anthropic', apiKey: 'sk-gate-key-00000000' });
+    const meta = { project: { ownerUserId: 'u_gate' }, model: { project: { provider: 'anthropic', tier: 'balanced' } } };
+    const outs = await Promise.all(Array.from({ length: 6 }, () => rg.generate({ userPrompt: '써라', metadata: meta })));
+    ok('**키 고삐: 같은 키로는 동시에 2개까지 — 나머지는 차례를 기다려 모두 끝난다**', peak === 2 && outs.every((x) => x.ok), 'peak ' + peak);
+    const ctl = new AbortController();
+    const hold = [rg.generate({ userPrompt: '써라', metadata: meta }), rg.generate({ userPrompt: '써라', metadata: meta })];
+    const waiting = rg.generate({ userPrompt: '써라', metadata: meta, signal: ctl.signal });
+    ctl.abort();
+    eq('키 고삐: 기다리다 세우면 stopped 로 물러난다', (await waiting).reason, 'stopped');
+    await Promise.all(hold);
+  }
+
   // ── 운영자 구독(ai/subscription.mjs) — 늘 'sub'(API 키를 지운다) · 고정 문구 · 비용으로 적지 않음
   const subM = await import('../ai/subscription.mjs');
   const subCalls = [];

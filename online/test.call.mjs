@@ -145,6 +145,16 @@ export async function run({ pool, ok, eq }) {
     await pool.query(`UPDATE licenses SET allowed_providers = NULL WHERE id = $1`, [lic]);
     const ro = await ocS({ pid: bopid, code: 'F-UPDATE', refIds: [], keepSeat: true }, { userId: boss.id });
     ok('**운영자라도 기관 작품은 구독으로 가지 않는다(기관 키)**', ro.ok && subSeen.length === 1 && apiSeen.length === 1 && apiSeen[0].credential, JSON.stringify(ro).slice(0, 120));
+    // 사용량 장부(migrations/013) — 끝나는 순간 한 번만 더한다
+    const led = async () => (await pool.query(`SELECT calls, cost_source, credential_owner_type FROM usage_ledger WHERE owner_user_id = $1 AND organization_id IS NULL`, [boss.id])).rows;
+    let L = await led();
+    ok('**장부: 운영자 구독 부르기는 subscription 줄로 한 번**', L.length === 1 && L[0].calls === 1 && L[0].cost_source === 'subscription' && L[0].credential_owner_type === 'user', JSON.stringify(L));
+    await pool.query(`UPDATE generation_runs SET status = 'succeeded', elapsed_ms = elapsed_ms + 1 WHERE id = $1`, [rs.runId]);
+    L = await led();
+    eq('**장부: 끝난 기록을 다시 고쳐도 두 번 세지 않는다**', L[0].calls, 1);
+    const orgLed = (await pool.query(`SELECT sum(calls)::int AS n FROM usage_ledger WHERE organization_id = $1 AND credential_owner_type = 'organization'`, [org])).rows[0].n;
+    const orgRuns = (await pool.query(`SELECT count(*)::int AS n FROM generation_runs WHERE organization_id = $1 AND credential_owner_type = 'organization' AND status <> 'running'`, [org])).rows[0].n;
+    eq('장부의 기관 합계 = 기관 키로 끝난 부르기 수', orgLed, orgRuns);
     // 운영자가 아닌 사람은 설정이 박혀 있어도 구독으로 가지 않는다
     await pool.query(`UPDATE users SET settings = settings || '{"ai_billing":"subscription"}' WHERE id = $1`, [u.id]);
     await ocS({ pid, code: 'F-UPDATE', refIds: [d1], keepSeat: true }, { userId: u.id });

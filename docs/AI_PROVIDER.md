@@ -185,6 +185,14 @@ resolveCredential(project, provider):
 - usage 는 지금처럼 `{ input, output, cacheRead, cacheWrite, costUsd }` 를 받아 공통 `Usage` 로 옮긴다. `limit`(rate_limit_event)은 그대로 넘겨 한도 물음이 돈다.
 - 모의(`SE2_MOCK=1`)·시험 주입(`globalThis.__SE2_MOCK_FN`)도 그대로 — 시험 676 이 기대는 길이다.
 
+## 7-1. 사용량 장부 · 키 고삐(2026-10-07)
+
+- **장부**(`usage_ledger`, migrations/013): 끝난 부르기를 날 · 기관 · 작품 주인 · 비용 주체 · 회사 · 모델 · 비용 출처마다 한 줄로 더한다.
+  채우는 것은 `generation_runs` 의 방아쇠 하나(running → 끝나는 순간 한 번) — 어느 길로 기록되든 어긋나지 않고, 다시 고쳐도 두 번 세지 않는다(시험).
+  «사용량 보기»(`usage.summary`)는 장부에서 달마다 모은다. 운영자 구독 몫은 `cost_source = 'subscription'` 으로 따로 보인다.
+- **키 고삐**: 같은 키로 동시에 부르는 수를 `SE_KEY_CONCURRENCY`(기본 4)로 묶는다 — 넘치면 차례를 기다리고, 작업을 세우면 기다리던 자리에서 물러난다.
+  한 프로세스 안의 고삐다(worker 를 여럿 띄우면 그 수만큼 곱해진다). 회사의 429 는 그대로 «잠시 밀림 → 자동 재시도»로 간다.
+
 ## 9-1. 운영자 구독(SubscriptionProvider, 2026-10-07 사용자 지시)
 
 최상위 운영자 **본인의 개인 작품**만 API 키 대신 Claude 구독(Claude Code 로그인)으로 돌 수 있다.

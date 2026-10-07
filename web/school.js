@@ -373,7 +373,8 @@ const usageRows = (key) => (S.usage[key] ? h('div', { style: 'margin-top:8px' },
   ? S.usage[key].map((u) => h('div', { class: 'row', style: 'cursor:default' },
     h('div', { class: 'name', text: u.month + ' · ' + u.model_id }),
     h('span', { class: 'mark', text: '호출 ' + u.calls + (u.failed ? ' (실패 ' + u.failed + ')' : '') }),
-    h('div', { class: 'when', text: '입력 ' + u.input_tokens.toLocaleString() + ' · 출력 ' + u.output_tokens.toLocaleString() + ' 토큰 · 추정 $' + u.cost_usd.toFixed(2) })))
+    // 운영자 구독으로 돈 몫은 돈이 따로 나가지 않는다 — 금액 대신 «구독»
+    h('div', { class: 'when', text: '입력 ' + u.input_tokens.toLocaleString() + ' · 출력 ' + u.output_tokens.toLocaleString() + ' 토큰 · ' + (u.subscription ? '구독' + (u.cost_usd ? ' + 추정 $' + u.cost_usd.toFixed(2) : '') : '추정 $' + u.cost_usd.toFixed(2)) })))
   : h('div', { class: 'when', text: '아직 쓴 것이 없습니다' }),
 h('div', { class: 'when', style: 'margin-top:6px', text: '금액은 모델 가격표로 낸 추정입니다 — 정확한 청구는 AI 회사의 청구서를 보세요' })) : null);
 

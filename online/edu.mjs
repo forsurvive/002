@@ -433,18 +433,19 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       let where; let args;
       if (b.orgId) {
         if (!isUuid(b.orgId) || !(await isAdmin(user, b.orgId))) return NOT_FOUND;
-        where = `r.organization_id = $1 AND r.credential_owner_type = 'organization'`; args = [b.orgId];
+        where = `l.organization_id = $1 AND l.credential_owner_type = 'organization'`; args = [b.orgId];
       } else {
-        // 내 키로 돈 것(개인 프로젝트) — 기관 학생이라도 기관 키로 돈 것은 여기 들지 않는다
-        where = `r.credential_owner_type = 'user' AND p.owner_user_id = $1 AND p.organization_id IS NULL`; args = [user.id];
+        // 내 키로 돈 것(개인 프로젝트) — 기관 학생이라도 기관 키로 돈 것은 여기 들지 않는다. 운영자 구독으로 돈 것도 따로 보인다(subscription).
+        where = `l.credential_owner_type = 'user' AND l.owner_user_id = $1 AND l.organization_id IS NULL`; args = [user.id];
       }
+      // 사용량 장부(migrations/013) — 끝난 부르기를 날마다 모은 합계에서 달마다 다시 모은다
       const rows = (await pool.query(
-        `SELECT to_char(date_trunc('month', r.started_at), 'YYYY-MM') AS month, r.provider, r.model_id, count(*)::int AS calls,
-                sum(r.input_tokens)::bigint AS input_tokens, sum(r.output_tokens)::bigint AS output_tokens,
-                sum(r.cache_read_tokens)::bigint AS cache_read_tokens, round(coalesce(sum(r.cost_usd), 0)::numeric, 4)::text AS cost_usd,
-                sum(CASE WHEN r.status = 'succeeded' THEN 0 ELSE 1 END)::int AS failed
-           FROM generation_runs r JOIN projects p ON p.id = r.project_id
-          WHERE ${where} AND r.provider <> ''
+        `SELECT to_char(date_trunc('month', l.day), 'YYYY-MM') AS month, l.provider, l.model_id, sum(l.calls)::int AS calls,
+                sum(l.input_tokens)::bigint AS input_tokens, sum(l.output_tokens)::bigint AS output_tokens,
+                sum(l.cache_read_tokens)::bigint AS cache_read_tokens, round(sum(l.cost_usd)::numeric, 4)::text AS cost_usd,
+                sum(l.failed)::int AS failed, bool_or(l.cost_source = 'subscription') AS subscription
+           FROM usage_ledger l
+          WHERE ${where} AND l.provider <> ''
           GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2, 3`, args)).rows;
       return ok({ usage: rows.map((r) => ({ ...r, input_tokens: Number(r.input_tokens), output_tokens: Number(r.output_tokens), cache_read_tokens: Number(r.cache_read_tokens), cost_usd: Number(r.cost_usd) })), estimated: true });
     },
