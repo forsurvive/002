@@ -91,7 +91,8 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
       // 수업 안에 만들면 그 기관 · 수업에 묶인다(비용 주체 ORGANIZATION — 기관 키로 돈다)
       const id = await store.create(fields, { ownerUserId: user.id, organizationId: place ? place.organizationId : null, classId: place ? place.classId : null });
       // 수업 작품은 기관이 정한 기본 등급으로 시작한다(학생이 설정 탭에서 바꿀 수 있다 — 라이선스가 허락하는 안에서)
-      const orgTier = place && pool ? ((await pool.query(`SELECT settings->>'ai_tier' AS t FROM organizations WHERE id = $1`, [place.organizationId])).rows[0] || {}).t : '';
+      // 기관이 아직 고르지 않았으면 Balanced — 관리 화면이 «Balanced (기본)»으로 보여 주는 값과 같게(2026-10-07 검수: 비워 두면 최상위 등급으로 돌았다)
+      const orgTier = place && pool ? ((await pool.query(`SELECT settings->>'ai_tier' AS t FROM organizations WHERE id = $1`, [place.organizationId])).rows[0] || {}).t || 'balanced' : '';
       const startAlias = Object.keys(DEFAULT_ALIAS_TIERS).find((a) => DEFAULT_ALIAS_TIERS[a] === orgTier) || '';
       // 만들며 넣은 자료는 곧바로 «자료» 카테고리의 문서가 된다(개인판 state.create 와 같다)
       await store.update(id, (p) => { p.materials = fields.materials || []; materialsToDocs(p); if (startAlias) p.model = startAlias; }, by);

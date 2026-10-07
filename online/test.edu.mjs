@@ -147,6 +147,7 @@ export async function run({ pool, ok, eq }) {
     // ---------------- 수업 프로젝트 → 수업 현황
     const proj = await api('edu-s1', 'project.create', { classId: c1.id, name: '하나의 과제', spec: { form: '단편' }, materials: [{ name: '자료', text: '글' }] });
     ok('학생이 수업 프로젝트를 만든다', proj.ok);
+    eq('**기관이 등급을 고르지 않았으면 수업 작품은 Balanced 로 시작한다(화면의 «기본»과 같게)**', (await pool.query(`SELECT model_policy->>'alias' AS a FROM projects WHERE id = $1`, [proj.pid])).rows[0].a, 'sonnet');
     const home = await (await fetch(base + '/api/state', { headers: { cookie: jar['edu-s1'] } })).json();
     ok('**«어디에 만들까요?» — 학생에게 열린 수업이 보인다**', home.me.places.some((x) => x.classId === c1.id && x.name && x.orgName));
     ok('**작업실 목록에 수업 작품의 소속(수업 이름)이 보인다**', home.projects.find((x) => x.id === proj.pid).place === '웹소설 1반');
