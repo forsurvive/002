@@ -1042,15 +1042,28 @@ function promptPanel(close) {
       h('div', null, h('div', { class: 'lab', text: '프롬프트' }), area('pr-craft', '프롬프트', one.craft, { class: 'body-edit', onblur: save }))));
 }
 
-// 글 파일만(txt · md) · 한 파일 2MB 까지 — 그림 · 문서 파일(hwp · docx · pdf)은 글로 읽히지 않는다. 서버도 다시 거른다.
+// 글 파일(txt · md, 2MB 까지)과 문서 파일(docx · pdf, 20MB 까지 — 글만 뽑아 넣는다, web/textfile.js). 서버는 뽑은 글만 받고 다시 거른다.
+// hwp 는 읽지 못한다(한글에서 docx · pdf · txt 로 저장해 넣는다). 스캔한 그림 PDF 도 글이 없어 못 읽는다.
 const FILE_MAX = 2 * 1024 * 1024;
+const DOC_MAX = 20 * 1024 * 1024;
 const TEXT_EXT = /\.(txt|md|markdown|text)$/i;
+const DOC_EXT = /\.(docx|pdf)$/i;
 function fileButton(onRead, onBad = (m) => { S.open.err = m; render(); }) {
   const input = h('input', {
-    type: 'file', style: 'display:none', multiple: true, accept: '.txt,.md,.markdown,.text,text/plain,text/markdown',
+    type: 'file', style: 'display:none', multiple: true, accept: '.txt,.md,.markdown,.text,.docx,.pdf,text/plain,text/markdown,application/pdf',
     onchange: (e) => {
       for (const f of e.target.files) {
-        if (!TEXT_EXT.test(f.name) && !/^text\//.test(f.type || '')) { onBad(f.name + ' — txt · md 파일만 넣을 수 있습니다'); continue; }
+        if (DOC_EXT.test(f.name)) {
+          if (f.size > DOC_MAX) { onBad(f.name + ' — 파일이 너무 큽니다(20MB 까지)'); continue; }
+          if (!window.SEText) { onBad(f.name + ' — 문서 파일을 읽는 부분을 불러오지 못했습니다'); continue; }
+          window.SEText.textOf(f).then((t) => {
+            if (t.length > FILE_MAX) return onBad(f.name + ' — 뽑은 글이 너무 깁니다(2MB 까지) — 나눠서 넣어 주세요');
+            onRead(f.name.replace(DOC_EXT, ''), t);
+          }).catch((err) => onBad(f.name + ' — ' + String((err && err.message) || err)));
+          continue;
+        }
+        if (/\.hwpx?$/i.test(f.name)) { onBad(f.name + ' — 한글(hwp) 파일은 읽지 못합니다. 한글에서 docx · pdf · txt 로 저장해 넣어 주세요'); continue; }
+        if (!TEXT_EXT.test(f.name) && !/^text\//.test(f.type || '')) { onBad(f.name + ' — txt · md · docx · pdf 파일만 넣을 수 있습니다'); continue; }
         if (f.size > FILE_MAX) { onBad(f.name + ' — 파일이 너무 큽니다(2MB 까지)'); continue; }
         const rd = new FileReader();
         rd.onload = () => {

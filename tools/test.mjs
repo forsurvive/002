@@ -339,7 +339,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('초대 · 재설정 코드는 링크로도 보낸다(재설정은 1:1 안내) · 링크로 오면 첫 화면이 코드를 채운다',
     src(join(ROOT, 'web', 'school.js')).includes("'/login?invite='") && src(join(ROOT, 'web', 'school.js')).includes("'/login?reset='") && src(join(ROOT, 'web', 'school.js')).includes('1:1로 보내세요')
     && src(join(ROOT, 'web', 'login.js')).includes("q.get('invite')") && src(join(ROOT, 'web', 'login.js')).includes("q.get('reset')"));
-  ok('화면은 txt · md · 2MB 만 고른다', src(join(ROOT, 'web', 'app.js')).includes("accept: '.txt,.md,.markdown,.text,text/plain,text/markdown'") && src(join(ROOT, 'web', 'app.js')).includes('const FILE_MAX = 2 * 1024 * 1024;'));
+  // 2026-10-07: docx · pdf 도 받는다(브라우저에서 글만 뽑아 — 뽑은 글도 2MB 까지)
+  ok('화면은 txt · md(2MB) · docx · pdf(20MB, 뽑은 글 2MB)만 고른다', src(join(ROOT, 'web', 'app.js')).includes("accept: '.txt,.md,.markdown,.text,.docx,.pdf,text/plain,text/markdown,application/pdf'")
+    && src(join(ROOT, 'web', 'app.js')).includes('const FILE_MAX = 2 * 1024 * 1024;') && src(join(ROOT, 'web', 'app.js')).includes('if (t.length > FILE_MAX)'));
 
   // 작품 통째로 — 내려받은 파일을 가져오면 새 작품(새 id)으로 문서 · 판 · 참조 · 논의가 그대로
   const dlp = await fetch(base + '/api/download?pid=' + pid + '&kind=project&id=');
@@ -2541,6 +2543,59 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('**라우터: billing=subscription 이면 키 없이 구독 어댑터로 · Claude 모델로**', rr.ok && subCalls.at(-1).model === 'claude-test-b' && rr.routing.billing === 'subscription' && rr.routing.credentialId === '', JSON.stringify(rr.routing));
   rr = await createProviderRouter({ catalog: C3, credentials: creds, providers: { anthropic: fakeAdapter('anthropic') } }).generate({ userPrompt: '써라', metadata: { project: { ownerUserId: 'u_none' }, billing: 'subscription', model: { project: { tier: 'balanced' } } } });
   eq('라우터: 구독 어댑터가 없으면 «연결 필요»(키로 새지 않는다)', rr.reason, 'credential');
+}
+
+// ---------------------------------------------------------------- 문서 파일(docx · pdf)에서 글 뽑기 — web/textfile.js(브라우저 안, 의존성 없음)
+{
+  const { deflateRawSync, deflateSync } = await import('node:zlib');
+  const vm = await import('node:vm');
+  const tctx = { DecompressionStream, Response, Blob, TextDecoder, Uint8Array, DataView, Map, Error, String, Number, Math, Array, Object };
+  tctx.globalThis = tctx;
+  vm.runInNewContext(src(join(ROOT, 'web', 'textfile.js')), tctx);
+  const T = tctx.SEText;
+  const zipOf = (files) => {
+    const parts = [], central = []; let off = 0;
+    for (const [name, text] of files) {
+      const data = Buffer.from(text, 'utf8'); const comp = deflateRawSync(data); const nb = Buffer.from(name);
+      const lh = Buffer.alloc(30); lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(8, 8); lh.writeUInt32LE(comp.length, 18); lh.writeUInt32LE(data.length, 22); lh.writeUInt16LE(nb.length, 26);
+      parts.push(lh, nb, comp);
+      const ch = Buffer.alloc(46); ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(8, 10); ch.writeUInt32LE(comp.length, 20); ch.writeUInt32LE(data.length, 24); ch.writeUInt16LE(nb.length, 28); ch.writeUInt32LE(off, 42);
+      central.push(ch, nb); off += 30 + nb.length + comp.length;
+    }
+    const cd = Buffer.concat(central); const e = Buffer.alloc(22); e.writeUInt32LE(0x06054b50, 0); e.writeUInt16LE(files.length, 8); e.writeUInt16LE(files.length, 10); e.writeUInt32LE(cd.length, 12); e.writeUInt32LE(off, 16);
+    return new Uint8Array(Buffer.concat([...parts, cd, e]));
+  };
+  const docx = zipOf([['[Content_Types].xml', '<x/>'], ['word/document.xml', '<w:document><w:body><w:p><w:r><w:t>첫 문단 &amp; &quot;인용&quot;</w:t></w:r><w:r><w:tab/><w:t xml:space="preserve"> 이어서</w:t></w:r></w:p><w:p/><w:p><w:r><w:t>둘째</w:t><w:br/><w:t>줄</w:t></w:r></w:p></w:body></w:document>']]);
+  eq('docx: 문단 · 탭 · 줄바꿈 · 글자 풀이', await T.docxText(docx), '첫 문단 & "인용"\t 이어서\n\n둘째\n줄');
+  // pdf — CID 글꼴(ToUnicode bfchar · bfrange) · 압축 · 객체 흐름(ObjStm) 안의 글꼴 · Type1 글꼴의 글줄 · 페이지 차례
+  const cmapSrc = 'begincmap 1 begincodespacerange <0000> <FFFF> endcodespacerange 2 beginbfchar <0001> <AC00> <0002> <B098> endbfchar 1 beginbfrange <0003> <0004> <B2E4> endbfrange endcmap';
+  const o5 = '<< /Type /Font /Subtype /Type0 /BaseFont /KR /Encoding /Identity-H /ToUnicode 6 0 R >>';
+  const stmHead = '5 0 7 60 ';
+  const fl = (x) => deflateSync(Buffer.from(x, 'latin1'));
+  const pdfOf = (pageOrder) => {
+    const ch = []; const add = (x) => ch.push(Buffer.isBuffer(x) ? x : Buffer.from(x, 'latin1'));
+    const str = (n, dict, body) => { const c = fl(body); add(n + ' 0 obj << ' + dict + ' /Length ' + c.length + ' /Filter /FlateDecode >>\nstream\n'); add(c); add('\nendstream endobj\n'); };
+    add('%PDF-1.5\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n');
+    add('2 0 obj << /Type /Pages /Kids [' + pageOrder.map((n) => n + ' 0 R').join(' ') + '] /Count 2 /Resources << /Font << /F1 5 0 R /F2 7 0 R >> >> >> endobj\n');
+    add('3 0 obj << /Type /Page /Parent 2 0 R /Contents 4 0 R >> endobj\n9 0 obj << /Type /Page /Parent 2 0 R /Contents 10 0 R >> endobj\n');
+    str(4, '', 'BT /F1 12 Tf 72 700 Td <00010002> Tj 0 -20 Td [<0003> -300 <0004>] TJ ET BT /F2 10 Tf 72 600 Td (Hello \\(PDF\\)) Tj ET');
+    str(10, '', 'BT /F2 10 Tf 72 700 Td (page two) Tj ET');
+    str(6, '', cmapSrc);
+    str(8, '/Type /ObjStm /N 2 /First ' + stmHead.length, stmHead + o5.padEnd(60, ' ') + '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+    add('trailer << /Root 1 0 R >>\n%%EOF\n');
+    return new Uint8Array(Buffer.concat(ch));
+  };
+  eq('**pdf: 한글 CID 글꼴을 ToUnicode 로 풀고 · 객체 흐름 안 글꼴도 찾는다**', await T.pdfText(pdfOf([3, 9])), '가나\n다 닥\nHello (PDF)\n\npage two');
+  eq('pdf: 페이지는 Pages 나무 차례대로', (await T.pdfText(pdfOf([9, 3]))).split('\n')[0], 'page two');
+  let why = '';
+  try { await T.pdfText(new Uint8Array(Buffer.from('%PDF-1.4\n1 0 obj << /Encrypt 2 0 R >> endobj'))); } catch (e) { why = e.message; }
+  ok('암호 PDF 는 까닭을 말하고 받지 않는다', /암호/.test(why));
+  why = ''; try { await T.pdfText(new Uint8Array(Buffer.from('not a pdf'))); } catch (e) { why = e.message; } ok('pdf 가 아니면 받지 않는다', /pdf 파일이 아닙니다/.test(why));
+  why = ''; try { await T.docxText(new Uint8Array(Buffer.from('PK nope'))); } catch (e) { why = e.message; } ok('docx 가 아니면 받지 않는다', /docx/.test(why));
+  const idx = src(join(ROOT, 'web', 'index.html'));
+  ok('화면이 글 뽑기를 app.js 앞에 싣는다', idx.indexOf('textfile.js') > 0 && idx.indexOf('textfile.js') < idx.indexOf('app.js'));
+  const appSrc = src(join(ROOT, 'web', 'app.js'));
+  ok('[파일 선택]이 docx · pdf 를 받고 hwp 는 까닭을 말한다', /accept: '[^']*\.docx,\.pdf/.test(appSrc) && /한글\(hwp\) 파일은 읽지 못합니다/.test(appSrc));
 }
 
 // ---------------------------------------------------------------- 호스팅 실행 — 포트 · 주소 · 허용 호스트 · 출입 열쇠
