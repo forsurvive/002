@@ -83,7 +83,8 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
   const state = {
     // 작업 줄은 jobs 표가 맡는다 — 덩어리에 싣지 않고 읽을 때 붙인다(화면은 개인판과 같은 p.jobs 를 본다)
     async get(pid) {
-      const p = await store.get(pid);
+      // 사람의 눈으로 — DB 2차 격리(se_reader 행 정책)가 있으면 그 역할로 읽는다(online/store.mjs getAs)
+      const p = store.getAs ? await store.getAs(pid, user.id) : await store.get(pid);
       if (p) p.jobs = await queue.list(pid);
       return p;
     },

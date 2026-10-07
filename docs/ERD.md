@@ -144,6 +144,10 @@ CREATE INDEX runs_org_time ON generation_runs (organization_id, started_at);
    - 기관 프로젝트: 학생 = 소유자만 · 강사 = 그 수업(`class_members`)의 학생 프로젝트 읽기 · 기관 관리자 = 기관 정책이 허락한 범위 · 플랫폼 관리자 = 운영에 필요한 최소.
    - 클라이언트가 보낸 `pid` 는 «요청»일 뿐이다. 서버가 위 규칙으로 다시 판정한다(명세 §30 «B 학교 학생이 A 학교 id 를 넣어도 못 본다»).
 2. **DB(2차, Phase 4)**: PostgreSQL RLS — 트랜잭션마다 `SET LOCAL app.user_id`/`app.org_ids` 를 걸고 `projects` 이하 표에 정책을 둔다.
+   → 구현(2026-10-07, migrations/014): 작품 내용을 «사람의 눈으로» 읽는 길(`/api/state` · 내려받기 — `store.getAs`)은 한 트랜잭션 안에서
+   `SET LOCAL ROLE se_reader` + `app.user_id` 로 읽는다. `se_reader` 에는 작품 · 문서 · 판 · 참조 · 카테고리 · 에이전트 · 스레드 · 휴지통 등 14표에
+   SELECT 정책(`se_can_read` — tenancy 의 «읽기»와 같은 규칙)만 있고 쓰기 권한은 없다. 쓰기 길 · worker 는 표의 주인으로 돌아 RLS 를 지나간다(FORCE 없음).
+   역할을 만들 권한이 없는 DB 면 마이그레이션이 그냥 지나가고 앱은 1차 판정만으로 돈다(`store.readerOn()` 이 false). 시험: `online/test.rls.mjs`.
    worker 는 작업의 프로젝트 하나로 범위를 좁힌 같은 방식으로 붙는다.
 
 ## 6. 지금 JSON → 표 대응(요약)

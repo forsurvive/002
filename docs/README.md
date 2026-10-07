@@ -29,5 +29,5 @@
 | Phase 9 — 작품 파일 내보내기/가져오기 · 글 파일(txt/md) 자료 | 완료 · docx/pdf 자료 · 파일 저장소는 아직 |
 | Sprint 15~16 — 파일럿 · production | 게시 중(Replit). 사람 검수 → 파일럿 |
 
-남은 것(검수를 막지 않음): DB RLS(2차 격리 — 1차는 서버 판정 한 곳 `online/tenancy.mjs` + 시험) · 별도 사용량 장부 표(지금은 `generation_runs` 로 집계) ·
-상태 알림을 폴링 대신 SSE/NOTIFY 로 · 키별 호출 속도 고삐 · docx/pdf 자료 · 파일 저장소. 사람이 정할 것: SECURITY.md §7(개인정보 · 보존 · 미성년자 · 결제).
+2026-10-07 더한 것: 운영자 구독(AI_PROVIDER §9-1) · 바뀜 알림 SSE/NOTIFY(API.md) · docx/pdf 자료(DESIGN «자료») · 사용량 장부 · 키 고삐(AI_PROVIDER §7-1) · DB 2차 격리 RLS(ERD «격리»).
+남은 것: 파일 저장소(원본 파일 보관 — 지금은 뽑은 글만 둔다, 필요해지면). 사람이 정할 것: SECURITY.md §7(개인정보 · 보존 · 미성년자 · 결제).

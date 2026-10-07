@@ -359,11 +359,36 @@ async function saveAggregate(db, pid, before, after, maps, { userId = null, runI
  *   get(pid) · update(pid, fn, { userId }) · create(fields, { ownerUserId, organizationId }) · remove(pid) · listFor(userId)
  */
 export function createProjectStore(pool) {
+  // DB 2차 격리를 쓸 수 있는가(migrations/014 가 se_reader 를 세웠고 이 연결이 그 역할로 바꿀 수 있는가) — 한 번만 본다
+  let readerOk = null;
+  const reader = () => (readerOk ??= pool.query(`SELECT pg_has_role(current_user, 'se_reader', 'MEMBER') AS ok FROM pg_roles WHERE rolname = 'se_reader'`)
+    .then((r) => !!(r.rows[0] && r.rows[0].ok)).catch(() => false));
   return {
     async get(pid) {
       const r = await loadAggregate(pool, pid);
       return r ? r.project : null;
     },
+
+    // 사람의 눈으로 읽기 — se_reader 역할 + app.user_id 로 한 트랜잭션 안에서 읽는다. 행 정책이 그 사람이 읽을 수 없는 행을 걸러 낸다.
+    // 역할이 없는 DB(만들 권한이 없었다)면 get 과 같다(1차 판정 tenancy 만).
+    async getAs(pid, userId) {
+      if (!userId || !(await reader())) return this.get(pid);
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN READ ONLY');
+        await c.query('SET LOCAL ROLE se_reader');
+        await c.query(`SELECT set_config('app.user_id', $1, true)`, [String(userId)]);
+        const r = await loadAggregate(c, pid);
+        await c.query('COMMIT');
+        return r ? r.project : null;
+      } catch (e) {
+        try { await c.query('ROLLBACK'); } catch { /* 끊김 */ }
+        throw e;
+      } finally {
+        c.release();
+      }
+    },
+    readerOn: () => reader(),
 
     async update(pid, fn, { userId = null, runId = null } = {}) {
       const c = await pool.connect();
