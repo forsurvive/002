@@ -64,8 +64,8 @@ function noAutofill(n, attrs) {
   const a = attrs || {};
   if (['hidden', 'checkbox', 'radio', 'file', 'range', 'color'].includes(a.type) || a.readonly || FILL_OK.includes(a.autocomplete)) return;
   n.setAttribute('autocomplete', 'off');
-  n.readOnly = true;
-  const open = () => { n.readOnly = false; };
+  n.readOnly = true; n.dataset.lock = '1';
+  const open = () => { n.readOnly = false; delete n.dataset.lock; };
   n.addEventListener('pointerdown', open);
   n.addEventListener('focus', open);
 }

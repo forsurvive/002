@@ -13,8 +13,8 @@ function noAutofill(n, attrs) {
   const a = attrs || {};
   if (['hidden', 'checkbox', 'radio', 'file', 'range', 'color'].includes(a.type) || a.readonly || FILL_OK.includes(a.autocomplete)) return;
   n.setAttribute('autocomplete', 'off');
-  n.readOnly = true;
-  const open = () => { n.readOnly = false; };
+  n.readOnly = true; n.dataset.lock = '1';
+  const open = () => { n.readOnly = false; delete n.dataset.lock; };
   n.addEventListener('pointerdown', open);
   n.addEventListener('focus', open);
 }
@@ -221,11 +221,22 @@ function wireIdCheck(id, extra = () => ({})) {
   });
 }
 
+// 다시 그려도 치던 글은 남긴다 — «비밀번호를 잊었어요»를 누르면 쳐 둔 아이디가 지워졌다(2026-10-07 검수).
 function draw(form) {
   const root = $('root');
+  const keep = {};
+  for (const el of root.querySelectorAll('input[id]')) if (el.type !== 'hidden' && el.value !== el.defaultValue) keep[el.id] = el.value;
   root.textContent = '';
   root.appendChild(h('div', { class: 'body', style: 'max-width:380px;margin:0 auto;padding-top:12vh;padding-bottom:40px' },
     h('div', { class: 'top-name', style: 'font-size:30px;margin-bottom:24px', text: '스토리 엔진' }), form));
+  for (const [id, v] of Object.entries(keep)) {
+    const el = $(id);
+    if (!el) continue;
+    el.value = v;
+    if (el.dataset.lock) { el.readOnly = false; delete el.dataset.lock; }
+  }
+  // 재설정 칸의 아이디는 로그인 칸에 쳐 둔 것으로 채운다
+  if ($('rs-id') && !$('rs-id').value && $('lg-id') && $('lg-id').value) $('rs-id').value = $('lg-id').value;
   if (S.invite) wireIdCheck('nu-id', () => ({ code: S.invite.code }));
 }
 

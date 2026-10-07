@@ -251,7 +251,7 @@ async function copyWork(w) {
   done('복사했습니다 — 작업실의 «' + w.name + ' (개인)»');
 }
 
-// AI 회사 — 키를 넣을 때 고른다. 여럿 넣어 두면 Claude → ChatGPT → Gemini 차례로 쓴다(서버 ai/router.mjs).
+// AI 회사 — 키를 넣을 때 고른다. 쓸 회사는 키가 있는 회사 가운데 사람(또는 기관 · 작품)이 고른다. 아무도 고르지 않았으면 키가 있는 첫 회사(서버 ai/router.mjs).
 const AI_CO = { anthropic: 'Claude', openai: 'ChatGPT', google: 'Gemini' };
 // Claude 만 — 워크스페이스에 묶이지 않은 키는 워크스페이스 ID 를 함께 보내야 한다(비우면 보내지 않는다)
 const wsField = (k, id) => (provOf(k) === 'anthropic' ? field('워크스페이스 ID(필요할 때만)', id, 'text', { autocomplete: 'off', spellcheck: 'false', placeholder: 'wrkspc_…' }) : null);
