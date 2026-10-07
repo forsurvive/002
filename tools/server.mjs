@@ -33,7 +33,7 @@ const bad = (error) => ({ ok: false, error: String(error) });
 
 // 준비가 온전히 끝났는가 — 프롬프트가 다 서 있고, 자료가 있다면 «자료 분석»까지 남았는가.
 // 둘 중 하나라도 비면 화면이 [에이전트 준비 다시] 를 세운다.
-const prepared = (p) => agentsReady(p) && (!model.materialDocs(p).length || p.docs.some((d) => d.title === STUDY_TITLE));
+const prepared = (p) => agentsReady(p) && !(p.agents && p.agents.__kind === '기본') && (!model.materialDocs(p).length || p.docs.some((d) => d.title === STUDY_TITLE));
 
 // 작업은 «종류 + 매개변수»로 등록하고, 실제로 돌리는 것은 Core 의 작업 종류 표(core/generation/kinds.mjs)다.
 // 개인판이 넣는 것: 저장(state) · 호출(callAsking — CLI · 한도 물음) · 에이전트 준비(agents.mjs).
@@ -42,6 +42,8 @@ async function prepareThenStudy(pid, ctx, request = '') {
     const r = await prepareAgents(pid, ctx, request);
     if (!r.ok) return r;
   }
+  // «자료 분석» 문서가 이미 있으면 또 만들지 않는다(종류만 다시 가린 때 — core prepareThenStudy 와 같은 규칙)
+  if ((state.get(pid) || { docs: [] }).docs.some((d) => d.title === STUDY_TITLE)) return { ok: true, skipped: true };
   return runStudy(pid, ctx, request);   // 이어서 자료를 한 번 읽는다
 }
 const LOCAL_DEPS = { ...engine.LOCAL, prepare: prepareThenStudy, workflow: async () => baseTemplate() };

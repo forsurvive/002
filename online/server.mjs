@@ -155,7 +155,7 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
       return org ? (org.settings || {}).student_cards !== false : !!(p.workflow && p.workflow.cards);
     },
     // 준비가 온전히 끝났는가 — 개인판 서버와 같은 셈(프롬프트가 다 서 있고, 자료가 있다면 «자료 분석»까지)
-    prepared: (p) => agentsReady(p, AGENT_SLOTS) && (!materialDocs(p).length || p.docs.some((d) => d.title === STUDY_TITLE)),
+    prepared: (p) => agentsReady(p, AGENT_SLOTS) && !(p.agents && p.agents.__kind === '기본') && (!materialDocs(p).length || p.docs.some((d) => d.title === STUDY_TITLE)),
     // 프로젝트를 만든 직후 그 프로젝트 전용 에이전트를 짓는다(소설이면 판정만 남기고 끝난다)
     startAgentPrep: (pid, request = '') => jobs.start(pid, { kind: 'agents', title: '자료 분석', params: { request } }),
   };

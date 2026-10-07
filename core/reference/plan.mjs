@@ -31,6 +31,19 @@ export function materialItems(project) {
   return model.materialDocs(project).map(asItem);
 }
 
+// 자료가 모델이 받을 수 있는 길이를 넘을 때(«입력이 너무 깁니다») — 자료마다 같은 비율로 앞부분을 남기고 줄였다는 표를 단다.
+// max 가 0 이면 그대로. 자료 분석(S02)이 길이로 거절당했을 때만 줄인 예산으로 다시 부른다(core/generation/agents.mjs).
+export function fitMaterials(items, max = 0) {
+  const total = items.reduce((n, m) => n + String(m.text || '').length, 0);
+  if (!(max > 0) || total <= max) return items;
+  const ratio = max / total;
+  return items.map((m) => {
+    const t = String(m.text || '');
+    const keep = Math.max(200, Math.floor(t.length * ratio));
+    return t.length <= keep ? m : { ...m, text: t.slice(0, keep) + '\n\n…(자료가 길어 여기까지만 실었다 — 원문 ' + t.length.toLocaleString('en-US') + '자 중 ' + keep.toLocaleString('en-US') + '자)' };
+  });
+}
+
 /**
  * pr 은 그 자리의 프롬프트(작가 고침 > 지은 것 > 내장을 이미 고른 것), slotModel 은 그 자리에 정해 둔 모델(없으면 '').
  * 돌려주는 값: { systemPrompt, userPrompt, model, modelSource, inputs }
@@ -40,11 +53,11 @@ export function planCall(project, {
   refIds = [], targetIds = [], agentIds = [], request = '', taskExtra = '',
   materials = false, allFinals = false, talk = [], prev = '', next = '',
   noCount = null, finalFirst = false, keepSeat = false,
-  extraTargets = [], modelPick = '',
+  extraTargets = [], modelPick = '', materialsMax = 0,
 } = {}, { pr, slotModel = '' } = {}) {
   // 자료도 보통 문서다 — 참조로 걸면 참조로, 확정본이면 확정본으로 실린다.
   // 다만 에이전트 준비(materials)가 자료를 통째로 «■ 자료» 구획에 실을 때는 그 문서들을 다른 구획에 겹쳐 싣지 않는다.
-  const mats = materials ? materialItems(project) : [];
+  const mats = materials ? fitMaterials(materialItems(project), materialsMax) : [];
   const matIds = new Set(mats.map((m) => m.id));
 
   // 한 문서는 한 구획에만 실린다.

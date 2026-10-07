@@ -6,6 +6,7 @@ import { BUILTIN, AGENT_SLOTS, SLOT_DUTY } from './prompts.mjs';
 import { promptFor, callAsking, promptsMissing, slotModel, callModel } from './engine.mjs';
 import * as state from './state.mjs';
 import * as core from '../core/generation/agents.mjs';
+import { MOCK } from './call.mjs';
 
 export const CRAFT_MIN = core.CRAFT_MIN;
 export const STUDY_TITLE = core.STUDY_TITLE;
@@ -20,6 +21,8 @@ const DEPS = {
   call: (args, ctx) => callAsking(args, ctx),
   raw: (input) => callModel(input),
   prompts: PROMPTS,
+  // 잠깐의 실패를 다시 부르는 사이(core 기본 3 · 10 · 30초). 모의 실행(시험)에서는 기다리지 않는다.
+  ...(MOCK ? { retryDelays: [1, 1, 1] } : {}),
 };
 
 // 같은 프로젝트를 두 벌로 짓지 않는다(구독 사용량이 두 배로 나가고 나중 것이 앞 것을 덮는다).

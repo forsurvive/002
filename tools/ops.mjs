@@ -169,6 +169,8 @@ export function createOps(d) {
       if (!p) return bad('프로젝트를 찾을 수 없습니다');
       if (await jobs.isKindRunning(b.pid, 'agents')) return bad('이미 도는 중입니다');
       if (prepared(p)) return bad('이미 준비되어 있습니다');
+      // 종류를 끝내 못 읽어 내장으로 갔던 작품(«기본») — 다시 누르면 종류를 처음부터 다시 가린다(적은 요청사항을 실어)
+      if (p.agents && p.agents.__kind === '기본') await state.update(b.pid, (x) => { delete x.agents.__kind; });
       await startAgentPrep(b.pid, String(b.request || ''));
       return ok();
     },

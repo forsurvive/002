@@ -224,6 +224,16 @@ export async function run({ pool, ok, eq }) {
       && (await edu('edu-s2', 'me.key.set', { provider: 'google', apiKey: 'AIza-fake-gemini-0001' })).ok
       && (await edu('edu-s2', 'me.key.list')).credentials.filter((c) => c.status === 'active').map((c) => c.provider).sort().join() === 'google,openai');
     eq('모르는 회사는 받지 않는다', (await edu('edu-s2', 'me.key.set', { provider: 'mystery', apiKey: 'x-0000000000' })).status, 422);
+    // 키가 없어 «자료 분석»이 실패로 남은 개인 작품 — 키를 넣으면 저절로 다시 건다
+    {
+      const s2id = (await pool.query(`SELECT id FROM users WHERE login_id = 'edu-s2'`)).rows[0].id;
+      const lone = (await pool.query(`INSERT INTO projects (owner_user_id, name) VALUES ($1, '키 없던 작품') RETURNING id`, [s2id])).rows[0].id;
+      await pool.query(`INSERT INTO jobs (project_id, requested_by, kind, title, status, error_message_safe) VALUES ($1, $2, 'agents', '자료 분석', 'failed', 'AI 키가 없어')`, [lone, s2id]);
+      const set = await edu('edu-s2', 'me.key.set', { provider: 'openai', apiKey: 'sk-fake-openai-0009' });
+      const again = (await pool.query(`SELECT status FROM jobs WHERE project_id = $1 AND kind = 'agents' ORDER BY created_at DESC LIMIT 1`, [lone])).rows[0];
+      ok('**키를 넣으면 실패로 남은 «자료 분석»을 저절로 다시 건다**', set.ok && set.prepRetried >= 1 && again.status === 'queued', JSON.stringify({ r: set.prepRetried, again }));
+      await pool.query(`UPDATE jobs SET status = 'cancelled', ended_at = now() WHERE project_id = $1 AND status = 'queued'`, [lone]);
+    }
     const bad = await edu('edu-s2', 'me.key.test', { provider: 'openai' });
     ok('**연결 확인 — 틀린 키는 «키가 맞지 않습니다»**', bad.ok && bad.verified === false && bad.say === '키가 맞지 않습니다', JSON.stringify(bad));
     await edu('edu-s2', 'me.key.set', { provider: 'openai', apiKey: 'sk-good-openai-0001' });

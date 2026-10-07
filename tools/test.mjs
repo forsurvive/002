@@ -1574,7 +1574,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
-  // 준비가 어긋나면 다시 걸 수 있다 — 자동 집필을 빼며 잃었던 되돌리기(되짚기에서 잡힘)
+  // 판정의 꼴이 끝내 어긋나도 «자료 분석»은 실패하지 않는다(2026-10-07 사용자 지시 «절대 실패하지 않도록») —
+  // 내장 에이전트(«기본»)로 끝까지 가서 «자료 분석» 문서를 남기고, [자료 분석 다시]로 종류를 다시 가릴 수 있다.
   KIND = '실무 안내서';
   globalThis.__SE2_MOCK_FN = (args) => (args.mockKey === 'F-KIND' ? '꼴이 어긋난 답' : MOCK_FN(args));
   const r = await post('project.create', {
@@ -1583,10 +1584,11 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   });
   const pid = r.pid;
   let p = await settle(pid, 60000);
-  eq('준비가 실패한다', p.jobs.find((j) => j.kind === 'agents').status, 'failed');
+  eq('**판정의 꼴이 끝내 어긋나도 작업은 실패하지 않고 끝난다**', p.jobs.find((j) => j.kind === 'agents').status, 'done');
+  eq('그때는 내장 에이전트로 간다(종류 «기본»)', p.agentKind, '기본');
   const matCat2 = (p.categories.find((c) => c.name === '자료') || {}).id;
-  eq('그때는 지은 문서가 없다(자료 문서만 있다)', p.docs.filter((d) => !d.src && d.categoryId !== matCat2).length, 0);
-  ok('준비가 안 되었다고 알린다', !p.prepared);
+  eq('**«자료 분석» 문서는 그대로 생긴다**', p.docs.filter((d) => !d.src && d.categoryId !== matCat2 && d.title === agents.STUDY_TITLE).length, 1);
+  ok('종류를 못 가렸으니 [자료 분석 다시]가 선다(다시 가리기)', !p.prepared);
 
   // 다시 걸면서 적은 요청사항이 그 호출에 실린다(저장하지는 않는다)
   let seen = '';
@@ -1599,7 +1601,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('작품의 요청사항으로 저장되지는 않는다', p.request, '');
   eq('이번에는 끝난다', p.jobs.filter((j) => j.kind === 'agents').pop().status, 'done');
   ok('이제 준비되었다', p.prepared);
-  eq('«자료 분석»도 뒤늦게 생긴다', p.docs.filter((d) => d.title === agents.STUDY_TITLE).length, 1);
+  eq('**다시 가려도 «자료 분석»은 두 벌로 서지 않는다**', p.docs.filter((d) => d.title === agents.STUDY_TITLE).length, 1);
   eq('종류도 적힌다', p.agentKind, '실무 안내서');
 
   const busy = await post('project.prepare', { pid: 'p_없음' });
@@ -2562,6 +2564,47 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('**라우터: billing=subscription 이면 키 없이 구독 어댑터로 · Claude 모델로**', rr.ok && subCalls.at(-1).model === 'claude-test-b' && rr.routing.billing === 'subscription' && rr.routing.credentialId === '', JSON.stringify(rr.routing));
   rr = await createProviderRouter({ catalog: C3, credentials: creds, providers: { anthropic: fakeAdapter('anthropic') } }).generate({ userPrompt: '써라', metadata: { project: { ownerUserId: 'u_none' }, billing: 'subscription', model: { project: { tier: 'balanced' } } } });
   eq('라우터: 구독 어댑터가 없으면 «연결 필요»(키로 새지 않는다)', rr.reason, 'credential');
+}
+
+// ---------------------------------------------------------------- «자료 분석»(준비 작업)이 실패하지 않게 — 2026-10-07 사용자 지시
+{
+  const core = await import('../core/generation/agents.mjs');
+  const planM = await import('../core/reference/plan.mjs');
+  const mkStore = (p) => ({ get: async () => p, update: async (_, fn) => { fn(p); return { ok: true }; } });
+  const B = { 'S02': { name: '분석가', role: 'r', task: 't', craft: '내장 작법' }, 'F-UPDATE': { name: '집필자', role: 'r', task: 't', craft: '내장 작법 둘' } };
+  const prompts = { builtin: B, slots: ['S02', 'F-UPDATE'], duty: {}, promptFor: (p, c) => ({ name: 'x', role: '', task: '', craft: 'c', ...(B[c] || {}) }), slotModel: () => '' };
+  const baseProject = () => ({ id: 'p1', name: '시험', spec: { form: '안내서' }, model: 'sonnet', docs: [], categories: [], agents: {} });
+  // 잠깐의 실패 두 번 뒤에 판정 · 짓기가 된다
+  let n = 0;
+  const p1 = baseProject();
+  const raw1 = async ({ code }) => {
+    n++;
+    if (n <= 2) return { ok: false, reason: n === 1 ? 'overloaded' : 'timeout', error: 'x' };
+    return code === 'F-KIND' ? { ok: true, text: '  **분류: 실무 안내서**' } : { ok: true, text: '이름: 짓는이\n작법:\n' + '가'.repeat(2100) };
+  };
+  let r = await core.prepareAgents({ store: mkStore(p1), raw: raw1, prompts, retryDelays: [1, 1, 1] }, 'p1', null);
+  ok('**잠깐의 실패(과부하 · 시간 초과)는 사이를 두고 다시 불러 끝낸다**', r.ok && p1.agents.__kind === '실무 안내서' && p1.agents['S02'].craft.length >= 2000, JSON.stringify(r));
+  ok('판정은 꾸밈이 붙어 와도 읽는다(**분류: …**)', core.readKind('**분류: 에세이**').kind === '에세이' && core.readKind('네, 알겠습니다.\n분류: 강의안').kind === '강의안');
+  // 한 자리를 끝내 못 지으면 그 자리만 내장으로 채우고 끝까지 간다
+  const p2 = baseProject();
+  const raw2 = async ({ code }) => (code === 'F-KIND' ? { ok: true, text: '분류: 에세이' } : { ok: false, reason: 'overloaded', error: 'busy' });
+  r = await core.prepareAgents({ store: mkStore(p2), raw: raw2, prompts, retryDelays: [1, 1] }, 'p2', null);
+  ok('**한 자리를 끝내 못 지으면 그 자리만 내장으로 채우고 작업은 끝난다**', r.ok && p2.agents['S02'].fallback === true && p2.agents['S02'].craft === '내장 작법' && core.agentsReady(p2, prompts.slots));
+  // 다시 불러도 같은 실패(키 없음)는 멈추고 할 일을 말한다
+  const p3 = baseProject();
+  r = await core.prepareAgents({ store: mkStore(p3), raw: async () => ({ ok: false, reason: 'credential', error: 'AI 연결이 필요합니다' }), prompts, retryDelays: [1] }, 'p3', null);
+  ok('**키가 없으면 멈추고 «키를 넣으면 다시 합니다»라고 말한다**', !r.ok && r.reason === 'credential' && /키를 넣으면/.test(r.error));
+  // 자료가 너무 길어 거절당하면 줄여 다시 — 줄인 표가 프롬프트에 남는다
+  const p4 = baseProject();
+  p4.agents = { __kind: '소설' };
+  let seenMax = [];
+  const call4 = async (args) => { seenMax.push(args.materialsMax); return args.materialsMax && args.materialsMax <= 150000 ? { ok: true, text: '분석 결과' } : { ok: false, reason: 'invalid', error: '입력이 너무 깁니다' }; };
+  const store4 = mkStore(p4);
+  p4.docs = [{ id: 'm1', title: '자료', body: '본문', material: true, versions: [] }];
+  r = await core.runStudy({ store: store4, call: call4, retryDelays: [1] }, 'p4', null);
+  ok('**자료가 길어 거절당하면 줄여서 다시 부른다(그대로 → 40만 → 15만 자)**', r.ok && seenMax.join(',') === '0,400000,150000', seenMax.join(','));
+  const cut = planM.fitMaterials([{ id: 'a', name: 'A', text: 'x'.repeat(10000) }, { id: 'b', name: 'B', text: 'y'.repeat(30000) }], 4000);
+  ok('자료 줄이기는 자료마다 같은 비율 · 줄였다는 표를 단다', cut[0].text.startsWith('x'.repeat(1000)) && cut[1].text.startsWith('y'.repeat(3000)) && /여기까지만 실었다/.test(cut[1].text) && !/y{3001}/.test(cut[1].text));
 }
 
 // ---------------------------------------------------------------- 문서 파일(docx · pdf)에서 글 뽑기 — web/textfile.js(브라우저 안, 의존성 없음)

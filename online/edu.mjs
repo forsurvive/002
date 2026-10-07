@@ -16,6 +16,7 @@ import { seal, open as unseal } from '../ai/credentials.mjs';
 import { randomUUID } from 'node:crypto';
 import { importProject } from './import.mjs';
 import { loadAggregate } from './store.mjs';
+import { createJobQueue } from './jobs.mjs';
 
 const ok = (extra = {}) => ({ status: 200, body: { ok: true, ...extra } });
 const no = (status, error, code) => ({ status, body: { ok: false, error, ...(code ? { code } : {}) } });
@@ -584,7 +585,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       const r = await credentials.set({ ownerType: 'user', ownerId: user.id, provider, apiKey: b.apiKey, workspaceId: b.workspaceId || '', createdBy: user.id });
       if (!r.ok) return no(422, KEY_BAD[r.error] || '키를 저장하지 못했습니다', 'validation');
       await log(user, null, 'credential.set', 'user', user.id, { provider, ownerType: 'user', credentialId: r.credential.id }, ip);
-      return ok({ credential: r.credential, aiProvider: await settleDefault('user', user.id) });
+      return ok({ credential: r.credential, aiProvider: await settleDefault('user', user.id), prepRetried: await retryPrep('user', user.id, user) });
     },
     // ---------------- 운영자 구독(최상위 운영자만 — 2026-10-07 사용자 지시). 켜면 «운영자 본인의 개인 작품»만 Claude 구독으로 돈다.
     // 기관 · 수업 작품은 켜든 끄든 기관 키로 돈다(online/call.mjs subscriptionOf). 다른 사람에게는 이 문이 없다(404).
@@ -671,7 +672,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       const r = await credentials.set({ ownerType: 'organization', ownerId: b.orgId, provider: b.provider, apiKey: b.apiKey, workspaceId: b.workspaceId || '', createdBy: user.id });
       if (!r.ok) return no(422, KEY_BAD[r.error] || '키를 저장하지 못했습니다', 'validation');
       await log(user, b.orgId, 'credential.set', 'organization', b.orgId, { provider: b.provider, ownerType: 'organization', credentialId: r.credential.id }, ip);
-      return ok({ credential: r.credential, aiProvider: await settleDefault('organization', b.orgId) });
+      return ok({ credential: r.credential, aiProvider: await settleDefault('organization', b.orgId), prepRetried: await retryPrep('organization', b.orgId, user) });
     },
     async 'org.key.list'(user, b) {
       if (!credentials) return ok({ credentials: [] });
@@ -680,6 +681,21 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     },
   };
 
+  // 키를 넣으면 — 그 키로 돌 작품 가운데 «자료 분석»이 끝내 실패로 남은 것을 다시 건다(키가 없어 멈췄던 것이 저절로 이어진다).
+  // 작품마다 가장 최근의 준비 작업만 본다. 이미 도는 것은 큐가 막는다(대상당 활성 하나).
+  async function retryPrep(ownerType, ownerId, user) {
+    const where = ownerType === 'organization' ? 'p.organization_id = $1' : 'p.owner_user_id = $1 AND p.organization_id IS NULL';
+    const rows = (await pool.query(
+      `SELECT project_id FROM (SELECT DISTINCT ON (j.project_id) j.project_id, j.status FROM jobs j JOIN projects p ON p.id = j.project_id
+         WHERE j.kind = 'agents' AND p.deleted_at IS NULL AND ${where} ORDER BY j.project_id, j.created_at DESC) last
+        WHERE status = 'failed' LIMIT 100`, [ownerId])).rows;
+    const queue = createJobQueue(pool);
+    let n = 0;
+    for (const r of rows) {
+      try { const e = await queue.enqueue({ pid: r.project_id, requestedBy: user.id, kind: 'agents', title: '자료 분석', params: { request: '' } }); if (e && e.ok !== false) n++; } catch { /* 하나가 막혀도 나머지는 건다 */ }
+    }
+    return n;
+  }
   const KEY_BAD = { workspace: '워크스페이스 ID 꼴이 아닙니다(wrkspc_… 처럼 생겼습니다)', key: '키가 너무 짧습니다', key_chars: '키에 쓸 수 없는 글자가 섞였습니다 — 키만 다시 복사해 넣어 주세요' };
   const KEY_SAY = { workspace: '이 키는 워크스페이스 ID 가 함께 있어야 합니다 — 키를 워크스페이스 ID 와 함께 다시 넣거나, 워크스페이스 안에서 만든 키를 넣어 주세요', auth: '키가 맞지 않습니다', credit: '잔액(크레딧)이 없습니다', rate: '잠시 뒤에 다시 해 보세요(요청이 많습니다)', model: '이 회사의 모델 표가 없습니다', credential_missing: '넣어 둔 키가 없습니다', credential_unreadable: '키를 열 수 없습니다(마스터 키가 바뀌었나요?)', overloaded: '그 회사 서버가 바쁩니다 — 잠시 뒤에', timeout: '응답이 늦습니다 — 잠시 뒤에', invalid: '그 회사가 요청을 받지 않았습니다', other: '그 회사 서버에 닿지 못했습니다' };
   async function testKey(owner, provider) {
