@@ -65,7 +65,8 @@ export async function run({ pool, ok, eq }) {
     const run = await q1("SELECT workflow_stage, request_once_text, request_text, status, model_tier FROM generation_runs WHERE project_id = $1 AND workflow_stage = 'world'", [pid]);
     eq('**단계의 기본 등급으로 돈다(작품 기본 High Reasoning 보다 단계 Balanced 가 앞)**', run.model_tier, 'balanced');
     ok('**생성 기록에 단계 · 이번 요청사항이 남는다(문서에는 없다)**', run && run.status === 'succeeded' && run.request_once_text === '이번엔 바다 무역 중심으로' && wd.request === '');
-    ok('«이번 단계에 할 일»이 프롬프트에 실린다', seen[seen.length - 1].userPrompt.includes('세계의 규칙'));
+    // 만들 때 함께 도는 «자료 분석»의 부르기가 마지막에 끼어들 수 있다 — 마지막 한 번만 보지 않고 부른 것 가운데서 찾는다.
+    ok('«이번 단계에 할 일»이 프롬프트에 실린다', seen.some((c) => String(c.userPrompt || '').includes('세계의 규칙')));
     ok('승인 · 확정본 제안', (await api('wf-writer', 'stage.approve', { pid, key: 'world', final: true })).ok && (await state('wf-writer', pid)).docs.find((d) => d.id === w.docId).isFinal);
     eq('**온라인은 누가 승인했는지 남긴다**', (await state('wf-writer', pid)).workflow.stages.find((x) => x.key === 'world').approvedBy, 'wf-writer');
     const reload = await store.get(pid);
