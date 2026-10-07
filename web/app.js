@@ -767,6 +767,11 @@ function aiCompany(p) {
     return h('div', null, h('div', { class: 'lab', text: 'AI 회사' }),
       h('div', { class: 'when', text: a.ownerDefault ? '기관이 정한 회사: ' + name(a.ownerDefault) : '기관이 아직 회사를 고르지 않았습니다' }));
   }
+  // 운영자 구독이 켜져 있으면 이 작품은 Claude 구독으로 돈다(회사 고르기는 쓰이지 않는다 — 끄는 곳은 «내 계정»)
+  if (a.subscription) {
+    return h('div', null, h('div', { class: 'lab', text: 'AI 회사' }),
+      h('div', { class: 'when', text: 'Claude 구독으로 돕니다(API 키를 쓰지 않습니다) — «내 계정»에서 끌 수 있습니다' }));
+  }
   const set = async (provider) => {
     const r = await fetch('/api/edu', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'project.ai.set', pid: S.pid, provider }) })
       .then((x) => x.json()).catch(() => ({ ok: false }));

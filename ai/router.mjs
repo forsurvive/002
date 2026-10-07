@@ -30,6 +30,16 @@ export function createProviderRouter({ catalog, credentials, providers }) {
       });
       // 회사를 아무도 정하지 않았으면(기본) — 비용을 내는 쪽(기관 · 본인)이 키를 넣어 둔 회사로 간다.
       // Claude → ChatGPT → Gemini 차례로, 그 tier 가 카탈로그에 있고 키가 열리는 첫 회사. 아무 키도 없으면 첫 회사로(«연결 필요»).
+      // 운영자 구독 — 부르는 쪽(online/call.mjs)이 «운영자 본인의 개인 작품»에만 billing 을 단다. 회사는 Claude 로, 키는 열지 않는다.
+      if (meta.billing === 'subscription') {
+        const routing = { provider: 'anthropic', tier: choice.tier, source: { ...choice.source, provider: 'subscription' }, modelId: '', credentialId: '', ownerType: 'user', billing: 'subscription' };
+        const entry = catalog.resolve('anthropic', choice.tier);
+        if (!entry) return { ...failure('model', SAY.model), routing };
+        routing.modelId = entry.modelId;
+        if (!providers.subscription) return { ...failure('credential', 'Claude 구독 연결이 없습니다'), routing };
+        const r = await providers.subscription.generate({ ...input, model: entry.modelId });
+        return { ...r, routing };
+      }
       let pre = null;
       if (choice.source.provider === 'default') {
         const order = (pol.providers || Object.keys(PROVIDERS)).filter((p) => providers[p]);

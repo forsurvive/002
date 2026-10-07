@@ -1001,7 +1001,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 
   // 부르는 길은 그대로 구독(claude CLI)이다
   const callSrc = src(join(HERE, 'call.mjs'));
-  ok('**부르는 길은 클로드 실행기 그대로다**', callSrc.includes("spawn(CLI, buildCallArgs(spFile, model)"));
+  // 온라인 운영자 구독(ai/subscription.mjs)만 실행기 자리 · 'sub' 를 넘긴다. 개인판은 넘기지 않으므로 탐색한 실행기 · 그 PC 의 auth.json 그대로.
+  ok('**부르는 길은 클로드 실행기 그대로다**', callSrc.includes("spawn(cli || CLI, buildCallArgs(spFile, model)") && callSrc.includes('childEnv(authMode ? { mode: authMode } : auth.read())'));
   ok('처음 한 번 로그인과 설치는 그대로다', launchSrc.includes("'auth', 'login', '--claudeai'") && launchSrc.includes('await installClaudeCode()')
     && src(join(HERE, 'claude-cli.mjs')).includes("'https://claude.ai/install.cmd'"));
   // 지어진 에이전트를 고칠 수 있다(사용자 지시, 2026-09-22)
@@ -2523,6 +2524,23 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('**라우터: 비용 주체가 고른 회사(기본)로 간다**', rr.ok && rr.routing.provider === 'google' && rr.routing.source.provider === 'org');
   rr = await router3.generate({ userPrompt: '써라', metadata: { project: { ownerUserId: 'u_gem' }, model: { project: { provider: 'openai' }, org: { provider: 'google' } } } });
   ok('라우터: 작품이 고른 회사가 기본보다 앞선다', rr.ok && rr.routing.provider === 'openai');
+
+  // ── 운영자 구독(ai/subscription.mjs) — 늘 'sub'(API 키를 지운다) · 고정 문구 · 비용으로 적지 않음
+  const subM = await import('../ai/subscription.mjs');
+  const subCalls = [];
+  const sp = subM.createSubscriptionProvider({ cli: '/x/claude', run: async (a) => { subCalls.push(a); return a.prompt === 'fail' ? { ok: false, reason: 'quota-session', error: 'stderr /home/secret path 원고' } : { ok: true, text: '답', usage: { input: 7, output: 3, cacheRead: 2, cacheWrite: 1, costUsd: 0.5 } }; } });
+  let sr = await sp.generate({ model: 'claude-x', systemPrompt: 's', userPrompt: '써라' });
+  ok('**구독: 늘 구독으로(authMode sub) · 받은 실행기로 부른다**', subCalls[0].authMode === 'sub' && subCalls[0].cli === '/x/claude' && subCalls[0].model === 'claude-x');
+  ok('구독: 비용으로 적지 않는다(API 였다면의 값은 버린다)', sr.ok && sr.costUsd === null && sr.costSource === 'subscription' && sr.usage.inputTokens === 7 && sr.usage.cacheReadTokens === 2);
+  sr = await sp.generate({ model: 'claude-x', userPrompt: 'fail' });
+  ok('**구독: 실패 문구는 고정 — 실행기 원문이 새지 않는다**', !sr.ok && sr.reason === 'quota-session' && !/stderr|secret|원고/.test(sr.error) && /한도/.test(sr.error), sr.error);
+  ok('구독: 실행기나 토큰이 없으면 쓸 수 없다', !subM.subscriptionStatus({ cli: '/nope/claude', env: { CLAUDE_CODE_OAUTH_TOKEN: 't' } }).available
+    && !subM.subscriptionStatus({ cli: process.execPath, env: {} }).available && subM.subscriptionStatus({ cli: process.execPath, env: { CLAUDE_CODE_OAUTH_TOKEN: 't' } }).available);
+  const routerS = createProviderRouter({ catalog: C3, credentials: creds, providers: { anthropic: fakeAdapter('anthropic'), subscription: sp } });
+  rr = await routerS.generate({ userPrompt: '써라', metadata: { project: { ownerUserId: 'u_none' }, billing: 'subscription', model: { project: { tier: 'balanced' } } } });
+  ok('**라우터: billing=subscription 이면 키 없이 구독 어댑터로 · Claude 모델로**', rr.ok && subCalls.at(-1).model === 'claude-test-b' && rr.routing.billing === 'subscription' && rr.routing.credentialId === '', JSON.stringify(rr.routing));
+  rr = await createProviderRouter({ catalog: C3, credentials: creds, providers: { anthropic: fakeAdapter('anthropic') } }).generate({ userPrompt: '써라', metadata: { project: { ownerUserId: 'u_none' }, billing: 'subscription', model: { project: { tier: 'balanced' } } } });
+  eq('라우터: 구독 어댑터가 없으면 «연결 필요»(키로 새지 않는다)', rr.reason, 'credential');
 }
 
 // ---------------------------------------------------------------- 호스팅 실행 — 포트 · 주소 · 허용 호스트 · 출입 열쇠

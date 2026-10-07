@@ -22,6 +22,9 @@ export const licensePolicy = (row) => ({
   ...(row.organization_id && row.allowed_model_tiers && row.allowed_model_tiers.length ? { tiers: row.allowed_model_tiers } : {}),
 });
 
+// 운영자 구독을 쓰는가 — 기관에 묶이지 않은 작품 · 주인이 최상위 운영자 · 그 사람이 구독을 켰다, 셋이 모두 맞을 때만
+export const subscriptionOf = (row) => !!(row && !row.organization_id && row.is_platform_admin && row.user_billing === 'subscription');
+
 // 비용 주체의 기본 — 기관 작품은 기관의 회사 · 등급, 개인 작품은 그 사람의 회사
 const orgLayer = (row) => {
   const provider = row.organization_id ? row.org_provider : row.user_provider;
@@ -44,7 +47,7 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
     const row = (await pool.query(
       `SELECT p.owner_user_id, p.organization_id, p.model_policy->>'provider' AS project_provider,
               coalesce(o.settings->>'ai_provider', '') AS org_provider, coalesce(o.settings->>'ai_tier', '') AS org_tier,
-              coalesce(u.settings->>'ai_provider', '') AS user_provider,
+              coalesce(u.settings->>'ai_provider', '') AS user_provider, u.is_platform_admin, coalesce(u.settings->>'ai_billing', '') AS user_billing,
               l.allowed_providers, l.allowed_model_tiers
          FROM projects p LEFT JOIN organizations o ON o.id = p.organization_id LEFT JOIN users u ON u.id = p.owner_user_id
          LEFT JOIN LATERAL (SELECT allowed_providers, allowed_model_tiers FROM licenses
@@ -77,6 +80,8 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
       metadata: {
         project: { id: pid, ownerUserId: row.owner_user_id, organizationId: row.organization_id },
         policy: { ...licensePolicy(row), ...(await policyOf(row)) },
+        // 운영자 구독 — 최상위 운영자 «본인의 개인 작품»만. 기관 · 수업 작품과 다른 사람의 작품은 어떤 경우에도 이 길로 가지 않는다.
+        ...(subscriptionOf(row) ? { billing: 'subscription' } : {}),
         model: {
           ...(tier && layer !== 'project' ? { [layer]: { tier } } : {}),
           stage: stageTier ? { tier: stageTier } : null,

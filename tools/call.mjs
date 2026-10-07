@@ -179,7 +179,8 @@ export function mockResponse({ mockKey, prompt, systemPrompt, model }) {
 }
 
 // 돌려주는 값: { ok, text, error, reason, elapsedMs, usage, limit, authSource }
-export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, model } = {}) {
+// authMode · cli 는 온라인판의 «운영자 구독» 길이 넘긴다(ai/subscription.mjs) — 개인판은 넘기지 않는다(그 PC 의 auth.json · 탐색한 실행기를 따른다).
+export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, model, authMode = null, cli = null } = {}) {
   const started = Date.now();
   const fail = (error, reason = 'other', limit = null) => {
     const say = SAY[reason] || '';
@@ -234,7 +235,7 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
     writeFileSync(spFile, String(systemPrompt || ''), 'utf8');
     // cwd 를 빈 임시 폴더로 못박는다 — 그 자리의 CLAUDE.md 가 딸려 오지 않게.
     // 고른 갈래를 따른다 — 구독인지 API 키인지는 사람이 정한다(tools/auth.mjs).
-    p = spawn(CLI, buildCallArgs(spFile, model), { env: childEnv(auth.read()), windowsHide: true, cwd: dir });
+    p = spawn(cli || CLI, buildCallArgs(spFile, model), { env: childEnv(authMode ? { mode: authMode } : auth.read()), windowsHide: true, cwd: dir });
     LIVE.add(p);
     try { p.stdin.write(String(prompt), 'utf8'); } catch {}
     try { p.stdin.end(); } catch {}

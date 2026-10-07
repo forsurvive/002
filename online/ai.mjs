@@ -12,6 +12,7 @@ import { anthropicProvider } from '../ai/anthropic.mjs';
 import { openaiProvider } from '../ai/openai.mjs';
 import { geminiProvider } from '../ai/gemini.mjs';
 import { pgCredentialStore } from './credentials.mjs';
+import { createSubscriptionProvider, subscriptionStatus } from '../ai/subscription.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 export const MODELS_FILE = join(ROOT, 'config', 'models.json');
@@ -27,13 +28,30 @@ export function loadCatalog(file = MODELS_FILE) {
   }
 }
 
-export function buildAi(pool, env = process.env, { providers = { anthropic: anthropicProvider, openai: openaiProvider, google: geminiProvider }, file, log } = {}) {
+// 운영자 구독용 실행기 — npm 이 받아 둔 Claude Code(선택 의존성). SE_CLAUDE_CLI 로 다른 자리를 가리킬 수 있다.
+export const CLAUDE_CLI = join(ROOT, 'node_modules', '.bin', process.platform === 'win32' ? 'claude.cmd' : 'claude');
+
+export function buildAi(pool, env = process.env, { providers: given, file, log } = {}) {
+  const cli = String(env.SE_CLAUDE_CLI || '') || CLAUDE_CLI;
+  const subscription = (given && given.subscription) || createSubscriptionProvider({ cli });
+  const providers = { anthropic: anthropicProvider, openai: openaiProvider, google: geminiProvider, ...(given || {}), subscription };
   const { catalog, aliasTiers, problems } = loadCatalog(file);
   const keys = keysFromEnv(env);
   if (!keys.current) problems.push('CREDENTIALS_KEY_V1 is not set - stored AI keys cannot be opened');
   problems.push(...keys.problems);
   const credentials = createCredentialService({ store: pgCredentialStore(pool), keys });
-  return { generator: createProviderRouter({ catalog, credentials, providers }), credentials, catalog, aliasTiers, problems, keyTester: createKeyTester({ catalog, credentials, providers, log }) };
+  // 운영자 구독의 형편 · 연결 확인(가장 싼 Claude 등급으로 한 번) — 화면은 운영자에게만 내준다(online/edu.mjs)
+  const sub = {
+    status: () => (given && given.subscriptionStatus ? given.subscriptionStatus() : subscriptionStatus({ cli, env })),
+    async test() {
+      const entry = catalog.resolve('anthropic', 'fast') || catalog.resolve('anthropic', 'balanced');
+      if (!entry) return { ok: false, reason: 'model', say: '모델 표에 Claude 가 없습니다' };
+      const r = await subscription.validate({ model: entry.modelId });
+      if (!r.ok) log && log('subscription test: ' + (r.reason || 'other'));
+      return r;
+    },
+  };
+  return { generator: createProviderRouter({ catalog, credentials, providers }), credentials, catalog, aliasTiers, problems, keyTester: createKeyTester({ catalog, credentials, providers, log }), subscription: sub };
 }
 
 // 키 연결 시험 — 그 회사의 가장 싼 등급(fast, 없으면 balanced)으로 아주 짧게 한 번 부른다. 결과는 키 행에 적는다(markVerified).

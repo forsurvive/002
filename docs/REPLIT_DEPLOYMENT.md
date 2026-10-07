@@ -139,6 +139,15 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
 
 비용: Reserved VM 은 달마다 정액, 운영 데이터베이스는 쓴 만큼(5분 쉬면 계산이 멈춘다). 결제 수단을 물으면 그때 넣는다.
 
+## 4-3. 운영자 구독 켜기(선택, 2026-10-07)
+
+최상위 운영자 본인의 개인 작품을 API 키 대신 Claude 구독으로 돌리려면:
+
+1. 자기 PC(브라우저가 있는 곳)에서 Claude Code 를 설치하고 `claude setup-token` → 화면에 나온 긴 토큰을 복사한다(Pro · Max 요금제, 1년짜리).
+2. Replit → Secrets 에 `CLAUDE_CODE_OAUTH_TOKEN` = 그 토큰. 채팅 · 코드 · 파일에 붙여 넣지 않는다.
+3. `npm run update` → Run(처음 한 번 Claude Code 실행기를 받아 온다) → [다시 게시].
+4. 게시 사이트 «내 계정 → Claude 구독(운영자 전용)» 켜기 → [연결 확인].
+
 ## 5. PostgreSQL (Phase 3 계획)
 
 문서 발췌:

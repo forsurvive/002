@@ -23,7 +23,10 @@ export async function run({ pool, ok, eq }) {
   const fakeAnth = { validateCredential: async (c) => (c.workspaceId ? { ok: true } : { ok: false, reason: 'invalid', detail: 'HTTP 400 invalid_request_error: This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header' }) };
   const keyTester = createKeyTester({ catalog: createCatalog([{ provider: 'openai', tier: 'fast', modelId: 'gpt-fake' }, { provider: 'anthropic', tier: 'fast', modelId: 'claude-fake' }]), credentials, providers: { openai: fakeCo, anthropic: fakeAnth } });
   const codeKeys = { keys: new Map([[1, randomBytes(32)]]), current: 1 };
-  const srv = createOnlineServer({ pool, plan: onlinePlan({}), credentials, keyTester, codeKeys });
+  // 운영자 구독 — 가짜 형편(처음엔 준비 안 됨)
+  const subState = { available: false, cliFound: true, tokenSet: false };
+  const subscription = { status: () => ({ ...subState }), test: async () => ({ ok: true }) };
+  const srv = createOnlineServer({ pool, plan: onlinePlan({}), credentials, keyTester, codeKeys, subscription });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const base = 'http://127.0.0.1:' + srv.address().port;
   const jar = {};
@@ -243,6 +246,19 @@ export async function run({ pool, ok, eq }) {
     await edu('edu-s2', 'me.key.revoke', { provider: 'anthropic' });
     ok('**«키가 맞지 않음»으로 남은 키도 지운다**', (await edu('edu-s2', 'me.key.revoke', { provider: 'openai' })).ok
       && !(await edu('edu-s2', 'me.key.list')).credentials.some((c) => c.provider === 'openai' && c.status !== 'revoked'));
+    // ---------------- 운영자 구독 — 운영자만 보고 켠다
+    eq('**운영자가 아니면 구독 문이 없다(404)**', (await edu('edu-s2', 'me.sub.view')).status, 404);
+    eq('운영자가 아니면 켜지도 못한다', (await edu('edu-s2', 'me.sub.set', { on: true })).status, 404);
+    const sv = await edu('edu-root', 'me.sub.view');
+    ok('운영자는 형편을 본다(토큰 원문 없이)', sv.ok && sv.on === false && sv.available === false && sv.tokenSet === false, JSON.stringify(sv));
+    eq('**준비가 안 됐으면 켜지 못한다**', (await edu('edu-root', 'me.sub.set', { on: true })).code, 'not_ready');
+    subState.available = true; subState.tokenSet = true;
+    ok('**준비되면 켜고 · 끈다(감사 기록)**', (await edu('edu-root', 'me.sub.set', { on: true })).on === true && (await edu('edu-root', 'me.sub.view')).on === true
+      && (await edu('edu-root', 'me.memberships')).aiBilling === 'subscription'
+      && (await pool.query(`SELECT count(*)::int AS n FROM audit_logs WHERE action = 'ai.billing'`)).rows[0].n === 1);
+    ok('연결 확인', (await edu('edu-root', 'me.sub.test')).verified === true);
+    ok('끈다', (await edu('edu-root', 'me.sub.set', { on: false })).on === false);
+    ok('운영자가 아닌 사람의 memberships 에는 구독 칸이 없다', !('aiBilling' in (await edu('edu-s2', 'me.memberships'))));
     // ---------------- AI 회사 고르기 — 사람 기본 · 작품마다 · 기관
     ok('사람마다 기본 회사를 고른다', (await edu('edu-s2', 'me.ai.set', { provider: 'google' })).ok && (await edu('edu-s2', 'me.memberships')).aiProvider === 'google');
     eq('모르는 회사는 고르지 못한다', (await edu('edu-s2', 'me.ai.set', { provider: 'mystery' })).status, 422);

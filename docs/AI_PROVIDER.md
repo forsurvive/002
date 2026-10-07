@@ -185,6 +185,21 @@ resolveCredential(project, provider):
 - usage 는 지금처럼 `{ input, output, cacheRead, cacheWrite, costUsd }` 를 받아 공통 `Usage` 로 옮긴다. `limit`(rate_limit_event)은 그대로 넘겨 한도 물음이 돈다.
 - 모의(`SE2_MOCK=1`)·시험 주입(`globalThis.__SE2_MOCK_FN`)도 그대로 — 시험 676 이 기대는 길이다.
 
+## 9-1. 운영자 구독(SubscriptionProvider, 2026-10-07 사용자 지시)
+
+최상위 운영자 **본인의 개인 작품**만 API 키 대신 Claude 구독(Claude Code 로그인)으로 돌 수 있다.
+
+- 켜기: «내 계정 → Claude 구독(운영자 전용)». `users.settings.ai_billing = 'subscription'`. 운영자가 아니면 문(`me.sub.*`)이 없다(404).
+- 누가 쓰는가는 한 곳(`online/call.mjs` `subscriptionOf`)이 정한다 — 기관에 묶이지 않은 작품 · 주인이 최상위 운영자 · 그 사람이 켰다. 셋이 다 맞을 때만
+  `metadata.billing = 'subscription'`. 기관 · 수업 작품과 다른 사람의 작품은 켜져 있어도 기관 키 · 본인 키로 돈다(시험).
+- 라우터는 billing 이 있으면 회사를 Claude 로, 키를 열지 않고 `ai/subscription.mjs` 로 부른다. 그 어댑터는 개인판과 같은 `tools/call.mjs` 로
+  CLI 를 띄우되 늘 `authMode 'sub'`(물려받은 `ANTHROPIC_API_KEY` 를 지운다 — 있으면 키가 이겨 종량 과금된다), 실패 문구는 갈래별 고정 문구.
+- 생성 기록: `cost_source = 'subscription'`, `cost_usd = NULL`(CLI 의 total_cost_usd 는 «API 였다면»의 값), `credential_id = NULL`.
+- 인증: 서버 환경의 `CLAUDE_CODE_OAUTH_TOKEN`(운영자가 자기 PC 에서 `claude setup-token` → Replit Secrets). 코드 · DB · 화면 어디에도 두지 않는다.
+  실행기는 `@anthropic-ai/claude-code`(선택 의존성, `node_modules/.bin/claude`, `SE_CLAUDE_CLI` 로 바꿀 수 있다).
+- 구독 한도에 닿으면(`quota-session` · `quota-week`) 자동 재시도하지 않고 멈춘다. 동시 호출은 `tools/call.mjs` 의 고삐(기본 3).
+- 앤트로픽 약관이 구독 한도를 «보통의 개인 사용»으로 잡으므로, 학생 · 기관 작업을 이 길로 돌리지 않는 것이 이 설계의 핵심이다.
+
 ## 10. 시험
 
 - 어댑터마다 **가짜 HTTP 서버**(노드 `http`)를 띄워 성공·스트리밍·각 오류 상태·잘림·안전 거절·느린 응답·연결 끊김을 흉내 낸다. 망·키 없이 돈다.

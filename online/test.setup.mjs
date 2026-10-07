@@ -1,6 +1,6 @@
 // 처음 설정 · 한 번에 띄우기(online/start.mjs) 시험 — online/test.mjs 가 맨 먼저 이어 부른다(계정이 없는 상태가 필요하다).
 
-import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, statSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
@@ -170,6 +170,13 @@ export async function run({ pool, ok, eq }) {
     let ran = null;
     eq('없으면 npm ci', ensureDeps({ root: join(ROOT, '.tmp', 'nowhere'), run: (cmd, args) => { ran = args.join(' '); return { status: 0 }; } }), 'installed');
     eq('lock 그대로(ci)', ran, 'ci --no-audit --no-fund');
+    // pg 만 있고 Claude Code(운영자 구독용)가 없으면 — 지우지 않고 install, 실패해도 서버는 선다
+    const half = join(ROOT, '.tmp', 'half-deps');
+    mkdirSync(join(half, 'node_modules', 'pg'), { recursive: true }); writeFileSync(join(half, 'node_modules', 'pg', 'package.json'), '{}');
+    ran = null;
+    eq('**pg 만 있으면 npm install 로 모자란 것만**', ensureDeps({ root: half, run: (cmd, args) => { ran = args[0]; return { status: 1 }; } }), 'present');
+    eq('ci 가 아니라 install', ran, 'install');
+    rmSync(half, { recursive: true, force: true });
   }
 
   // ---------------- 모델 표 — 저장소의 config/models.json 이 바로 쓸 수 있는 꼴이다

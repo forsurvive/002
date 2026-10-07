@@ -30,7 +30,7 @@ import { createTenancy, SAY } from './tenancy.mjs';
 import { createEdu } from './edu.mjs';
 import { createWorkflowSource } from './workflow.mjs';
 import { createWorker } from './worker.mjs';
-import { createOnlineCall, DEFAULT_ALIAS_TIERS } from './call.mjs';
+import { createOnlineCall, subscriptionOf, DEFAULT_ALIAS_TIERS } from './call.mjs';
 import { importProject } from './import.mjs';
 import { guardConsole } from './log.mjs';
 import { keysFromEnv } from '../ai/credentials.mjs';
@@ -166,11 +166,11 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
  *   credentials : 자격증명 서비스(ai/credentials.mjs) — 처음 설정에서 AI 키를 봉해 넣을 때 쓴다
  *   denyFrames : 남의 페이지 안(iframe)에 싣지 못하게 한다 — 운영에서만 켠다(작업 공간의 미리보기 창이 iframe 이다, docs/SECURITY.md §6)
  */
-export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null, keyTester = null, codeKeys = keysFromEnv(process.env) } = {}) {
+export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null, keyTester = null, subscription = null, codeKeys = keysFromEnv(process.env) } = {}) {
   const store = createProjectStore(pool);
   const tenancy = createTenancy(pool);
   const wfs = createWorkflowSource(pool);
-  const edu = createEdu({ pool, credentials, wfs, keyTester, codeKeys, recoveryCode: plan.recoveryCode || '' });
+  const edu = createEdu({ pool, credentials, wfs, keyTester, subscription, codeKeys, recoveryCode: plan.recoveryCode || '' });
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
 
   // 화면은 제 자리의 파일만 부른다 — 스크립트는 외부 파일만, 꾸밈은 style 속성을 쓰므로 인라인 꾸밈만 허락
@@ -452,6 +452,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         // 이 작품의 AI 회사 — 작품이 정한 것 · 비용 주체의 기본 · 키가 있는 회사들(화면의 «AI 회사» 칸)
         const ar = (await pool.query(
           `SELECT p.model_policy->>'provider' AS provider, p.organization_id, coalesce(o.settings->>'ai_provider', '') AS org_provider, coalesce(u.settings->>'ai_provider', '') AS user_provider,
+                  u.is_platform_admin, coalesce(u.settings->>'ai_billing', '') AS user_billing,
                   (SELECT l.allowed_model_tiers FROM licenses l WHERE l.organization_id = p.organization_id AND l.status = 'active' AND l.starts_at <= now()
                      AND (l.ends_at IS NULL OR l.ends_at > now()) ORDER BY l.ends_at DESC NULLS FIRST LIMIT 1) AS tiers,
                   (SELECT coalesce(array_agg(DISTINCT c.provider), '{}') FROM provider_credentials c WHERE c.status = 'active'
@@ -467,7 +468,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
           `SELECT d.legacy_id FROM documents d JOIN document_versions v ON v.id = d.current_version_id JOIN generation_runs r ON r.id = v.generation_run_id
             WHERE d.project_id = $1 AND d.deleted_at IS NULL AND r.finish_reason = 'length'`, [pid])).rows.map((r) => r.legacy_id));
         if (cut.size) for (const d of st.docs || []) if (cut.has(d.id)) d.truncated = true;
-        if (ar) st.ai = { provider: ar.provider || '', classWork: !!ar.organization_id, ownerDefault: ar.organization_id ? ar.org_provider : ar.user_provider, keys: ar.keys || [] };
+        if (ar) st.ai = { provider: ar.provider || '', classWork: !!ar.organization_id, ownerDefault: ar.organization_id ? ar.org_provider : ar.user_provider, keys: ar.keys || [], ...(subscriptionOf(ar) ? { subscription: true } : {}) };
         return json(res, 200, { ok: true, project: st, projects, me: await withRoles() }, cache);
       }
 
@@ -532,7 +533,7 @@ export async function main(env = process.env) {
   const wfsW = createWorkflowSource(pool);
   const worker = env.SE_WORKER === '0' ? null : createWorker({ queue, store, call, allowed: (row) => tenancyW.aiAllowed(row.project_id), workflow: (pid) => wfsW.templateFor(pid) }, { log: (m) => console.log('  [worker] ' + m) });
   if (worker) await worker.start();
-  const srv = createOnlineServer({ pool, plan, queue, worker, credentials: ai.credentials, keyTester: ai.keyTester, trustProxy: env.SE_TRUST_PROXY === '1', denyFrames: env.NODE_ENV === 'production' });
+  const srv = createOnlineServer({ pool, plan, queue, worker, credentials: ai.credentials, keyTester: ai.keyTester, subscription: ai.subscription, trustProxy: env.SE_TRUST_PROXY === '1', denyFrames: env.NODE_ENV === 'production' });
   await new Promise((resolve) => srv.listen(plan.port, plan.host, resolve));
   console.log('  Story Engine (online) : listening on ' + plan.host + ':' + plan.port);
   console.log('  Host names   : ' + plan.allowedHosts.join(', '));

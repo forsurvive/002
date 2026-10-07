@@ -37,10 +37,14 @@ export function ensureMasterKey(env = process.env, file = MASTER_FILE) {
 
 // pg 가 없으면 받아 온다(package-lock.json 그대로)
 export function ensureDeps({ root = ROOT, run = spawnSync } = {}) {
-  if (existsSync(join(root, 'node_modules', 'pg', 'package.json'))) return 'present';
-  console.log('  Installing online dependencies (npm ci) ...');
-  const r = run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['ci', '--no-audit', '--no-fund'], { cwd: root, stdio: 'inherit' });
-  return r.status === 0 ? 'installed' : 'failed';
+  // pg 와 운영자 구독용 Claude Code(선택 의존성 — 깔리지 않아도 서버는 선다)가 다 있으면 그대로.
+  // 먼저 받아 둔 작업 공간에는 Claude Code 가 없다 — 그러면 한 번 더 npm ci 로 받아 온다(실패해도 pg 가 있으면 계속 간다).
+  const hasPg = existsSync(join(root, 'node_modules', 'pg', 'package.json'));
+  if (hasPg && existsSync(join(root, 'node_modules', '@anthropic-ai', 'claude-code', 'package.json'))) return 'present';
+  // pg 가 이미 있으면 ci(node_modules 를 지우고 다시)가 아니라 install — 실패해도 있던 pg 를 잃지 않는다
+  console.log('  Installing online dependencies (npm ' + (hasPg ? 'install' : 'ci') + ') ...');
+  const r = run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [hasPg ? 'install' : 'ci', '--no-audit', '--no-fund'], { cwd: root, stdio: 'inherit' });
+  return r.status === 0 ? 'installed' : hasPg ? 'present' : 'failed';
 }
 
 export async function start(env = process.env) {

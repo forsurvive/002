@@ -17,5 +17,8 @@
   },
   "dependencies": {
     "pg": "^8.23.1"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/claude-code": "2.1.292"
   }
 }

@@ -71,6 +71,7 @@ async function load() {
   S.me = m.ok ? m : null;
   S.orgs = {};
   if (S.me && PAGE === 'account') S.myKeys = (await edu('me.key.list')).credentials || [];
+  if (S.me && S.me.platformAdmin && PAGE === 'account') { const v = await edu('me.sub.view'); S.sub = v.ok ? v : null; }
   if (S.me && PAGE === 'manage') {
     // 관리할 수 있는 기관 — 플랫폼 관리자는 전부, 기관 관리자는 제 기관(서버가 골라 준다)
     const list = (await edu('org.list')).organizations || [];
@@ -334,6 +335,30 @@ function myKeyBox() {
       field(AI_KEY_LABEL[provOf(k)], 'mk-key', 'password', { autocomplete: 'off', spellcheck: 'false' }),
       wsField(k, 'mk-ws'),
       h('button', { class: 'btn-red', text: '저장', onclick: save })));
+}
+
+// ---------------------------------------------------------------- Claude 구독(최상위 운영자만). 켜면 내 개인 작품이 API 키 대신 구독 사용량으로 돈다.
+function subBox() {
+  const v = S.sub;
+  if (!v) return null;
+  const flip = async () => {
+    const r = await edu('me.sub.set', { on: !v.on });
+    if (!r.ok) return tell(r.error);
+    v.on = r.on; done(r.on ? 'Claude 구독으로 돕니다 — 내 개인 작품만(기관 · 수업 작품은 그대로 기관 키)' : 'API 키로 돕니다');
+  };
+  const test = async () => {
+    done('확인하는 중…');
+    const r = await edu('me.sub.test');
+    tell(r.ok ? r.say : r.error, !!(r.ok && r.verified));
+  };
+  const why = !v.cliFound ? 'Claude Code 실행기가 없습니다 — 업데이트 뒤 다시 실행하면 받아 옵니다'
+    : !v.tokenSet ? 'Secrets 에 CLAUDE_CODE_OAUTH_TOKEN 이 없습니다' : '';
+  return section('Claude 구독(운영자 전용)',
+    h('div', { class: 'line' },
+      h('div', { class: 'lab', style: 'margin:0', text: '내 개인 작품을 구독 사용량으로' }),
+      h('button', { class: 'tg' + (v.on ? ' on' : ''), onclick: flip }),
+      v.available ? h('button', { class: 'btn-text', text: '연결 확인', onclick: test }) : null),
+    h('div', { class: 'when', style: 'margin-top:6px', text: why || (v.on ? '켜짐 — 내 개인 작품은 Claude 구독으로 돕니다. 기관 · 수업 작품은 그대로 기관 키입니다.' : '꺼짐 — 내 AI 키로 돕니다') }));
 }
 
 // ---------------------------------------------------------------- 사용량(비용을 내는 쪽만 — 서버가 학생 · 강사에게는 내주지 않는다)
@@ -1048,7 +1073,7 @@ function paint() {
   }
   if (PAGE === 'account') {
     $('root').replaceChildren(h('div', { class: 'body' }, head('내 계정'), notice,
-      S.loggedIn ? [joinBox(), myKeyBox(), passwordBox(), themeBox()] : h('div', { class: 'when', text: '로그인이 필요합니다' })));
+      S.loggedIn ? [joinBox(), myKeyBox(), subBox(), passwordBox(), themeBox()] : h('div', { class: 'when', text: '로그인이 필요합니다' })));
     return;
   }
   $('root').replaceChildren(h('div', { class: 'body' }, head('내 수업'), notice,

@@ -44,7 +44,7 @@ export function resetInviteThrottle() { tries.clear(); }
 const CLASS_TZ = 'Asia/Seoul';
 const LIC_COLS = 'id, plan, status, starts_at, ends_at, seat_limit, allowed_providers, allowed_model_tiers';
 
-export function createEdu({ pool, credentials = null, wfs = null, keyTester = null, codeKeys = null, recoveryCode = '' }) {
+export function createEdu({ pool, credentials = null, wfs = null, keyTester = null, codeKeys = null, recoveryCode = '', subscription = null }) {
   // 초대 코드 봉하기 — 마스터 키가 있을 때만(없으면 지금처럼 만들 때 한 번만 보인다). 붙임 정보로 그 기관 · 그 초대에만 열린다.
   const codeMeta = (orgId, id) => ({ ownerType: 'invite', ownerId: orgId, provider: 'code', id });
   const sealCode = (code, orgId, id) => { try { return codeKeys && codeKeys.current ? seal(code, codeKeys, codeMeta(orgId, id)) : null; } catch { return null; } };
@@ -144,7 +144,8 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
           WHERE p.owner_user_id = $1 AND p.class_id IS NOT NULL AND p.deleted_at IS NULL ORDER BY p.updated_at DESC`, [user.id])).rows;
       for (const c of classes) c.works = works.filter((w) => w.class_id === c.id).map((w) => ({ id: w.id, name: w.name, canCopy: w.can_copy }));
       const mine = await one('SELECT settings FROM users WHERE id = $1', [user.id]);
-      return ok({ loginId: user.loginId, displayName: user.displayName, platformAdmin: !!user.isPlatformAdmin, organizations: orgs, classes, aiProvider: (mine && mine.settings && mine.settings.ai_provider) || '' });
+      return ok({ loginId: user.loginId, displayName: user.displayName, platformAdmin: !!user.isPlatformAdmin, organizations: orgs, classes, aiProvider: (mine && mine.settings && mine.settings.ai_provider) || '',
+        ...(user.isPlatformAdmin ? { aiBilling: (mine && mine.settings && mine.settings.ai_billing) || '' } : {}) });
     },
 
     // ---------------- 기관 · 라이선스(플랫폼 관리자)
@@ -583,6 +584,28 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       if (!r.ok) return no(422, KEY_BAD[r.error] || '키를 저장하지 못했습니다', 'validation');
       await log(user, null, 'credential.set', 'user', user.id, { provider, ownerType: 'user', credentialId: r.credential.id }, ip);
       return ok({ credential: r.credential, aiProvider: await settleDefault('user', user.id) });
+    },
+    // ---------------- 운영자 구독(최상위 운영자만 — 2026-10-07 사용자 지시). 켜면 «운영자 본인의 개인 작품»만 Claude 구독으로 돈다.
+    // 기관 · 수업 작품은 켜든 끄든 기관 키로 돈다(online/call.mjs subscriptionOf). 다른 사람에게는 이 문이 없다(404).
+    async 'me.sub.view'(user) {
+      if (!user.isPlatformAdmin) return NOT_FOUND;
+      const mine = await one('SELECT settings FROM users WHERE id = $1', [user.id]);
+      const st = subscription ? subscription.status() : { available: false, cliFound: false, tokenSet: false };
+      return ok({ on: ((mine && mine.settings) || {}).ai_billing === 'subscription', ...st });
+    },
+    async 'me.sub.set'(user, b, ip) {
+      if (!user.isPlatformAdmin) return NOT_FOUND;
+      const on = b.on === true;
+      if (on && !(subscription && subscription.status().available)) return no(422, '구독 연결이 준비되지 않았습니다 — Secrets 에 CLAUDE_CODE_OAUTH_TOKEN 을 넣고 다시 실행해 주세요', 'not_ready');
+      await pool.query(`UPDATE users SET settings = settings || jsonb_build_object('ai_billing', $2::text), updated_at = now() WHERE id = $1`, [user.id, on ? 'subscription' : '']);
+      await log(user, null, 'ai.billing', 'user', user.id, { billing: on ? 'subscription' : 'api' }, ip);
+      return ok({ on });
+    },
+    async 'me.sub.test'(user) {
+      if (!user.isPlatformAdmin) return NOT_FOUND;
+      if (!(subscription && subscription.status().available)) return no(422, '구독 연결이 준비되지 않았습니다', 'not_ready');
+      const r = await subscription.test();
+      return ok({ verified: !!r.ok, say: r.ok ? '연결됩니다(구독)' : (r.say || '연결되지 않습니다') });
     },
     // 쓸 AI 회사 고르기 — 사람마다 기본(개인 작품에 쓴다). '' 는 «고르지 않음»(키를 넣은 회사 가운데 하나).
     async 'me.ai.set'(user, b, ip) {

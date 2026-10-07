@@ -125,5 +125,34 @@ export async function run({ pool, ok, eq }) {
     await pool.query(`UPDATE licenses SET allowed_providers = '{openai}' WHERE id = $1`, [lic]);
     const r6 = await oc({ pid: opid, code: 'F-UPDATE', refIds: [], keepSeat: true }, { userId: u.id });
     ok('**허락되지 않은 회사로는 부르지 않는다**', r6.ok === false && s4.length === 2 && (await pool.query('SELECT provider FROM generation_runs WHERE id = $1', [r6.runId])).rows[0].provider === 'openai');
+
+    // ---------------- 운영자 구독 — 최상위 운영자 «본인의 개인 작품»만 구독으로. 키를 열지 않고 비용으로 적지 않는다.
+    const boss = (await createUser(pool, { loginId: 'sub-boss', password: 'long-enough-1', isPlatformAdmin: true })).user;
+    await pool.query(`UPDATE users SET settings = settings || '{"ai_billing":"subscription"}' WHERE id = $1`, [boss.id]);
+    const subSeen = [];
+    const fakeSub = { id: 'subscription', async generate(inp) { subSeen.push(inp); return success({ text: '구독 글', usage: { inputTokens: 10, outputTokens: 5 }, costSource: 'subscription' }); } };
+    const cat = createCatalog([{ provider: 'anthropic', tier: 'high_reasoning', modelId: 'test-model-high' }, { provider: 'anthropic', tier: 'balanced', modelId: 'test-model-mid' }]);
+    const apiSeen = [];
+    const gS = createProviderRouter({ catalog: cat, credentials, providers: { anthropic: { id: 'anthropic', async generate(i) { apiSeen.push(i); return success({ text: 'API 글' }); } }, subscription: fakeSub } });
+    const ocS = createOnlineCall({ pool, store, generator: gS });
+    const bpid = await store.create({ name: '운영자 개인 작품' }, { ownerUserId: boss.id });
+    const rs = await ocS({ pid: bpid, code: 'F-UPDATE', refIds: [], keepSeat: true, modelPick: 'opus' }, { userId: boss.id });
+    const runS = (await pool.query('SELECT provider, model_id, credential_owner_type, credential_id, cost_usd, cost_source FROM generation_runs WHERE id = $1', [rs.runId])).rows[0];
+    ok('**운영자 개인 작품은 구독으로 돈다 — 키 없이, 비용으로 적지 않고**', rs.ok && subSeen.length === 1 && apiSeen.length === 0 && subSeen[0].model === 'test-model-high' && !subSeen[0].credential
+      && runS.provider === 'anthropic' && runS.credential_id === null && runS.cost_usd === null && runS.cost_source === 'subscription', JSON.stringify(runS));
+    // 운영자라도 기관 작품은 기관 키로
+    const bopid = await store.create({ name: '운영자가 만든 기관 작품' }, { ownerUserId: boss.id, organizationId: org });
+    await pool.query(`UPDATE licenses SET allowed_providers = NULL WHERE id = $1`, [lic]);
+    const ro = await ocS({ pid: bopid, code: 'F-UPDATE', refIds: [], keepSeat: true }, { userId: boss.id });
+    ok('**운영자라도 기관 작품은 구독으로 가지 않는다(기관 키)**', ro.ok && subSeen.length === 1 && apiSeen.length === 1 && apiSeen[0].credential, JSON.stringify(ro).slice(0, 120));
+    // 운영자가 아닌 사람은 설정이 박혀 있어도 구독으로 가지 않는다
+    await pool.query(`UPDATE users SET settings = settings || '{"ai_billing":"subscription"}' WHERE id = $1`, [u.id]);
+    await ocS({ pid, code: 'F-UPDATE', refIds: [d1], keepSeat: true }, { userId: u.id });
+    ok('**운영자가 아닌 사람은 설정이 있어도 구독을 쓰지 못한다**', subSeen.length === 1 && apiSeen.length === 2);
+    await pool.query(`UPDATE users SET settings = settings - 'ai_billing' WHERE id = $1`, [u.id]);
+    // 끄면 다시 키로
+    await pool.query(`UPDATE users SET settings = settings - 'ai_billing' WHERE id = $1`, [boss.id]);
+    const rk = await ocS({ pid: bpid, code: 'F-UPDATE', refIds: [], keepSeat: true }, { userId: boss.id });
+    ok('구독을 끄면 운영자 작품도 키로(키가 없으면 «연결 필요»)', subSeen.length === 1 && rk.ok === false && rk.reason === 'credential');
   }
 }
