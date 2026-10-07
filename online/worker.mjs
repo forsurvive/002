@@ -21,7 +21,7 @@ const PROMPTS = { builtin: BUILTIN, slots: AGENT_SLOTS, duty: SLOT_DUTY, promptF
 // 사람에게 보일 실패 문구 — 어댑터 · Core 의 문구는 이미 사람 말이다. 갈래만 있고 문구가 없으면 이것으로.
 const SAY = {
   credential: 'AI 연결이 필요합니다', auth: 'AI 키가 맞지 않습니다', credit: 'AI 사용 잔액이 없습니다', model: '쓸 수 있는 모델이 없습니다',
-  invalid: '요청을 처리할 수 없습니다', safety: '안전 정책으로 답하지 않았습니다', empty: '빈 응답', timeout: '응답이 너무 오래 걸렸습니다', other: '실패',
+  invalid: '입력이 너무 깁니다 — 줄여서 다시 불러도 넘쳤습니다. 참조를 줄여 다시 해 보세요', safety: '안전 정책으로 답하지 않았습니다', empty: '빈 응답', timeout: '응답이 너무 오래 걸렸습니다', other: '실패', internal: '작업 중 오류가 났습니다 — 다시 해 보세요',
   org: '기관의 AI 연결에 문제가 있습니다 — 선생님(기관)께 알려 주세요',
 };
 
@@ -94,8 +94,10 @@ export function createWorker({ queue, store, call, prepare = null, allowed = nul
       const gate = allowed ? await allowed(row) : { ok: true };
       res = gate.ok ? await runKind(deps, row.kind, params, ctx) : { ok: false, reason: 'license', error: TENANCY_SAY[gate.reason] || TENANCY_SAY.missing };
     } catch (e) {
-      res = e === PARK ? PARK : { ok: false, reason: 'other', error: '' };
-      if (e !== PARK) log('job ' + row.id + ' threw ' + ((e && e.name) || 'error'));
+      // 예외로 끝난 작업 — 화면에는 «실패» 한 마디가 아니라 무슨 일인지를, 로그에는 원인을 남긴다(2026-10-07 «실패 — 실패»).
+      // 로그에는 ASCII 만 · 짧게(원고가 섞일 수 있는 글자는 걷는다). 한 번은 다시 해 본다(other 와 같은 갈래).
+      res = e === PARK ? PARK : { ok: false, reason: 'other', error: SAY.internal };
+      if (e !== PARK) log('job ' + row.id + ' threw ' + ((e && e.name) || 'error') + ((e && e.code) ? ' ' + e.code : '') + ': ' + String((e && e.message) || '').replace(/[^\x20-\x7e]/g, '?').slice(0, 160));
     } finally {
       clearInterval(beat);
       clearTimeout(cap);

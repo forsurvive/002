@@ -8,6 +8,7 @@
 // ctx = 작업 맥락(pid · step · gate · askLimit · addDoc · signal) — jobs.mjs 가 만든다.
 
 import { runUpdate, runTalk, runThreadDoc, runStage } from './run.mjs';
+import { fitting } from './fit.mjs';
 
 const pick = (v) => String(v || '');
 
@@ -27,5 +28,7 @@ export const KIND_NAMES = Object.keys(JOB_KINDS);
 export async function runKind(deps, kind, params, ctx) {
   const fn = JOB_KINDS[kind];
   if (!fn) return { ok: false, error: '모르는 작업 종류입니다: ' + kind };
-  return fn(deps, ctx, params || {});
+  // 길이로 거절당하면 줄여서 다시(fit.mjs). 자료 분석(agents)은 제 자리에서 자료를 줄여 다시 부른다.
+  const d = kind === 'agents' || !deps.call ? deps : { ...deps, call: fitting(deps.call) };
+  return fn(d, ctx, params || {});
 }

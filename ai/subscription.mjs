@@ -14,6 +14,7 @@ const SAY = {
   'quota-week': 'Claude 구독 주간 한도를 다 썼습니다',
   rate: '잠시 밀렸습니다', auth: 'Claude 구독 로그인이 필요합니다(Secrets 의 CLAUDE_CODE_OAUTH_TOKEN)',
   credit: '구독 쪽에서 거절했습니다', model: '그 모델을 쓸 수 없습니다', timeout: '응답 없음', stopped: '중지됨', empty: '빈 응답',
+  invalid: '입력이 너무 깁니다 — 참조를 줄여 다시 해 보세요',
   other: 'Claude 구독 호출에 실패했습니다',
 };
 

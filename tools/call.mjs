@@ -51,6 +51,7 @@ export const REASONS = [
   'timeout',        // 시간을 넘겼다
   'stopped',        // 사람이 세웠다
   'empty',          // 보낼 것이 없다
+  'invalid',        // 입력이 너무 길다 — 같은 것을 다시 부르지 않고, 부르는 쪽이 줄여서 다시 부른다
   'other',
 ];
 
@@ -64,6 +65,7 @@ const SAY = {
   timeout: '응답 없음',
   stopped: '중지됨',
   empty: '빈 프롬프트',
+  invalid: '입력이 너무 깁니다',
 };
 
 // 마지막으로 본 한도 — 화면이 «남은 양»을 보여 줄 재료. 호출이 흐르는 동안만 갱신된다.
@@ -152,9 +154,12 @@ export function classify({ limitInfo = null, finalResult = null, stderr = '', ab
   if (st === 401 || st === 403) return 'auth';
   if (st === 404) return 'model';
   if (st === 429 || (st >= 500 && st < 600)) return 'rate';
+  if (st === 413) return 'invalid';
 
   // ③ 그래도 안 갈리면 문구를 본다
   const t = String((finalResult && finalResult.result) || '') + ' ' + String(stderr || '');
+  // 입력이 모델이 받는 길이를 넘었다 — 한도(«limit»)로 잘못 읽히지 않게 먼저 본다
+  if (/prompt is too long|input is too long|too many tokens|context (length|window)|maximum context|request_too_large|request too large|입력이 너무 깁/i.test(t)) return 'invalid';
   if (/credit balance/i.test(t)) return 'credit';
   if (/(usage|rate)\s*limit|한도|too many requests/i.test(t)) return 'quota-session';
   if (/invalid api key|invalid auth token|oauth token|not logged in|please run .?(\/)?login|authenticat/i.test(t)) return 'auth';
@@ -237,6 +242,9 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
     // 고른 갈래를 따른다 — 구독인지 API 키인지는 사람이 정한다(tools/auth.mjs).
     p = spawn(cli || CLI, buildCallArgs(spFile, model), { env: childEnv(authMode ? { mode: authMode } : auth.read()), windowsHide: true, cwd: dir });
     LIVE.add(p);
+    // 실행기가 글을 다 받기 전에 끝나면(거절 · 죽음) 쓰던 통로가 EPIPE 를 낸다 — 듣는 이가 없으면 프로세스가 통째로 죽는다.
+    // 그 까닭은 실행기의 결과 · stderr 가 말해 주므로 여기서는 삼킨다.
+    p.stdin.on('error', () => {});
     try { p.stdin.write(String(prompt), 'utf8'); } catch {}
     try { p.stdin.end(); } catch {}
 

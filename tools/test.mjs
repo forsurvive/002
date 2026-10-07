@@ -799,6 +799,12 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 문구는 마지막 수단
   eq('문구로도 크레딧을 알아본다', c({ stderr: 'Your credit balance is too low' }), 'credit');
   eq('문구로도 로그인을 알아본다', c({ stderr: 'Invalid API key' }), 'auth');
+  // 입력이 너무 길면 invalid — 줄여서 다시 부르는 문(core/generation/fit.mjs)이 이것을 본다. 한도(limit)로 잘못 읽지 않는다.
+  eq('**길이 초과는 invalid(문구)**', c({ finalResult: { is_error: true, result: 'Prompt is too long' } }), 'invalid');
+  eq('길이 초과는 invalid(400 + 문구)', c({ finalResult: { api_error_status: 400, result: 'API Error: 400 prompt is too long: 812345 tokens > 200000 maximum' } }), 'invalid');
+  eq('길이 초과는 invalid(413)', c({ finalResult: { api_error_status: 413 } }), 'invalid');
+  ok('개인판도 invalid 는 같은 것을 다시 부르지 않는다', !eng.RETRY_REASONS.has('invalid') && call.REASONS.includes('invalid'));
+  ok('**실행기에 글을 넘기는 통로가 EPIPE 로 프로세스를 죽이지 않는다**', /p\.stdin\.on\('error'/.test(src(join(ROOT, 'tools', 'call.mjs'))));
 
   ok('갈래 이름이 표에 다 있다', ['quota-session', 'quota-week', 'rate', 'auth', 'credit', 'model', 'timeout', 'stopped', 'empty', 'other']
     .every((r) => call.REASONS.includes(r)));
@@ -2206,6 +2212,39 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const viaKind = [];
   await kinds.runKind({ store: memStore, call: async (a) => { viaKind.push(a.code); return { ok: true, text: '정리' }; } }, 'update', { docId: mo.id }, { pid: mem.id, step() {}, addDoc() {} });
   eq('표를 지나 같은 실행에 닿는다', viaKind.join(','), 'F-UPDATE');
+  // 참조가 많아 «입력이 너무 깁니다»(invalid)로 거절당하면 줄여서 다시 — 원고는 통째로, 참조는 표를 달고 줄인다(2026-10-07)
+  {
+    const plan = await import('../core/reference/plan.mjs');
+    const fitMod = await import('../core/generation/fit.mjs');
+    const bigA = model.docCreate(mem, { title: '긴 참조 A', body: '가'.repeat(300000) });
+    const bigB = model.docCreate(mem, { title: '긴 참조 B', body: '나'.repeat(300000) });
+    const manu = model.docCreate(mem, { title: '권별 플롯', body: '원고 본문' });
+    model.docWrite(mem, manu.id, { refIds: [bigA.id, bigB.id], request: '권별로' });
+    const sizes = []; const steps = [];
+    const picky = async (a) => {
+      const p0 = plan.planCall(mem, { ...a }, { pr: { task: 't', name: 'n', role: 'r', craft: '' } });
+      sizes.push(p0.userPrompt.length);
+      if (p0.userPrompt.length > 200000) return { ok: false, reason: 'invalid', error: '입력이 너무 깁니다' };
+      return { ok: true, text: '권별 플롯 결과', seenPrompt: p0.userPrompt };
+    };
+    const got2 = await kinds.runKind({ store: memStore, call: picky }, 'update', { docId: manu.id }, { pid: mem.id, step: (t) => steps.push(t), addDoc() {} });
+    ok('**길이로 거절당하면 줄여 다시 불러 문서를 만든다**', got2.ok === true && model.findDoc(mem, manu.id).body === '권별 플롯 결과', JSON.stringify(got2) + ' ' + sizes.join(','));
+    ok('처음엔 그대로(줄이지 않음) → 40만 → 15만 자 몫에서 통과', sizes.length === 3 && sizes[0] > 600000 && sizes[2] < 200000, sizes.join(','));
+    ok('작업 줄에 «길이를 줄여 다시»가 보인다', steps.some((t) => /길이를 줄여 다시/.test(t)));
+    const cut = plan.planCall(mem, { refIds: [bigA.id, bigB.id], targetIds: [manu.id], inputMax: 150000 }, { pr: { task: 't', name: 'n', role: 'r', craft: '' } });
+    const refIn = cut.inputs.filter((x) => x.role === 'reference');
+    ok('**줄인 참조에는 «여기까지만 실었다» 표 — 두 참조를 같은 비율로, 원고는 통째로**',
+      refIn.length === 2 && refIn.every((x) => /여기까지만 실었다/.test(x.text) && x.text.length < 80000) && cut.inputs.find((x) => x.role === 'target').text === model.findDoc(mem, manu.id).body, JSON.stringify(cut.inputs.map((x) => [x.role, x.name, x.text.length])));
+    const plain = plan.planCall(mem, { refIds: [bigA.id], targetIds: [manu.id] }, { pr: { task: 't', name: 'n', role: 'r', craft: '' } });
+    ok('몫을 주지 않으면 아무것도 줄이지 않는다', !/여기까지만 실었다/.test(plain.userPrompt));
+    let n = 0;
+    const always = await fitMod.fitting(async () => { n += 1; return { ok: false, reason: 'auth', error: '키' }; })({ pid: mem.id }, null);
+    ok('길이 말고 다른 실패는 다시 부르지 않는다', always.ok === false && n === 1);
+    let m = 0;
+    const never = await fitMod.fitting(async () => { m += 1; return { ok: false, reason: 'invalid', error: '깁니다' }; })({ pid: mem.id }, null);
+    ok('끝까지 길면 세 번 줄여 본 뒤 그 까닭을 돌려준다', never.ok === false && never.reason === 'invalid' && m === 4);
+    for (const d of [bigA, bigB, manu]) model.docDelete(mem, d.id);
+  }
   // 이미 저장된 말에 답하기(온라인판 — 말을 작업 앞에 저장한다) — 말이 두 번 얹히지 않고 그 말 밑에 답이 붙는다
   const tAsk = model.threadCreate(mem, { title: '먼저 저장' });
   const pre = model.threadAddMessage(mem, tAsk.id, 'user', '미리 둔 물음');
@@ -2591,6 +2630,11 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('구독: 비용으로 적지 않는다(API 였다면의 값은 버린다)', sr.ok && sr.costUsd === null && sr.costSource === 'subscription' && sr.usage.inputTokens === 7 && sr.usage.cacheReadTokens === 2);
   sr = await sp.generate({ model: 'claude-x', userPrompt: 'fail' });
   ok('**구독: 실패 문구는 고정 — 실행기 원문이 새지 않는다**', !sr.ok && sr.reason === 'quota-session' && !/stderr|secret|원고/.test(sr.error) && /한도/.test(sr.error), sr.error);
+  {
+    const spLong = subM.createSubscriptionProvider({ cli: '/x/claude', run: async () => ({ ok: false, reason: 'invalid', error: 'Prompt is too long' }) });
+    const lr = await spLong.generate({ model: 'claude-x', userPrompt: '긴 글' });
+    ok('**구독: 길이 초과는 invalid 그대로 — 줄여서 다시 부르는 문이 알아본다**', !lr.ok && lr.reason === 'invalid' && /너무 깁니다/.test(lr.error), JSON.stringify(lr));
+  }
   eq('**구독 토큰: 붙여 넣을 때 섞인 따옴표 · 줄바꿈 · 공백을 걷는다**', subM.cleanToken('"sk-ant-oat01-abc\n def "\u200b'), 'sk-ant-oat01-abcdef');
   ok('구독 연결 확인의 문구는 토큰 꼴을 가린다', !/oat01-SECRET/.test(subM.cliDetail('bad sk-ant-oat01-SECRETSECRET and ' + 'x'.repeat(40))) && /sk-ant-\*\*\*/.test(subM.cliDetail('sk-ant-oat01-SECRET')));
   ok('구독: 실행기나 토큰이 없으면 쓸 수 없다', !subM.subscriptionStatus({ cli: '/nope/claude', env: { CLAUDE_CODE_OAUTH_TOKEN: 't' } }).available

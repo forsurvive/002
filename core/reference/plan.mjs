@@ -33,15 +33,29 @@ export function materialItems(project) {
 
 // 자료가 모델이 받을 수 있는 길이를 넘을 때(«입력이 너무 깁니다») — 자료마다 같은 비율로 앞부분을 남기고 줄였다는 표를 단다.
 // max 가 0 이면 그대로. 자료 분석(S02)이 길이로 거절당했을 때만 줄인 예산으로 다시 부른다(core/generation/agents.mjs).
-export function fitMaterials(items, max = 0) {
+export function fitMaterials(items, max = 0, what = '자료') {
   const total = items.reduce((n, m) => n + String(m.text || '').length, 0);
   if (!(max > 0) || total <= max) return items;
   const ratio = max / total;
   return items.map((m) => {
     const t = String(m.text || '');
     const keep = Math.max(200, Math.floor(t.length * ratio));
-    return t.length <= keep ? m : { ...m, text: t.slice(0, keep) + '\n\n…(자료가 길어 여기까지만 실었다 — 원문 ' + t.length.toLocaleString('en-US') + '자 중 ' + keep.toLocaleString('en-US') + '자)' };
+    return t.length <= keep ? m : { ...m, text: t.slice(0, keep) + '\n\n…(' + what + '가 길어 여기까지만 실었다 — 원문 ' + t.length.toLocaleString('en-US') + '자 중 ' + keep.toLocaleString('en-US') + '자)' };
   });
+}
+
+// 실을 것 전체가 모델이 받는 길이를 넘을 때(«입력이 너무 깁니다» — 2026-10-07 참조가 많은 문서 생성이 실패하던 것).
+// 고치는 대상(원고)은 되도록 통째로 두고, 남은 몫을 자료 · 참조 · 확정본에 같은 비율로 나눈다. 줄인 문서마다 표를 단다.
+// 대상만으로 몫의 절반을 넘으면 대상도 절반까지 줄인다. max 가 0 이면 그대로.
+export function fitInputs({ mats, refs, finals, targets }, max = 0) {
+  const len = (xs) => xs.reduce((n, m) => n + String(m.text || '').length, 0);
+  const others = [...mats, ...refs, ...finals];
+  if (!(max > 0) || len(others) + len(targets) <= max) return { mats, refs, finals, targets };
+  const keptTargets = len(targets) > max / 2 ? fitMaterials(targets, Math.floor(max / 2), '원고') : targets;
+  const room = Math.max(Math.floor(max / 10), max - len(keptTargets));
+  const cut = new Map(fitMaterials(others, room, '문서').map((m, i) => [others[i], m]));
+  const pick = (xs) => xs.map((m) => cut.get(m) || m);
+  return { mats: pick(mats), refs: pick(refs), finals: pick(finals), targets: keptTargets };
 }
 
 /**
@@ -53,7 +67,7 @@ export function planCall(project, {
   refIds = [], targetIds = [], agentIds = [], request = '', taskExtra = '',
   materials = false, allFinals = false, talk = [], prev = '', next = '',
   noCount = null, finalFirst = false, keepSeat = false,
-  extraTargets = [], modelPick = '', materialsMax = 0,
+  extraTargets = [], modelPick = '', materialsMax = 0, inputMax = 0,
 } = {}, { pr, slotModel = '' } = {}) {
   // 자료도 보통 문서다 — 참조로 걸면 참조로, 확정본이면 확정본으로 실린다.
   // 다만 에이전트 준비(materials)가 자료를 통째로 «■ 자료» 구획에 실을 때는 그 문서들을 다른 구획에 겹쳐 싣지 않는다.
@@ -80,7 +94,10 @@ export function planCall(project, {
     finals = finalsAll.filter((d) => !taken.has(d.id));
     finals.forEach((d) => taken.add(d.id));
   }
-  const refs = docsByIds(project, refIds).filter((d) => !taken.has(d.id));
+  let refs = docsByIds(project, refIds).filter((d) => !taken.has(d.id));
+  // 길이로 거절당한 뒤의 다시 부르기(inputMax — core/generation/fit.mjs)면 실을 것을 그 몫에 맞춘다
+  let fitMats = mats;
+  if (inputMax > 0) ({ mats: fitMats, refs, finals, targets } = fitInputs({ mats, refs, finals, targets }, inputMax));
   // 문서가 아닌 것도 «대상» 자리에 설 수 있다(합평 모으기가 받는 여러 합평 같은 것).
   const docTargets = targets;
   if (extraTargets.length) targets = [...targets, ...extraTargets];
@@ -103,14 +120,14 @@ export function planCall(project, {
   const userPrompt = buildUser({
     project,
     // 에이전트 준비만 자료를 통째로 싣는다. 손으로 여는 자리에서 고른 자료는 참조 · 확정본 구획으로 간다.
-    materials: mats,
+    materials: fitMats,
     refs, finals, targets, talk, request, task, noCount: nc,
   });
 
   // 실린 것의 목록 — buildUser 의 구획 차례(자료 → 참조 → 확정본 → 대상 → 대화)대로.
   const tag = (role) => (d) => ({ role, id: d.id || '', name: d.name, text: String(d.text || '') });
   const inputs = [
-    ...mats.map(tag('material')), ...refs.map(tag('reference')), ...finals.map(tag('final')),
+    ...fitMats.map(tag('material')), ...refs.map(tag('reference')), ...finals.map(tag('final')),
     ...docTargets.map(tag('target')), ...extraTargets.map(tag('extra')), ...talk.map(tag('talk')),
   ];
   return { systemPrompt, userPrompt, model: useModel, modelSource, inputs };

@@ -44,7 +44,7 @@ export async function callOnce({
   pid, code, refIds = [], targetIds = [], agentIds = [], request = '', taskExtra = '',
   materials = false, allFinals = false, talk = [], prev = '', next = '',
   signal = null, noCount = null, finalFirst = false, keepSeat = false,
-  extraTargets = [], modelPick = '', materialsMax = 0,
+  extraTargets = [], modelPick = '', materialsMax = 0, inputMax = 0,
 }) {
   // **막히는 것은 새 호출뿐이다** — 읽기·내보내기·되짚기는 이 문을 지나지 않는다.
   const missing = promptsMissing();
@@ -55,7 +55,7 @@ export async function callOnce({
   // 무엇을 어느 구획에 싣고 어느 모델로 부를지는 Core 의 계획이 정한다(core/reference/plan.mjs).
   const plan = planCall(project, {
     refIds, targetIds, agentIds, request, taskExtra, materials, allFinals, talk, prev, next,
-    noCount, finalFirst, keepSeat, extraTargets, modelPick, materialsMax,
+    noCount, finalFirst, keepSeat, extraTargets, modelPick, materialsMax, inputMax,
   }, { pr: promptFor(project, code), slotModel: slotModel(project, code) });
 
   const r = await callModel({ systemPrompt: plan.systemPrompt, prompt: plan.userPrompt, code, signal, model: plan.model });
