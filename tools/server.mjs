@@ -51,7 +51,7 @@ jobs.useRunner((kind, params, ctx) => runKind(LOCAL_DEPS, kind, params, ctx));
 function startAgentPrep(pid, request = '') {
   const p = state.get(pid);
   if (!p) return;
-  jobs.start(pid, { kind: 'agents', title: '에이전트 준비', params: { request } });
+  jobs.start(pid, { kind: 'agents', title: '자료 분석', params: { request } });   // 화면 이름 «자료 분석»(2026-10-07) — 종류 판정 · 짓기 · 자료 분석을 묶은 한 작업
 }
 
 // 작품 파일 가져오기 — 늘 새 id 로 세운다(있는 작품을 덮어쓰지 않는다). 문서 · 판 · 참조 · 논의는 파일의 것 그대로.

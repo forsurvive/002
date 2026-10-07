@@ -39,7 +39,7 @@ const brandMark = (style) => h('div', { class: 'brand', style, text: STUDIO });
 
 // 처음 쓰는 사람을 위한 작업 순서 — 설정 탭에 접어 둔다.
 const GUIDE = [
-  ['① 프로젝트를 만든다', '첫 화면 오른쪽 위 [+]. 이름·형식과 자료만 있으면 됩니다(개요와 분량은 비워 두어도 됩니다). 만들고 나면 왼쪽 «에이전트 준비»가 돌며 자료를 한 번 읽어 «자료 분석»을 남깁니다. 넣은 자료는 작업실 «자료» 카테고리에 문서로 들어갑니다.'],
+  ['① 프로젝트를 만든다', '첫 화면 오른쪽 위 [+]. 이름·형식과 자료만 있으면 됩니다(개요와 분량은 비워 두어도 됩니다). 만들고 나면 왼쪽 «자료 분석»이 돌며 글의 종류를 가리고(소설이 아니면 그 글에 맞는 에이전트를 짓고) 자료를 한 번 읽어 «자료 분석» 문서를 남깁니다. 넣은 자료는 작업실 «자료» 카테고리에 문서로 들어갑니다.'],
   ['② 문서를 짓는다', '작업실 [+] → 문서. 이름만 짓고 [생성]을 누르면 요청사항과 참조를 보고 씁니다. 본문을 직접 치셔도 됩니다. 한 호출이 십 분을 넘기기도 하니 작업 줄의 지난 시간을 보고 기다리십시오.'],
   ['③ 참조를 건다', '문서 창의 «참조»에 다른 문서를 겁니다(«자료» 카테고리의 자료도 문서라 똑같이 걸립니다). 확정본(빨간 토글)을 켜 두면 그 문서가 «최우선 사실»로 실려 다른 글을 다스립니다.'],
   ['④ 에이전트를 건다', '설정에서 이름·역할·프롬프트·쓸 모델로 사람을 짓고, 문서 창의 «에이전트»에 걸어 둡니다. 그 문서를 짓고 고칠 때 그 사람이 씁니다.'],
@@ -272,7 +272,7 @@ const SCROLLERS = ['.main', '#layer1 .panel-body', '#layer2 .panel-body', '#d-bo
 
 // 읽기만 하는 작품(강사 · 열람이 허락된 기관 관리자) — 고치는 손잡이를 모두 걷고 칸은 읽기 전용으로.
 // 막는 것은 서버다(쓰기 문은 403) — 이것은 누를 수 없는 단추를 보이지 않게 하는 안내일 뿐이다.
-const RO_HIDE = /^(\+|삭제|생성|갱신|추가|저장|만들기|복원|비우기|영구 삭제|승인|승인하고 다음 단계로|건너뛰기|건너뛰기 취소|다시 생성\(새 판\)|문서에서 고치기|고치기|되돌리기|파일 선택|일시중지|이어 하기|에이전트 준비 다시|프로젝트 삭제|작품 파일 가져오기|이 판으로 되돌리기|자료 분석)$/;
+const RO_HIDE = /^(\+|삭제|생성|갱신|추가|저장|만들기|복원|비우기|영구 삭제|승인|승인하고 다음 단계로|건너뛰기|건너뛰기 취소|다시 생성\(새 판\)|문서에서 고치기|고치기|되돌리기|파일 선택|일시중지|이어 하기|자료 분석 다시|에이전트 준비 다시|프로젝트 삭제|작품 파일 가져오기|이 판으로 되돌리기|자료 분석)$/;
 function lockReadOnly() {
   for (const root of [$('root'), $('layer1'), $('layer2')]) {
     if (!root) continue;
@@ -831,7 +831,7 @@ function settings() {
         // 준비가 어긋났거나 끊겼을 때만 선다 — 누르면 종류 판정부터 자료 분석까지 다시 돈다.
         p.prepared || (p.jobs || []).some((j) => j.kind === 'agents' && j.status === 'running')
           ? null
-          : h('button', { class: 'btn-line', text: '에이전트 준비 다시', onclick: () => { S.open = { type: 'prepare' }; clearTyped('pp-req'); render(); } }))),
+          : h('button', { class: 'btn-line', text: '자료 분석 다시', onclick: () => { S.open = { type: 'prepare' }; clearTyped('pp-req'); render(); } }))),
     h('div', null,
       h('div', { class: 'lab', text: '모델' }),
       modelRow(p.models, p.model, (m) => api('project.spec', { model: m }))),
@@ -1553,11 +1553,11 @@ async function makeProject() {
   return false;
 }
 
-// «에이전트 준비 다시» — 이번 한 번만 실을 요청사항을 받는다(비워 두어도 된다. 저장하지 않는다).
+// «자료 분석 다시»(전의 «에이전트 준비 다시» — 2026-10-07 이름만 바꿈) — 이번 한 번만 실을 요청사항을 받는다(비워 두어도 된다. 저장하지 않는다).
 function preparePanel(close) {
   S.askOpen = { label: '시작하고 닫기', dirty: () => typedAny('pp-req'), save: startPrepare };
   return h('div', { class: 'panel narrow' },
-    h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '에이전트 준비' }), h('button', { class: 'x', text: '×', onclick: close })),
+    h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '자료 분석' }), h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
       h('div', null, h('div', { class: 'lab', text: '요청사항' }), area('pp-req', '요청사항')),
       h('button', { class: 'btn', text: '시작', onclick: startPrepare }),

@@ -46,7 +46,7 @@ function tourSteps(t) {
       spot: '.side-jobs .job',
       act() {
         S.pid = d.id; S.project = d; S.tab = '작업실'; S.open = null;
-        d.jobs = [job({ id: 'j_prep', kind: 'agents', title: '에이전트 준비', step: '자료 분석', stepAt: t.now - 74 * 1000, startedAt: t.now - 74 * 1000 })];
+        d.jobs = [job({ id: 'j_prep', kind: 'agents', title: '자료 분석', step: '자료 분석', stepAt: t.now - 74 * 1000, startedAt: t.now - 74 * 1000 })];
       },
     },
     {
@@ -55,7 +55,7 @@ function tourSteps(t) {
         + '비어 있는 것을 보고 무엇을 더 정할지 먼저 확인하세요.',
       spot: null,
       act() {
-        d.jobs = [job({ id: 'j_prep', kind: 'agents', title: '에이전트 준비', status: 'done', endedAt: t.now, docIds: ['d_study'] })];
+        d.jobs = [job({ id: 'j_prep', kind: 'agents', title: '자료 분석', status: 'done', endedAt: t.now, docIds: ['d_study'] })];
         S.open = { type: 'doc', id: 'd_study' };
       },
     },
@@ -120,7 +120,7 @@ function tourSteps(t) {
         S.open = null;
         d.jobs = [
           job({ id: 'j_ep1', title: '1화 — 대역', targetId: 'd_ep1', step: '1화 — 대역', stepAt: t.now - 8 * 60 * 1000, startedAt: t.now - 8 * 60 * 1000 }),
-          job({ id: 'j_prep', kind: 'agents', title: '에이전트 준비', status: 'done', endedAt: t.now, docIds: ['d_study'] }),
+          job({ id: 'j_prep', kind: 'agents', title: '자료 분석', status: 'done', endedAt: t.now, docIds: ['d_study'] }),
         ];
       },
     },

@@ -38,7 +38,7 @@ export async function prepareAgents(pid, ctx, request = '') {
   const missing = promptsMissing();
   if (missing) return missing;
   if (building.has(pid)) {
-    if (ctx) ctx.step('에이전트 준비');
+    if (ctx) ctx.step('글의 종류 가리기');
     return building.get(pid);
   }
   const work = core.prepareAgents(DEPS, pid, ctx, request).finally(() => building.delete(pid));

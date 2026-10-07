@@ -77,7 +77,7 @@ export function agentsReady(project, slots) {
 export async function prepareAgents({ store, raw, prompts }, pid, ctx, request = '') {
   const project = await store.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
-  if (ctx) ctx.step('에이전트 준비');
+  if (ctx) ctx.step('글의 종류 가리기');
 
   // 판정은 프로젝트마다 한 번뿐이다 — 이미 내린 판정이 있으면 그대로 잇는다.
   let kindName = (project.agents && project.agents.__kind) || '';
@@ -117,7 +117,7 @@ export async function prepareAgents({ store, raw, prompts }, pid, ctx, request =
       '작법 본문은 최소 ' + CRAFT_MIN + '자 이상이어야 한다. 넉넉히 써라.',
     ].join('\n');
 
-    if (ctx) ctx.step('에이전트 준비 — ' + code);
+    if (ctx) ctx.step('에이전트 짓기 — ' + code);
     let made = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       const now = await store.get(pid);
