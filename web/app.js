@@ -736,7 +736,9 @@ function catSection(c, byId) {
         if (c.docIds.length && picked.length === c.docIds.length) download('cat', c.id, fmt);
         else picked.forEach((id, i) => setTimeout(() => download('doc', id, fmt), i * 120));
       }, 'btn-line'),
+      moveButton(key),
       h('button', { class: 'btn-red', text: '삭제', onclick: () => api('doc.delete', { ids: picked }) })) : null,
+    picked.length && S.movePick === key ? moveChooser(key, c, picked) : null,
     folded ? null : docs.map((d) => h('div', {
       class: 'row' + (d.isFinal ? ' final' : ''),
       onclick: () => { S.open = { type: 'doc', id: d.id }; render(); },
@@ -745,6 +747,23 @@ function catSection(c, byId) {
     h('button', { class: 'tg' + (d.isFinal ? ' on' : ''), onclick: (e) => { stop(e); api('doc.final', { ids: [d.id], on: !d.isFinal }); } }),
     KIND_MARK[d.kind] ? h('span', { class: 'mark', text: KIND_MARK[d.kind] }) : null,
     h('div', { class: 'name', text: d.title }))));
+}
+
+// [옮기기] — 고른 문서들을 한 번에 다른 카테고리로(2026-10-07 사용자 지시). 누르면 그 아래에 옮길 곳이 선다.
+function moveButton(key) {
+  return h('button', { class: 'btn-line', text: '옮기기', onclick: () => { S.movePick = S.movePick === key ? null : key; render(); } });
+}
+function moveChooser(key, c, picked) {
+  const cats = [{ id: INBOX, name: '새로 추가된 문서' }, ...S.project.categories.filter((x) => !x.virtual)].filter((x) => x.id !== c.id);
+  const go = async (to) => {
+    S.movePick = null;
+    const r = await api('doc.move', { ids: picked, categoryId: to.id === INBOX ? null : to.id });
+    if (r && r.ok !== false) { S.sel[key] = new Set(); render(); }
+  };
+  return h('div', { class: 'bulk' },
+    cats.length ? cats.map((x) => h('button', { class: 'btn-line', text: x.name, onclick: () => go(x) }))
+      : h('span', { class: 'when', text: '옮길 카테고리가 없습니다' }),
+    h('button', { class: 'btn-text', text: '취소', onclick: () => { S.movePick = null; render(); } }));
 }
 
 function threadSection() {

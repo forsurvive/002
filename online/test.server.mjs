@@ -91,6 +91,11 @@ export async function run({ pool, ok, eq }) {
     await op('a', 'doc.restoreVersion', { pid, id: dc.id, index: 0 });
     d = (await stateOf('a', pid)).project.docs.find((x) => x.id === dc.id);
     ok('판 복원', d.body === '첫 판' && d.versions.length === 2);
+    const nc = await op('a', 'cat.create', { pid, name: '옮길 곳' });
+    await op('a', 'doc.move', { pid, ids: [dc.id, mat.id], categoryId: nc.id });
+    s = await stateOf('a', pid);
+    ok('여러 문서를 한 번에 다른 카테고리로', s.project.categories.find((c) => c.id === nc.id).docIds.length === 2);
+    await op('a', 'doc.move', { pid, ids: [mat.id], categoryId: s.project.categories.find((c) => c.name === '자료').id });
     const th = await op('a', 'thread.create', { pid, title: '논의' });
     ok('스레드', th.ok && th.id);
     await op('a', 'doc.delete', { pid, ids: [dc.id] });
@@ -135,6 +140,7 @@ export async function run({ pool, ok, eq }) {
     const wb = await op('b', 'doc.write', { pid, id: dc.id, body: '남이 쓴 글' });
     ok('**남의 프로젝트를 고칠 수 없다(404)**', wb.status === 404 && wb.ok === false);
     eq('본문은 그대로', (await stateOf('a', pid)).project.docs.find((x) => x.id === dc.id).body, '첫 판');
+    eq('**남의 문서를 옮길 수 없다(404)**', (await op('b', 'doc.move', { pid, ids: [dc.id], categoryId: null })).status, 404);
     eq('**남의 프로젝트를 지울 수 없다**', (await op('b', 'project.delete', { pid })).status, 404);
     eq('**남의 프로젝트를 내려받을 수 없다**', (await req('/api/download?pid=' + pid + '&kind=doc&id=' + dc.id, { who: 'b' })).status, 404);
     ok('남의 목록에 없다', !(await stateOf('b')).projects.some((p) => p.id === pid));

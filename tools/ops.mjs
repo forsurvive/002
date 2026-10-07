@@ -238,6 +238,15 @@ export function createOps(d) {
       return conflict && (!r || r.ok !== false) ? { ...(r || ok()), conflict: true } : r;
     },
 
+    // 여러 문서를 한 번에 다른 카테고리로(2026-10-07 사용자 지시). 그릇만 바꾸므로 생성 중인 문서도 옮긴다.
+    // categoryId 가 비었거나 '__inbox__' 이면 «새로 추가된 문서»로. 없는 카테고리면 아무것도 옮기지 않는다.
+    'doc.move': async (b) => {
+      const to = b.categoryId && b.categoryId !== model.INBOX ? b.categoryId : null;
+      const p0 = await state.get(b.pid);
+      if (p0 && to && !model.findCategory(p0, to)) return bad('카테고리를 찾을 수 없습니다');
+      return state.update(b.pid, (p) => { for (const id of arr(b.ids)) if (model.findDoc(p, id)) model.docWrite(p, id, { categoryId: to }); });
+    },
+
     'doc.final': async (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.docSetFinal(p, id, !!b.on); }),
 
     'doc.delete': async (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.docDelete(p, id); }),

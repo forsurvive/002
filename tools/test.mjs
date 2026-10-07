@@ -275,6 +275,17 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   p = (await stateOf(pid)).project;
   eq('카테고리로 옮김', p.docs.find((d) => d.id === docId).categoryId, catId);
 
+  // 여러 문서를 한 번에 옮기기(doc.move) — 없는 id 는 건너뛰고, 없는 카테고리면 아무것도 옮기지 않는다
+  r = await post('doc.move', { pid, ids: [docId, 'no-such-doc'], categoryId: null });
+  p = (await stateOf(pid)).project;
+  ok('한꺼번에 옮기기 — «새로 추가된 문서»로', r.ok !== false && !p.docs.find((d) => d.id === docId).categoryId);
+  r = await post('doc.move', { pid, ids: [docId], categoryId: 'no-such-cat' });
+  p = (await stateOf(pid)).project;
+  ok('없는 카테고리로는 옮기지 않는다', r.ok === false && !p.docs.find((d) => d.id === docId).categoryId);
+  await post('doc.move', { pid, ids: [docId], categoryId: catId });
+  p = (await stateOf(pid)).project;
+  eq('한꺼번에 옮기기 — 카테고리로', p.docs.find((d) => d.id === docId).categoryId, catId);
+
   // 논의 스레드
   r = await post('thread.create', { pid, title: '논의' });
   const tid = r.id;
@@ -324,7 +335,16 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     const { OPS: lockOps } = createOps({ state: fakeState, jobs: { isTargetRunning: async () => true, isKindRunning: async () => false }, engine: {}, auth: {}, limit: () => null, prepared: () => true, startAgentPrep: async () => {} });
     const w1 = await lockOps['doc.write']({ pid: 'p_lock', id: did, body: '생성 중에 친 글' });
     const w2 = await lockOps['doc.write']({ pid: 'p_lock', id: did, request: '요청은 바꿔도 된다' });
+    const cid = Mm.categoryCreate(pj, '옮길 곳').id;
+    const did2 = Mm.docCreate(pj, { title: '둘째', body: '' }).id;
+    const mv = await lockOps['doc.move']({ pid: 'p_lock', ids: [did, did2], categoryId: cid });
+    ok('**생성 중이어도 카테고리는 옮긴다 — 고른 것 전부 한 번에**', mv.ok !== false && Mm.findDoc(pj, did).categoryId === cid && Mm.findDoc(pj, did2).categoryId === cid && Mm.findDoc(pj, did).body === '원래 글', JSON.stringify(mv));
     ok('**생성 중인 문서의 본문은 고칠 수 없다(서버)**', w1.ok === false && /생성 중/.test(w1.error) && w2.ok !== false && Mm.findDoc(pj, did).body === '원래 글' && Mm.findDoc(pj, did).request === '요청은 바꿔도 된다', JSON.stringify(w1));
+  }
+  {
+    const appSrc = src(join(ROOT, 'web', 'app.js'));
+    ok('화면 — 고른 문서 손질거리에 [옮기기]가 서고, 옮길 곳(지금 카테고리 빼고 · «새로 추가된 문서» 포함)을 고르면 doc.move 로 한 번에 옮긴다',
+      /moveButton\(key\),/.test(appSrc) && /function moveChooser\(key, c, picked\)[\s\S]{0,200}filter\(\(x\) => x\.id !== c\.id\)/.test(appSrc) && /api\('doc\.move', \{ ids: picked/.test(appSrc) && /S\.sel\[key\] = new Set\(\)/.test(appSrc));
   }
   ok('화면도 생성 중에는 읽기만 — 치는 칸 · [고치기]가 없다', /function bodyBox\(d, saveFields, busy = false\)[\s\S]{0,200}if \(busy\) \{/.test(src(join(ROOT, 'web', 'app.js'))));
   const dlc = await fetch(base + '/api/download?pid=' + pid + '&kind=cat&id=' + catId);
