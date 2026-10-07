@@ -250,6 +250,8 @@ async function pull(force) {
   if (d.projects) S.projects = d.projects;
   if (S.pid && d.ok === false) { S.pid = null; S.project = null; }
   else if (d.project) S.project = d.project;
+  EV.lastPull = Date.now();
+  events();   // 보는 작품이 바뀌었으면 알림도 그 작품으로 다시 붙는다
   const sig = JSON.stringify([S.pid, S.projects, S.project]);
   if (!force && sig === S.last) return;
   S.last = sig;
@@ -1696,5 +1698,28 @@ document.addEventListener('keydown', (e) => {
 // 온라인판 «기관 · 수업» 화면에서 학생 작품을 열 때 — /?pid=… 로 들어온다
 try { const q = new URLSearchParams(location.search).get('pid'); if (q) S.pid = q; } catch { /* 주소를 못 읽으면 첫 화면 */ }
 
+// 바뀜 알림(온라인판 — SSE). 붙어 있으면 1.5초 묻기를 쉬고 15초마다 한 번만 확인한다. 끊기면 곧바로 1.5초 묻기로 돌아간다.
+// 개인판(로그인 없음 — S.me 가 없다)은 붙지 않는다. 서버가 알림을 못 쓰면(503 · LISTEN 불가) 1분 뒤에 다시 붙어 본다.
+const EV = { es: null, pid: null, ok: false, retryAt: 0, lastPull: 0 };
+function events() {
+  if (!S.me || S.tour || typeof EventSource === 'undefined') return;
+  const want = S.pid || '';
+  if (EV.es && EV.pid === want) return;
+  if (EV.es) { EV.es.close(); EV.es = null; EV.ok = false; }
+  if (Date.now() < EV.retryAt) return;
+  EV.pid = want;
+  const es = new EventSource('/api/events' + (want ? '?pid=' + encodeURIComponent(want) : ''));
+  EV.es = es;
+  es.onopen = () => { EV.ok = true; };
+  es.onmessage = () => pull(false);
+  es.onerror = () => {
+    EV.ok = false;
+    if (es.readyState === 2) { if (EV.es === es) EV.es = null; EV.retryAt = Date.now() + 60000; }   // 닫혔다(503 등) — 묻기로
+  };
+}
+
 pull(true);
-setInterval(() => pull(false), 1500);
+setInterval(() => {
+  if (EV.ok && Date.now() - EV.lastPull < 15000) return;
+  pull(false);
+}, 1500);

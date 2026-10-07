@@ -30,6 +30,7 @@ import { createTenancy, SAY } from './tenancy.mjs';
 import { createEdu } from './edu.mjs';
 import { createWorkflowSource } from './workflow.mjs';
 import { createWorker } from './worker.mjs';
+import { createChangeHub } from './events.mjs';
 import { createOnlineCall, subscriptionOf, DEFAULT_ALIAS_TIERS } from './call.mjs';
 import { importProject } from './import.mjs';
 import { guardConsole } from './log.mjs';
@@ -166,7 +167,7 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
  *   credentials : 자격증명 서비스(ai/credentials.mjs) — 처음 설정에서 AI 키를 봉해 넣을 때 쓴다
  *   denyFrames : 남의 페이지 안(iframe)에 싣지 못하게 한다 — 운영에서만 켠다(작업 공간의 미리보기 창이 iframe 이다, docs/SECURITY.md §6)
  */
-export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null, keyTester = null, subscription = null, codeKeys = keysFromEnv(process.env) } = {}) {
+export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null, keyTester = null, subscription = null, hub = null, codeKeys = keysFromEnv(process.env) } = {}) {
   const store = createProjectStore(pool);
   const tenancy = createTenancy(pool);
   const wfs = createWorkflowSource(pool);
@@ -209,6 +210,8 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
   // 읽을 수 있는 프로젝트인가 — 판정은 online/tenancy.mjs 한 곳(주인 · 맡은 수업의 강사 · 정책이 허락한 기관 관리자).
   // 지운 것 · 남의 것 · 이상한 id 는 모두 «없음»으로 같게 답한다.
   const canRead = async (user, pid) => (await tenancy.access(user, pid)).read;
+
+  const sseOpen = new Map();   // 사람마다 열린 알림 연결 수(탭 여럿 · 새로 고침이 쌓이지 않게)
 
   // 상태의 지문 — 질의 하나(덩어리를 짓는 열세 질의 대신). 남의 프로젝트면 지문을 내지 않는다(그 길은 «없음»으로 답한다).
   const fingerprint = async (user, pid) => {
@@ -435,6 +438,26 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         return json(res, 200, out || ok());
       }
 
+      // 바뀜 알림(SSE) — «바뀌었다»만 보낸다. 무엇이 바뀌었는지는 화면이 /api/state 로 다시 묻는다(그 길이 권한을 다시 본다).
+      // 허브가 꺼져 있으면(LISTEN 이 안 되는 DB) 503 — 화면은 묻기(폴링)를 그대로 한다.
+      if (req.method === 'GET' && url.pathname === '/api/events') {
+        if (!hub || !hub.ready) return json(res, 503, bad('알림을 쓸 수 없습니다', 'no_events'));
+        const pid = url.searchParams.get('pid') || '';
+        if (pid && !(await canRead(user, pid))) return json(res, 404, bad(NOT_FOUND));
+        const mineOpen = (sseOpen.get(user.id) || 0);
+        if (mineOpen >= 8 || hub.size() >= 2000) return json(res, 429, bad('알림 연결이 너무 많습니다', 'rate_limited'));
+        sseOpen.set(user.id, mineOpen + 1);
+        res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-accel-buffering': 'no', connection: 'keep-alive' });
+        res.write('retry: 5000\n: ok\n\n');
+        let t = null;
+        // 짧게 몰려온 바뀜은 하나로 — 작업이 한 걸음 갈 때마다 여러 줄이 바뀐다
+        const ping = () => { if (t) return; t = setTimeout(() => { t = null; try { res.write('data: change\n\n'); } catch { /* 끊김 */ } }, 150); };
+        const off = hub.listen(pid ? ['p:' + pid, 'u:' + user.id] : ['u:' + user.id], ping);
+        const beat = setInterval(() => { try { res.write(': beat\n\n'); } catch { /* 끊김 */ } }, 25000);
+        req.on('close', () => { off(); clearInterval(beat); clearTimeout(t); const n = (sseOpen.get(user.id) || 1) - 1; if (n > 0) sseOpen.set(user.id, n); else sseOpen.delete(user.id); });
+        return;
+      }
+
       if (req.method === 'GET' && url.pathname === '/api/state') {
         const pid = url.searchParams.get('pid') || '';
         // 화면은 1.5초마다 묻는다 — 바뀐 것이 없으면 프로젝트를 짓지 않고 304 로 답한다.
@@ -533,7 +556,10 @@ export async function main(env = process.env) {
   const wfsW = createWorkflowSource(pool);
   const worker = env.SE_WORKER === '0' ? null : createWorker({ queue, store, call, allowed: (row) => tenancyW.aiAllowed(row.project_id), workflow: (pid) => wfsW.templateFor(pid) }, { log: (m) => console.log('  [worker] ' + m) });
   if (worker) await worker.start();
-  const srv = createOnlineServer({ pool, plan, queue, worker, credentials: ai.credentials, keyTester: ai.keyTester, subscription: ai.subscription, trustProxy: env.SE_TRUST_PROXY === '1', denyFrames: env.NODE_ENV === 'production' });
+  // 바뀜 알림 허브 — LISTEN 이 정말 되는지 스스로 확인하고 켠다(안 되면 화면은 묻기를 그대로)
+  const hub = createChangeHub(pool, { log: (m) => console.log('  [events] ' + m) });
+  await hub.start();
+  const srv = createOnlineServer({ pool, plan, queue, worker, hub, credentials: ai.credentials, keyTester: ai.keyTester, subscription: ai.subscription, trustProxy: env.SE_TRUST_PROXY === '1', denyFrames: env.NODE_ENV === 'production' });
   await new Promise((resolve) => srv.listen(plan.port, plan.host, resolve));
   console.log('  Story Engine (online) : listening on ' + plan.host + ':' + plan.port);
   console.log('  Host names   : ' + plan.allowedHosts.join(', '));
@@ -542,7 +568,7 @@ export async function main(env = process.env) {
   if (!users) console.log('  [NOTE] No account yet - open the app in a browser to finish the first-run setup');
   if (!users && srv.setupFixed) console.log('  [SETUP] First-run setup code: the SE2_SETUP_CODE value from Secrets');
   else if (!users && srv.setupCode) console.log('  [SETUP] First-run setup code: ' + srv.setupCode + '  (type it on the setup screen; a new one each start)');
-  const bye = async () => { srv.close(); if (worker) await worker.stop(); pool.end().finally(() => process.exit(0)); };
+  const bye = async () => { srv.close(); await hub.stop(); if (worker) await worker.stop(); pool.end().finally(() => process.exit(0)); };
   process.on('SIGINT', bye); process.on('SIGTERM', bye);
   return srv;
 }
