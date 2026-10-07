@@ -15,6 +15,7 @@
 | [REPLIT_DEPLOYMENT.md](REPLIT_DEPLOYMENT.md) | Replit 배포 구조 · 환경 변수 · Sprint 1 사용자 절차 · 비용 감 · 막힐 때 · 미확인 목록 |
 | [SECURITY.md](SECURITY.md) | 위협 모델 · 지금 있는 것 · 인증 · 권한 매트릭스 · credential 암호화 · **사람이 정할 정책** |
 | [TEST_PLAN.md](TEST_PLAN.md) | 시험 돌리는 법 · 규칙 · 지금 있는 것 · 단계별로 더할 시험 |
+| [OPEN_EDITION.md](OPEN_EDITION.md) | 자유 가입판(개인 가입 · 본인 키 · 월 이용료) 검토 — 회사별 «구독으로 돌리기» 허용 여부(출처) · 설계안 · 사람이 정할 것 |
 
 ## 진행 상태 (2026-10-06)
 
