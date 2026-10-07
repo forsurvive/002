@@ -148,7 +148,7 @@ async function handle(plan, req, res) {
       return send(res, 200, JSON.stringify({ ok: true, project: st, projects: state.list() }));
     }
     if (req.method === 'GET' && url.pathname === '/api/download') {
-      const d = await downloadOf(url.searchParams.get('pid'), url.searchParams.get('kind'), url.searchParams.get('id'));
+      const d = await downloadOf(url.searchParams.get('pid'), url.searchParams.get('kind'), url.searchParams.get('id'), url.searchParams.get('fmt') === 'txt' ? 'txt' : 'md');
       if (!d) return send(res, 404, '없음', 'text/plain; charset=utf-8');
       return send(res, 200, d.text, d.type || 'text/markdown; charset=utf-8', {
         // filename 은 한글을 못 읽는 브라우저를 위한 ASCII 대신 이름, filename* 이 진짜 이름

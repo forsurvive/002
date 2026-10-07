@@ -380,6 +380,28 @@ details summary:hover { opacity: .7; }
 .ver.on .when { color: var(--blue); font-weight: 600; }
 .body-edit[readonly] { background: var(--group); }
 
+/* 마크다운 보기(web/markdown.js) — 문서 창의 «보기» · 읽기 전용 칸 · 논의의 AI 답 */
+.md-view { min-height: 46vh; padding: 14px 16px; border-radius: var(--r-m); background: var(--group); overflow: auto; cursor: text; }
+.md { font-size: 15px; line-height: 1.75; color: var(--ink); word-break: break-word; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p { margin: 0 0 .8em; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 1.1em 0 .5em; line-height: 1.35; font-weight: 700; }
+.md h1 { font-size: 1.45em; } .md h2 { font-size: 1.28em; } .md h3 { font-size: 1.14em; } .md h4, .md h5, .md h6 { font-size: 1em; }
+.md ul, .md ol { margin: 0 0 .8em; padding-left: 1.4em; }
+.md li { margin: .2em 0; }
+.md blockquote { margin: 0 0 .8em; padding: 2px 0 2px 12px; border-left: 3px solid var(--line); color: var(--dim); }
+.md code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; padding: 1px 5px; border-radius: var(--r-s); background: var(--hover); }
+.md pre { margin: 0 0 .8em; padding: 10px 12px; border-radius: var(--r-s); background: var(--hover); overflow-x: auto; }
+.md pre code { padding: 0; background: none; }
+.md hr { border: none; border-top: 1px solid var(--line); margin: 1.2em 0; }
+.md a { color: var(--blue); }
+.md-table { overflow-x: auto; margin: 0 0 .8em; }
+.md table { border-collapse: collapse; font-size: .95em; }
+.md th, .md td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; vertical-align: top; }
+.md th { background: var(--hover); font-weight: 600; }
+.msg.ai .md { font-size: inherit; line-height: inherit; color: inherit; }
+
 /* 논의 스레드 — 말풍선 */
 .talk { display: flex; flex-direction: column; gap: 10px; padding: 6px 0 10px; }
 .msg { max-width: 78%; white-space: pre-wrap; word-break: break-word; border-radius: 20px; padding: 11px 16px; }

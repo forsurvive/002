@@ -506,7 +506,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       if (req.method === 'GET' && url.pathname === '/api/download') {
         const pid = url.searchParams.get('pid');
         const { downloadOf } = createOps(depsFor(store, queue, worker, user, { tenancy, wfs, pool }));
-        const d = (await canRead(user, pid)) ? await downloadOf(pid, url.searchParams.get('kind'), url.searchParams.get('id')) : null;
+        const d = (await canRead(user, pid)) ? await downloadOf(pid, url.searchParams.get('kind'), url.searchParams.get('id'), url.searchParams.get('fmt') === 'txt' ? 'txt' : 'md') : null;
         if (!d) return send(res, 404, '없음', 'text/plain; charset=utf-8');
         return send(res, 200, d.text, d.type || 'text/markdown; charset=utf-8', {
           // filename 은 한글을 못 읽는 브라우저를 위한 ASCII 대신 이름, filename* 이 진짜 이름

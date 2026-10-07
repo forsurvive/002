@@ -226,10 +226,24 @@ async function logout() {
   location.href = '/login';
 }
 
-function download(kind, id) {
+function download(kind, id, fmt = 'md') {
   if (S.tour) return;   // 가짜 pid 로 내려받으러 가지 않는다
-  const a = h('a', { href: '/api/download?pid=' + encodeURIComponent(S.pid) + '&kind=' + kind + '&id=' + encodeURIComponent(id), download: '' });
+  const a = h('a', { href: '/api/download?pid=' + encodeURIComponent(S.pid) + '&kind=' + kind + '&id=' + encodeURIComponent(id) + '&fmt=' + fmt, download: '' });
   document.body.appendChild(a); a.click(); a.remove();
+}
+// [다운로드] — 누르면 그 자리에 «MD · 텍스트» 둘이 선다(2026-10-07 사용자 지시). go(fmt) 가 실제로 받는다.
+function dlButton(key, go, cls = 'btn-text') {
+  if (S.dlPick !== key) return h('button', { class: cls, text: '다운로드', onclick: () => { S.dlPick = key; render(); } });
+  const pick = (fmt) => { S.dlPick = null; render(); go(fmt); };
+  return h('span', { class: 'line', style: 'gap:6px;display:inline-flex' },
+    h('button', { class: cls, text: 'MD', title: '마크다운 파일(.md)', onclick: () => pick('md') }),
+    h('button', { class: cls, text: '텍스트', title: '일반 텍스트 파일(.txt) — 마크다운 기호를 걷는다', onclick: () => pick('txt') }),
+    h('button', { class: 'btn-text', text: '취소', onclick: () => { S.dlPick = null; render(); } }));
+}
+// 마크다운을 꼴대로 보이는 칸(web/markdown.js). 그 파일이 없으면 글 그대로.
+function mdView(id, text, onclick) {
+  const body = window.SEMarkdown ? window.SEMarkdown.render(text) : h('div', { style: 'white-space:pre-wrap', text });
+  return h('div', { id, class: 'md-view', ...(onclick ? { onclick } : {}) }, body);
 }
 
 // ---------------------------------------------------------------- 상태 받아오기
@@ -268,7 +282,7 @@ function bootSay(text) {
 window.addEventListener('error', (e) => { if (!S.drawn) bootSay('화면을 그리지 못했습니다 — ' + String((e && e.message) || e).slice(0, 160)); });
 
 // 다시 그려도 보던 자리와 치던 자리를 지킨다 — 1.5초마다 도는 갱신이 화면을 흔들지 않도록.
-const SCROLLERS = ['.main', '#layer1 .panel-body', '#layer2 .panel-body', '#d-body', '#d-out'];
+const SCROLLERS = ['.main', '#layer1 .panel-body', '#layer2 .panel-body', '#d-body', '#d-out', '#d-view'];
 
 // 읽기만 하는 작품(강사 · 열람이 허락된 기관 관리자) — 고치는 손잡이를 모두 걷고 칸은 읽기 전용으로.
 // 막는 것은 서버다(쓰기 문은 403) — 이것은 누를 수 없는 단추를 보이지 않게 하는 안내일 뿐이다.
@@ -717,14 +731,11 @@ function catSection(c, byId) {
       c.virtual ? null : h('button', { class: 'btn-text red', text: '삭제', onclick: () => api('cat.delete', { ids: [c.id] }) })),
     // 고르면 다운로드 · 삭제만 선다 — 확정본은 줄마다 있는 토글로 켜고 끈다(사용자 지시, 2026-09-29).
     picked.length ? h('div', { class: 'bulk' },
-      h('button', {
-        class: 'btn-line', text: '다운로드',
-        onclick: () => {
-          // 그 카테고리를 통째로 골랐으면 한 파일로, 골라 담았으면 문서마다 한 파일로.
-          if (c.docIds.length && picked.length === c.docIds.length) download('cat', c.id);
-          else picked.forEach((id, i) => setTimeout(() => download('doc', id), i * 120));
-        },
-      }),
+      // 그 카테고리를 통째로 골랐으면 한 파일로, 골라 담았으면 문서마다 한 파일로. 꼴(MD · 텍스트)은 누를 때 고른다.
+      dlButton('cat:' + key, (fmt) => {
+        if (c.docIds.length && picked.length === c.docIds.length) download('cat', c.id, fmt);
+        else picked.forEach((id, i) => setTimeout(() => download('doc', id, fmt), i * 120));
+      }, 'btn-line'),
       h('button', { class: 'btn-red', text: '삭제', onclick: () => api('doc.delete', { ids: picked }) })) : null,
     folded ? null : docs.map((d) => h('div', {
       class: 'row' + (d.isFinal ? ' final' : ''),
@@ -747,7 +758,7 @@ function threadSection() {
       h('button', { class: 'ck' + (allPicked(sel, ids) ? ' on' : ''), onclick: () => toggleAll(key, ids, !allPicked(sel, ids)) }),
       h('div', { class: 'name click', text: '논의 스레드', onclick: () => { S.fold[key] = !S.fold[key]; render(); } })),
     picked.length ? h('div', { class: 'bulk' },
-      h('button', { class: 'btn-line', text: '다운로드', onclick: () => picked.forEach((id, i) => setTimeout(() => download('thread', id), i * 120)) }),
+      dlButton('threads', (fmt) => picked.forEach((id, i) => setTimeout(() => download('thread', id, fmt), i * 120)), 'btn-line'),
       h('button', { class: 'btn-red', text: '삭제', onclick: () => api('thread.delete', { ids: picked }) })) : null,
     S.fold[key] ? null : p.threads.map((t) => h('div', {
       class: 'row', onclick: () => { S.open = { type: 'thread', id: t.id }; render(); },
@@ -1190,6 +1201,24 @@ async function fetchSrc(id) {
   render();
 }
 
+// 고치는 문서의 본문 — 글이 있고 치는 중이 아니면 «보기»(꼴대로), [고치기] 또는 보기를 누르면 치는 칸. 빈 문서는 곧바로 치는 칸.
+function bodyBox(d, saveFields, busy = false) {
+  const has = String(d.body || '').trim();
+  // 생성 중에는 읽기만 — 치는 칸도 [고치기]도 없다(서버도 막는다). 끝나면 새 판이 «보기»로 선다.
+  if (busy) {
+    clearTyped('d-body');
+    return has ? mdView('d-view', d.body) : h('div', { class: 'md-view', style: 'color:var(--dim)', text: '생성 중입니다 — 끝나면 여기에 보입니다' });
+  }
+  const editing = !has || (S.open && S.open.edit) || 'd-body' in S.typed;
+  const toEdit = () => { S.open.edit = true; render(); const t = $('d-body'); if (t) t.focus(); };
+  const toView = async () => { await saveFields(); S.open.edit = false; render(); };
+  return h('div', null,
+    has ? h('div', { class: 'line', style: 'gap:6px;margin-bottom:6px' },
+      h('button', { class: editing ? 'btn-line' : 'btn', text: '보기', onclick: editing ? toView : null }),
+      h('button', { class: editing ? 'btn' : 'btn-line', text: '고치기', onclick: editing ? null : toEdit })) : null,
+    editing ? area('d-body', BODY_HINT, d.body, { class: 'body-edit', onblur: saveFields }) : mdView('d-view', d.body, toEdit));
+}
+
 function docPanel(close) {
   const d = (S.project.docs || []).find((x) => x.id === S.open.id);
   if (!d) return h('div', { class: 'panel narrow' }, h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '없음' }), h('button', { class: 'x', text: '×', onclick: close })));
@@ -1197,6 +1226,8 @@ function docPanel(close) {
   if (d.src) fetchSrc(d.id);   // 가리키는 문서는 열 때 한 번 글을 받아 온다
   const peeking = S.peek && S.peek.docId === d.id ? d.versions.find((v) => v.i === S.peek.i) : null;
   const busy = (S.project.jobs || []).some((j) => j.status === 'running' && j.targetId === d.id);
+  // 본문을 잠그는 것은 «돌 차례를 기다리는 · 도는 · 멈춘» 작업 모두(곧 결과가 이 문서에 온다)
+  const locked = (S.project.jobs || []).some((j) => ['queued', 'running', 'paused', 'waiting_for_user', 'waiting'].includes(j.status) && j.targetId === d.id);
   // 아직 한 번도 채워진 적 없는 문서에는 갱신할 것이 없다 — 그때는 «생성»이다.
   const verb = !String(d.body || '').trim() && !d.versions.length ? '생성' : '갱신';
   // 이 창이 닫힐 때 저장할 것
@@ -1236,7 +1267,7 @@ function docPanel(close) {
       textbox('d-title', '이름', d.title, { onblur: saveFields }),
       h('span', { class: 'lab', style: 'margin:0', text: '확정본' }),
       h('button', { class: 'tg' + (d.isFinal ? ' on' : ''), onclick: () => api('doc.final', { ids: [d.id], on: !d.isFinal }) }),
-      h('button', { class: 'btn-text', text: '다운로드', onclick: () => download('doc', d.id) }),
+      dlButton('doc:' + d.id, (fmt) => download('doc', d.id, fmt)),
       S.me && !S.tour ? h('button', { class: 'btn-text', text: S.open.runs ? '만든 기록 닫기' : '만든 기록', onclick: () => toggleRuns(d.id) }) : null,
       h('button', { class: 'btn-text red', text: '삭제', onclick: async () => { await api('doc.delete', { ids: [d.id] }); close(); } }),
       h('button', { class: 'x', text: '×', onclick: close })),
@@ -1249,11 +1280,12 @@ function docPanel(close) {
       // 옛 판을 펼친 채로 창을 닫을 때 그 글이 지금 본문을 덮지 않는다.
       // 모순 검사에는 치는 칸이 없다 — 결과가 나온 뒤에만 읽는 칸이 선다(빈 칸을 세워 두면 치는 자리로 보인다).
       // 작법서는 읽는 자리다 — 치는 칸도, 지을 거리도 두지 않는다.
-      d.src ? h('textarea', { id: 'd-out', class: 'body-edit', value: (S.srcText && S.srcText.id === d.id ? S.srcText.text : ''), readonly: 'readonly' })
-        : peeking ? h('textarea', { id: 'd-out', class: 'body-edit', value: peeking.body, readonly: 'readonly' })
+      // 읽는 칸(작법서 · 옛 판 · 모순 검사 결과)은 마크다운을 꼴대로 보인다. 고치는 문서는 글이 있으면 «보기»가 먼저, [고치기]로 치는 칸(2026-10-07).
+      d.src ? mdView('d-out', S.srcText && S.srcText.id === d.id ? S.srcText.text : '')
+        : peeking ? mdView('d-out', peeking.body)
           : d.kind === 'check'
-            ? (String(d.body || '').trim() ? h('textarea', { id: 'd-out', class: 'body-edit', value: d.body, readonly: 'readonly' }) : null)
-            : area('d-body', BODY_HINT, d.body, { class: 'body-edit', onblur: saveFields }),
+            ? (String(d.body || '').trim() ? mdView('d-out', d.body) : null)
+            : bodyBox(d, saveFields, locked),
       h('div', null, h('div', { class: 'lab', text: '카테고리' }), h('div', { class: 'line' }, catPicker(d))),
       d.src ? null : h('div', null, h('div', { class: 'lab', text: '요청사항' }), area('d-req', '요청사항', d.request, { onblur: saveFields })),
       d.src || d.kind === 'doc' ? null : refLine('대상', d.targetIds, byId, (ids) => api('doc.write', { id: d.id, targetIds: ids }), d.id),
@@ -1390,7 +1422,7 @@ function threadPanel(close) {
           h('button', { class: 'btn', text: '보내기', onclick: async () => { const v = $('m-edit-' + m.id).value; S.editMsg = null; clearTyped('m-edit-' + m.id); await api('thread.edit', { id: t.id, messageId: m.id, text: v }); } }))
         : h('div', { class: 'msg me', text: m.text, onclick: () => { S.editMsg = m.id; render(); } }));
     } else {
-      flow.push(h('div', { class: 'msg ai', text: m.text }));
+      flow.push(h('div', { class: 'msg ai' }, window.SEMarkdown ? window.SEMarkdown.render(m.text) : m.text));
     }
   }
   // 친 말이 있으면 바깥 클릭·Esc·× 로 그냥 닫지 않는다 — 보낼지 버릴지 묻는다(사용자 지시).
@@ -1432,7 +1464,7 @@ function threadPanel(close) {
   return h('div', { class: 'panel' },
     h('div', { class: 'panel-head' },
       textbox('t-title-' + t.id, '이름', t.title, { onblur: saveTitle }),
-      h('button', { class: 'btn-text', text: '다운로드', onclick: () => download('thread', t.id) }),
+      dlButton('thread:' + t.id, (fmt) => download('thread', t.id, fmt)),
       h('button', { class: 'btn-text red', text: '삭제', onclick: async () => { S.saveOpen = null; await api('thread.delete', { ids: [t.id] }); close(); } }),
       h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },

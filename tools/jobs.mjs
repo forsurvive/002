@@ -179,7 +179,8 @@ export function stopProject(pid) {
 
 export function isTargetRunning(pid, targetId) {
   const p = state.get(pid);
-  return !!(p && p.jobs.some((j) => j.status === 'running' && j.targetId === targetId));
+  // 멈춘 작업도 그 문서에 결과를 쓸 것이다 — 고치기 잠금(doc.write) · 겹쳐 돌리기 막기 모두 «도는 중»으로 본다
+  return !!(p && p.jobs.some((j) => (j.status === 'running' || j.status === 'paused') && j.targetId === targetId));
 }
 
 export function isKindRunning(pid, kind) {

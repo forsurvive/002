@@ -312,6 +312,21 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const dl = await fetch(base + '/api/download?pid=' + pid + '&kind=doc&id=' + docId);
   eq('내려받기 응답', dl.status, 200);
   ok('내려받기에 제목이 붙는다', (await dl.text()).startsWith('# '));
+  const dlt = await fetch(base + '/api/download?pid=' + pid + '&kind=doc&id=' + docId + '&fmt=txt');
+  ok('**텍스트로 받기 — .txt · text/plain · 제목의 # 이 걷힌다**', dlt.status === 200 && /text\/plain/.test(dlt.headers.get('content-type')) && /\.txt/.test(decodeURIComponent(dlt.headers.get('content-disposition') || '')) && !(await dlt.text()).startsWith('# '));
+  // 생성 중인 문서는 본문을 고칠 수 없다(2026-10-07) — 요청사항은 고칠 수 있다. 문 표를 «생성 중»으로 꾸며 곧장 부른다.
+  {
+    const { createOps } = await import('./ops.mjs');
+    const Mm = await import('../core/domain/model.mjs');
+    const pj = { id: 'p_lock', docs: [], categories: [], threads: [], trash: [], agents: {}, jobs: [] };
+    const did = Mm.docCreate(pj, { title: '잠긴 문서', body: '원래 글' }).id;
+    const fakeState = { get: async () => pj, update: async (_, fn) => { fn(pj); return { ok: true }; } };
+    const { OPS: lockOps } = createOps({ state: fakeState, jobs: { isTargetRunning: async () => true, isKindRunning: async () => false }, engine: {}, auth: {}, limit: () => null, prepared: () => true, startAgentPrep: async () => {} });
+    const w1 = await lockOps['doc.write']({ pid: 'p_lock', id: did, body: '생성 중에 친 글' });
+    const w2 = await lockOps['doc.write']({ pid: 'p_lock', id: did, request: '요청은 바꿔도 된다' });
+    ok('**생성 중인 문서의 본문은 고칠 수 없다(서버)**', w1.ok === false && /생성 중/.test(w1.error) && w2.ok !== false && Mm.findDoc(pj, did).body === '원래 글' && Mm.findDoc(pj, did).request === '요청은 바꿔도 된다', JSON.stringify(w1));
+  }
+  ok('화면도 생성 중에는 읽기만 — 치는 칸 · [고치기]가 없다', /function bodyBox\(d, saveFields, busy = false\)[\s\S]{0,200}if \(busy\) \{/.test(src(join(ROOT, 'web', 'app.js'))));
   const dlc = await fetch(base + '/api/download?pid=' + pid + '&kind=cat&id=' + catId);
   ok('카테고리 내려받기', (await dlc.text()).includes('설정'));
 
@@ -1729,8 +1744,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 자료를 들이는 자리는 설정이 아니라 작업실 [+] 다(사용자 지시)
   // 모순 검사는 견주는 자리다 — 치는 칸이 없고, 맞댈 것이 둘은 있어야 한다(사용자 지시)
   ok('모순 검사에는 본문 치는 칸이 없다', /d\.kind === 'check'\s*\n?\s*\? \(String\(d\.body \|\| ''\)\.trim\(\)/.test(app));
-  ok('결과가 없으면 빈 칸도 세우지 않는다', /\.trim\(\) \? h\('textarea', \{ id: 'd-out'[^\n]*\) : null\)/.test(app));
-  ok('결과와 옛 판은 읽는 칸으로 보인다', /id: 'd-out'[^\n]*readonly/.test(app) && app.includes("'#d-out'"));
+  // 2026-10-07: 읽는 칸은 마크다운을 꼴대로 보이는 칸(mdView — 치는 칸이 아니다)으로 바뀌었다
+  ok('결과가 없으면 빈 칸도 세우지 않는다', /\.trim\(\) \? mdView\('d-out', d\.body\) : null\)/.test(app));
+  ok('결과와 옛 판은 읽는 칸으로 보인다', /peeking \? mdView\('d-out', peeking\.body\)/.test(app) && app.includes("'#d-out'") && !/h\('textarea', \{ id: 'd-out'/.test(app));
   ok('맞댈 것이 둘은 있어야 한다', app.includes("'대상 또는 참조'") && /\(d\.targetIds \|\| \[\]\)\.length \+ \(d\.refIds \|\| \[\]\)\.length < 2/.test(app));
   // 합평회·모순 검사는 요청사항이 그 자리의 미션이다(사용자 지시, 2026-09-20)
   ok('검사·합평은 요청사항이 있어야 선다', /d\.kind === 'check' \|\| d\.kind === 'review'[\s\S]{0,400}miss\.push\('요청사항'\)/.test(app));
@@ -1742,7 +1758,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('설정에 계량어 토글이 선다', app.includes("text: '계량어 금지'") && /noCount: !p\.noCount/.test(app));
   ok('그 누름은 mousedown 으로 받는다', /onmousedown: \(\) => api\('project\.spec', \{ noCount/.test(app));
   // 작법서 창은 읽는 자리다
-  ok('작법서는 읽는 칸만 둔다', /d\.src \? h\('textarea', \{ id: 'd-out'/.test(app) && /d\.src \? null : refLine\('참조'/.test(app));
+  ok('작법서는 읽는 칸만 둔다', /d\.src \? mdView\('d-out'/.test(app) && /d\.src \? null : refLine\('참조'/.test(app));
   ok('작법서 글은 열 때 받아 온다', /function fetchSrc\(/.test(app) && /if \(d\.src\) fetchSrc\(d\.id\)/.test(app));
   ok('지어진 자리에 표가 선다', app.includes("pr.made ? h('span', { class: 'when', text: '지음' })"));
   ok('설정에 자료 치는 칸이 없다', !app.includes("area('set-mat'"));
@@ -1843,7 +1859,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 서버로 나가는 길 셋이 모두 막혔는가 — 구독을 쓰지 않고 데이터에 쓰지 않는다는 약속의 전부다
   ok('튜토리얼은 서버를 부르지 않는다', /async function api\(op, body = \{\}\) \{[\s\S]{0,200}if \(S\.tour\) return S\.tour\.api/.test(app));
   ok('갱신도 멈춘다', /async function pull\(force\) \{\n  if \(S\.tour\) return;/.test(app));
-  ok('내려받기도 막는다', /function download\(kind, id\) \{\n  if \(S\.tour\) return;/.test(app));
+  ok('내려받기도 막는다', /function download\(kind, id, fmt = 'md'\) \{\n  if \(S\.tour\) return;/.test(app));
   ok('각본이 도는 동안 손이 닿지 않는다', css.includes('body.tour-on #root') && tour.includes("classList.add('tour-on')"));
   ok('Esc 는 나가기다', app.includes('if (S.tour) return tourExit();'));
   ok('언제든 나갈 수 있다', /function tourExit\(/.test(tour) && tour.includes("text: '튜토리얼 나가기'"));
@@ -2605,6 +2621,19 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('**자료가 길어 거절당하면 줄여서 다시 부른다(그대로 → 40만 → 15만 자)**', r.ok && seenMax.join(',') === '0,400000,150000', seenMax.join(','));
   const cut = planM.fitMaterials([{ id: 'a', name: 'A', text: 'x'.repeat(10000) }, { id: 'b', name: 'B', text: 'y'.repeat(30000) }], 4000);
   ok('자료 줄이기는 자료마다 같은 비율 · 줄였다는 표를 단다', cut[0].text.startsWith('x'.repeat(1000)) && cut[1].text.startsWith('y'.repeat(3000)) && /여기까지만 실었다/.test(cut[1].text) && !/y{3001}/.test(cut[1].text));
+}
+
+// ---------------------------------------------------------------- 마크다운 — 화면은 꼴대로, 내려받기는 MD · 텍스트 중 고른다(2026-10-07)
+{
+  const M = await import('../core/domain/model.mjs');
+  const plain = M.markdownToPlain('# 제목\n\n**굵게** 와 *기울임* 과 `코드`\n- 하나\n- [x] 끝남\n> 인용\n\n| 가 | 나 |\n|---|---|\n| 1 | 2 |\n\n[링크](https://a.b)\n```\n# 그대로\n```');
+  eq('**텍스트로 받으면 마크다운 기호만 걷고 글은 남는다**', plain, '제목\n\n굵게 와 기울임 과 코드\n• 하나\n☑ 끝남\n인용\n\n가\t나\n1\t2\n\n링크 (https://a.b)\n# 그대로');
+  const md = src(join(ROOT, 'web', 'markdown.js'));
+  ok('**마크다운 보기는 HTML 로 끼워 넣지 않는다(글은 textContent 로만)**', !/innerHTML|insertAdjacentHTML|outerHTML/.test(md) && /textContent/.test(md));
+  ok('링크는 http(s) 만 살린다', /\(https\?:\\\/\\\/\[\^\\s\)\]\+\)/.test(md) || md.includes('(https?:\\/\\/[^\\s)]+)'));
+  const appj = src(join(ROOT, 'web', 'app.js'));
+  ok('문서 · 카테고리 · 논의 내려받기에서 MD · 텍스트를 고른다', (appj.match(/dlButton\(/g) || []).length >= 5 && appj.includes("'&fmt=' + fmt"));
+  ok('화면이 마크다운 보기를 app.js 앞에 싣는다', src(join(ROOT, 'web', 'index.html')).indexOf('markdown.js') < src(join(ROOT, 'web', 'index.html')).indexOf('app.js'));
 }
 
 // ---------------------------------------------------------------- 문서 파일(docx · pdf)에서 글 뽑기 — web/textfile.js(브라우저 안, 의존성 없음)

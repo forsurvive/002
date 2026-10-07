@@ -466,6 +466,30 @@ export function threadToText(t) {
   return '# ' + t.title + '\n\n' + lines.join('\n');
 }
 
+// 마크다운 → 일반 글(«텍스트로 내려받기», 2026-10-07) — 기호만 걷고 글은 그대로 둔다. 제목은 한 줄로, 목록은 «• », 표는 칸을 탭으로.
+export function markdownToPlain(text) {
+  const out = [];
+  let fence = false;
+  for (const raw of str(text).replace(/\r\n?/g, '\n').split('\n')) {
+    if (/^\s*```/.test(raw)) { fence = !fence; continue; }
+    if (fence) { out.push(raw); continue; }
+    let l = raw;
+    if (/^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l) && l.includes('-') && l.includes('|')) continue;   // 표의 가름줄
+    if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(l)) { out.push('――――――――'); continue; }
+    l = l.replace(/^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$/, '$1')
+      .replace(/^(\s*)>\s?/, '$1')
+      .replace(/^(\s*)[-*+]\s+\[( |x|X)\]\s+/, (m, sp, x) => sp + (x === ' ' ? '☐ ' : '☑ '))
+      .replace(/^(\s*)[-*+]\s+/, '$1• ');
+    if (/^\s*\|.*\|\s*$/.test(l)) l = l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim()).join('\t');
+    l = l.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1 ($2)')
+      .replace(/(\*\*|__)(.+?)\1/g, '$2').replace(/~~(.+?)~~/g, '$1')
+      .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\*)/g, '$1$2')
+      .replace(/`([^`]+)`/g, '$1');
+    out.push(l);
+  }
+  return out.join('\n');
+}
+
 export function safeFileName(s) {
   return str(s).replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || '문서';
 }

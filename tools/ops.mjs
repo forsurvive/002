@@ -223,6 +223,8 @@ export function createOps(d) {
     // 그 사이 다른 곳(다른 탭 · AI 작업)이 먼저 고쳤어도 지금 글을 쓴다 — 먼저 고친 글은 이력(판)에 남으므로 잃는 것이 없다.
     // 대신 conflict 를 돌려주어 화면이 «이력에 남았다»고 알린다.
     'doc.write': async (b) => {
+      // 생성 중인 문서의 본문은 고칠 수 없다(2026-10-07 사용자 지시) — 고친 것이 곧 올 결과와 엇갈리지 않게. 요청사항 · 참조 등은 그대로 고친다.
+      if (b.body != null && await jobs.isTargetRunning(b.pid, b.id)) return bad('생성 중인 문서는 고칠 수 없습니다 — 끝난 뒤에 고쳐 주세요');
       let conflict = false;
       const r = await state.update(b.pid, (p) => {
         const cur = model.findDoc(p, b.id);
@@ -395,7 +397,13 @@ export function createOps(d) {
 
   // ---------------------------------------------------------------- 내려받기
 
-  async function downloadOf(pid, kind, id) {
+  // fmt: 'md'(기본 — 마크다운 그대로) | 'txt'(마크다운 기호를 걷은 일반 글, 2026-10-07)
+  async function downloadOf(pid, kind, id, fmt = 'md') {
+    const out = await downloadMd(pid, kind, id);
+    if (!out || fmt !== 'txt' || kind === 'project') return out;
+    return { name: out.name.replace(/\.md$/, '') + '.txt', text: model.markdownToPlain(out.text), type: 'text/plain; charset=utf-8' };
+  }
+  async function downloadMd(pid, kind, id) {
     const p = await state.get(pid);
     if (!p) return null;
     if (kind === 'doc') {
