@@ -419,10 +419,12 @@ details summary:hover { opacity: .7; }
 /* 좁은 창에서는 좌측 메뉴가 위쪽 띠가 된다 — 숨기지 않는다. */
 @media (max-width: 860px) {
   .shell { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-  .side { flex-direction: row; align-items: center; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--line); }
+  .side { flex-direction: row; flex-wrap: wrap; align-items: center; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--line); }
   .side-top { display: none; }
   .tab { width: auto; margin: 6px 4px; padding: 8px 14px; white-space: nowrap; }
-  .side-jobs { display: flex; border-top: none; margin-top: 0; padding: 8px; }
+  /* 작업 카드는 탭 줄 아래 제 줄에서 옆으로 넘긴다 — 탭 사이에 끼면 카드가 잘려 보였다(2026-10-07 검수, 폰 너비) */
+  .side-jobs { display: flex; order: 9; flex: 1 1 100%; min-width: 0; overflow-x: auto; border-top: 1px solid var(--line-soft); margin-top: 0; padding: 8px; }
+  .side-jobs:empty { display: none; }
   .job { margin-bottom: 0; margin-right: 8px; min-width: 180px; }
   .side-foot { border-top: none; padding: 0; }
   .top, .body { padding-left: 18px; padding-right: 18px; }
