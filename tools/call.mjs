@@ -157,7 +157,7 @@ export function classify({ limitInfo = null, finalResult = null, stderr = '', ab
   const t = String((finalResult && finalResult.result) || '') + ' ' + String(stderr || '');
   if (/credit balance/i.test(t)) return 'credit';
   if (/(usage|rate)\s*limit|한도|too many requests/i.test(t)) return 'quota-session';
-  if (/invalid api key|not logged in|please run .?(\/)?login|authenticat/i.test(t)) return 'auth';
+  if (/invalid api key|invalid auth token|oauth token|not logged in|please run .?(\/)?login|authenticat/i.test(t)) return 'auth';
   if (/overloaded/i.test(t)) return 'rate';
   return 'other';
 }

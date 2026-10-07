@@ -12,7 +12,7 @@ import { anthropicProvider } from '../ai/anthropic.mjs';
 import { openaiProvider } from '../ai/openai.mjs';
 import { geminiProvider } from '../ai/gemini.mjs';
 import { pgCredentialStore } from './credentials.mjs';
-import { createSubscriptionProvider, subscriptionStatus } from '../ai/subscription.mjs';
+import { createSubscriptionProvider, subscriptionStatus, cleanToken } from '../ai/subscription.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 export const MODELS_FILE = join(ROOT, 'config', 'models.json');
@@ -33,6 +33,8 @@ export const CLAUDE_CLI = join(ROOT, 'node_modules', '.bin', process.platform ==
 
 export function buildAi(pool, env = process.env, { providers: given, file, log } = {}) {
   const cli = String(env.SE_CLAUDE_CLI || '') || CLAUDE_CLI;
+  // 운영자 구독 토큰 — Secrets 에 붙여 넣을 때 섞인 줄바꿈 · 공백 · 따옴표를 걷어 둔다(실행기는 이 프로세스의 env 를 물려받는다)
+  for (const e of new Set([env, process.env])) if (e.CLAUDE_CODE_OAUTH_TOKEN) e.CLAUDE_CODE_OAUTH_TOKEN = cleanToken(e.CLAUDE_CODE_OAUTH_TOKEN);
   const subscription = (given && given.subscription) || createSubscriptionProvider({ cli });
   const providers = { anthropic: anthropicProvider, openai: openaiProvider, google: geminiProvider, ...(given || {}), subscription };
   const { catalog, aliasTiers, problems } = loadCatalog(file);
@@ -47,7 +49,8 @@ export function buildAi(pool, env = process.env, { providers: given, file, log }
       const entry = catalog.resolve('anthropic', 'fast') || catalog.resolve('anthropic', 'balanced');
       if (!entry) return { ok: false, reason: 'model', say: '모델 표에 Claude 가 없습니다' };
       const r = await subscription.validate({ model: entry.modelId });
-      if (!r.ok) log && log('subscription test: ' + (r.reason || 'other'));
+      // Console 은 ASCII 만 — 실행기 문구에서 ASCII 만 남겨 싣는다(토큰 꼴은 이미 가렸다)
+      if (!r.ok) log && log('subscription test: ' + (r.reason || 'other') + (r.detail ? ' - ' + r.detail.replace(/[^\x20-\x7e]/g, '') : ''));
       return r;
     },
   };

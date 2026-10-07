@@ -2553,6 +2553,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('구독: 비용으로 적지 않는다(API 였다면의 값은 버린다)', sr.ok && sr.costUsd === null && sr.costSource === 'subscription' && sr.usage.inputTokens === 7 && sr.usage.cacheReadTokens === 2);
   sr = await sp.generate({ model: 'claude-x', userPrompt: 'fail' });
   ok('**구독: 실패 문구는 고정 — 실행기 원문이 새지 않는다**', !sr.ok && sr.reason === 'quota-session' && !/stderr|secret|원고/.test(sr.error) && /한도/.test(sr.error), sr.error);
+  eq('**구독 토큰: 붙여 넣을 때 섞인 따옴표 · 줄바꿈 · 공백을 걷는다**', subM.cleanToken('"sk-ant-oat01-abc\n def "\u200b'), 'sk-ant-oat01-abcdef');
+  ok('구독 연결 확인의 문구는 토큰 꼴을 가린다', !/oat01-SECRET/.test(subM.cliDetail('bad sk-ant-oat01-SECRETSECRET and ' + 'x'.repeat(40))) && /sk-ant-\*\*\*/.test(subM.cliDetail('sk-ant-oat01-SECRET')));
   ok('구독: 실행기나 토큰이 없으면 쓸 수 없다', !subM.subscriptionStatus({ cli: '/nope/claude', env: { CLAUDE_CODE_OAUTH_TOKEN: 't' } }).available
     && !subM.subscriptionStatus({ cli: process.execPath, env: {} }).available && subM.subscriptionStatus({ cli: process.execPath, env: { CLAUDE_CODE_OAUTH_TOKEN: 't' } }).available);
   const routerS = createProviderRouter({ catalog: C3, credentials: creds, providers: { anthropic: fakeAdapter('anthropic'), subscription: sp } });

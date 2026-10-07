@@ -24,13 +24,20 @@ export function subscriptionStatus({ cli = '', env = process.env } = {}) {
   return { available: cliFound && tokenSet, cliFound, tokenSet };
 }
 
+// 실행기가 낸 문구를 운영자에게 보일 꼴로 — 토큰 · 키처럼 생긴 토막은 가리고, 짧게. 연결 확인에서만 쓴다(작업 오류 · 기록에는 싣지 않는다).
+export const cliDetail = (t) => String(t || '').replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***').replace(/[A-Za-z0-9_-]{32,}/g, '***')
+  .replace(/\s+/g, ' ').trim().slice(0, 300);
+
+// 붙여 넣을 때 섞이는 것(줄바꿈 · 공백 · 따옴표 · 보이지 않는 글자)을 걷는다 — 폰에서 긴 토큰을 복사하면 잘 섞인다
+export const cleanToken = (t) => String(t || '').replace(/[\s\u200B-\u200D\u2060\uFEFF]/g, '').replace(/^["'`]+|["'`]+$/g, '');
+
 export function createSubscriptionProvider({ cli = '', run = runClaudeCall } = {}) {
   return {
     id: 'subscription',
-    async generate({ model, systemPrompt = '', userPrompt = '', signal = null } = {}) {
+    async generate({ model, systemPrompt = '', userPrompt = '', signal = null, explain = false } = {}) {
       const r = await run({ systemPrompt, prompt: userPrompt, model, signal, authMode: 'sub', cli: cli || null });
       const common = { limit: r.limit || null, elapsedMs: r.elapsedMs || 0 };
-      if (!r.ok) return failure(r.reason, SAY[r.reason] || SAY.other, common);
+      if (!r.ok) return failure(r.reason, SAY[r.reason] || SAY.other, { ...common, ...(explain ? { detail: cliDetail(r.error) } : {}) });
       const u = r.usage || {};
       // 구독은 호출마다 돈이 나가지 않는다 — CLI 가 주는 total_cost_usd 는 «API 였다면»의 값이라 비용으로 적지 않는다.
       return success({
@@ -40,8 +47,9 @@ export function createSubscriptionProvider({ cli = '', run = runClaudeCall } = {
     },
     // 연결 확인 — 가장 작은 호출 하나
     async validate({ model } = {}) {
-      const r = await this.generate({ model, userPrompt: '.', systemPrompt: 'Reply with a single period.' });
-      return { ok: r.ok || r.reason === 'empty', reason: r.ok ? '' : r.reason, say: r.ok ? '' : r.error };
+      const r = await this.generate({ model, userPrompt: '.', systemPrompt: 'Reply with a single period.', explain: true });
+      const fine = r.ok || r.reason === 'empty';
+      return { ok: fine, reason: fine ? '' : r.reason, say: fine ? '' : r.error, detail: fine ? '' : (r.detail || '') };
     },
   };
 }

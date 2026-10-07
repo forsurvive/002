@@ -606,7 +606,8 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       if (!user.isPlatformAdmin) return NOT_FOUND;
       if (!(subscription && subscription.status().available)) return no(422, '구독 연결이 준비되지 않았습니다', 'not_ready');
       const r = await subscription.test();
-      return ok({ verified: !!r.ok, say: r.ok ? '연결됩니다(구독)' : (r.say || '연결되지 않습니다') });
+      // 운영자에게만 — 실행기가 실제로 낸 문구(토큰 꼴은 가림)를 괄호로 붙여 까닭을 가릴 수 있게
+      return ok({ verified: !!r.ok, say: r.ok ? '연결됩니다(구독)' : (r.say || '연결되지 않습니다') + (r.detail ? ' (' + r.detail + ')' : '') });
     },
     // 쓸 AI 회사 고르기 — 사람마다 기본(개인 작품에 쓴다). '' 는 «고르지 않음»(키를 넣은 회사 가운데 하나).
     async 'me.ai.set'(user, b, ip) {
