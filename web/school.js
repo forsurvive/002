@@ -20,8 +20,8 @@ function noAutofill(n, attrs) {
   const a = attrs || {};
   if (['hidden', 'checkbox', 'radio', 'file', 'range', 'color'].includes(a.type) || a.readonly || FILL_OK.includes(a.autocomplete)) return;
   n.setAttribute('autocomplete', 'off');
-  n.readOnly = true;
-  const open = () => { n.readOnly = false; };
+  n.readOnly = true; n.dataset.lock = '1';
+  const open = () => { n.readOnly = false; delete n.dataset.lock; };
   n.addEventListener('pointerdown', open);
   n.addEventListener('focus', open);
 }
@@ -53,7 +53,7 @@ async function edu(op, body = {}) {
   return out;
 }
 // 알림 — 잘 된 일은 파랑(good), 막힌 일 · 오류는 빨강(2026-10-05 사용자 지시)
-const tell = (text, good = false) => { S.say = text || ''; S.sayGood = good; render(); };
+const tell = (text, good = false) => { S.say = text || ''; S.sayGood = good; S.fresh = good; render(); };
 const done = (text) => tell(text, true);
 
 // ---------------------------------------------------------------- 불러오기
@@ -62,7 +62,7 @@ const done = (text) => tell(text, true);
 {
   const q = new URLSearchParams(location.search);
   S.linkInvite = PAGE === 'account' ? q.get('invite') || '' : '';
-  if (S.linkInvite) { history.replaceState(null, '', location.pathname); S.sayGood = true; S.say = '초대 링크로 왔습니다 — 아래 «새 수업 코드 넣기»의 [들어가기]를 누르면 지금 계정으로 참여합니다'; }
+  if (S.linkInvite) { history.replaceState(null, '', location.pathname); S.sayGood = true; S.fresh = true; S.say = '초대 링크로 왔습니다 — 아래 «새 수업 코드 넣기»의 [들어가기]를 누르면 지금 계정으로 참여합니다'; }
 }
 
 async function load() {
@@ -178,7 +178,7 @@ function joinBox() {
     if (!code) return tell('초대 코드를 넣어 주세요');
     const r = await edu('invite.accept', { code });
     if (!r.ok) return tell(r.error);
-    S.sayGood = true; S.say = '들어왔습니다 — «내 수업»에 보입니다';
+    S.sayGood = true; S.fresh = true; S.say = '들어왔습니다 — «내 수업»에 보입니다';
     await load();
   };
   return section('새 수업 코드 넣기',
@@ -424,7 +424,7 @@ function orgView(id) {
   const o = S.orgs[id];
   // 처음 열 때 — AI 키가 없으면 [AI] 부터(그것 없이는 학생 작업이 돌지 않는다), 있으면 [수업]
   const tab = S.sub[id] || (keyedOf(o.keys).length ? '수업' : 'AI');
-  const go = (t) => { S.sub[id] = t; render(); };
+  const go = (t) => { S.sub[id] = t; S.say = ''; render(); };   // 다른 탭으로 가면 앞 탭의 알림은 걷는다
   return h('div', null,
     orgCard(id, go),
     tabRow([['수업', '수업'], ['사용자', '사용자'], ['AI', 'AI'], ['설정', '설정']], tab, go),
@@ -468,27 +468,27 @@ function operatorRow(id) {
     const r = await edu('license.issue', { orgId: id, days, seatLimit: Number(val('ls-' + id)) || null, allowedProviders: lim.p, allowedTiers: lim.t });
     if (!r.ok) return tell(r.error);
     S.open[k] = false;
-    S.sayGood = true; S.say = org.name + ' — 이용 기간을 열었습니다(~ ' + day(r.license.ends_at) + ' · 학생 ' + (r.license.seat_limit || '제한 없음') + '자리)';
+    S.sayGood = true; S.fresh = true; S.say = org.name + ' — 이용 기간을 열었습니다(~ ' + day(r.license.ends_at) + ' · 학생 ' + (r.license.seat_limit || '제한 없음') + '자리)';
     await load();
   };
   const saveLimits = async () => {
     const r = await edu('license.limits', { licenseId: live.id, allowedProviders: lim.p, allowedTiers: lim.t });
     if (!r.ok) return tell(r.error);
     const names = (xs, map) => (xs.length ? xs.map((x) => map[x]).join(' · ') : '모두');
-    S.open[k] = false; S.sayGood = true; S.say = org.name + '이(가) 쓸 수 있는 AI 를 바꿨습니다 — 회사: ' + names(lim.p, AI_CO) + ' / 등급: ' + names(lim.t, TIER_CO); await load();
+    S.open[k] = false; S.sayGood = true; S.fresh = true; S.say = org.name + '이(가) 쓸 수 있는 AI 를 바꿨습니다 — 회사: ' + names(lim.p, AI_CO) + ' / 등급: ' + names(lim.t, TIER_CO); await load();
   };
   const orgStatus = async () => {
     const to = org.status === 'active' ? 'suspended' : 'active';
     if (to === 'suspended' && !confirm(org.name + ' — 기관 이용을 멈출까요? 새 작품 · AI 작업이 서지 않습니다(작품은 그대로).')) return;
     const r = await edu('org.status', { orgId: id, status: to });
     if (!r.ok) return tell(r.error);
-    S.sayGood = true; S.say = org.name + (to === 'active' ? ' — 다시 열었습니다' : ' — 멈췄습니다'); await load();
+    S.sayGood = true; S.fresh = true; S.say = org.name + (to === 'active' ? ' — 다시 열었습니다' : ' — 멈췄습니다'); await load();
   };
   const licStatus = async (l, to) => {
     if (to === 'suspended' && !confirm('이용 기간을 멈출까요? 새 작품 · AI 작업이 서지 않습니다.')) return;
     const r = await edu('license.status', { licenseId: l.id, status: to });
     if (!r.ok) return tell(r.error);
-    S.sayGood = true; S.say = org.name + ' 이용 기간 — ' + (to === 'active' ? '다시 열었습니다' : '멈췄습니다'); await load();
+    S.sayGood = true; S.fresh = true; S.say = org.name + ' 이용 기간 — ' + (to === 'active' ? '다시 열었습니다' : '멈췄습니다'); await load();
   };
   const chip = (xs, x, name) => h('button', { class: xs.includes(x) ? 'btn' : 'btn-line', text: name, onclick: () => flip(xs, x) });
   return h('div', { style: 'margin-top:12px;padding-top:10px;border-top:1px solid var(--line-soft)' },
@@ -521,7 +521,7 @@ function classInstructors(c, orgId) {
     if (!on && !confirm((x.name || x.loginId) + ' 강사를 «' + c.name + '» 수업에서 뺄까요? 기관 · 다른 수업에는 그대로 남습니다.')) return;
     const r = await edu('class.assign', { classId: c.id, userId: x.userId, on });
     if (!r.ok) return tell(r.error);
-    S.sayGood = true; S.say = (x.name || x.loginId) + ' — «' + c.name + '» ' + (on ? '수업을 맡겼습니다' : '수업에서 뺐습니다');
+    S.sayGood = true; S.fresh = true; S.say = (x.name || x.loginId) + ' — «' + c.name + '» ' + (on ? '수업을 맡겼습니다' : '수업에서 뺐습니다');
     await loadClassInstructors(c);
   };
   const mine = list.filter((x) => x.assigned); const rest = list.filter((x) => !x.assigned);
@@ -541,19 +541,19 @@ function classesTab(id) {
   const addClass = async () => {
     const r = await edu('class.create', { orgId: id, name: val('nc-' + id), startsAt: val('ncs-' + id), endsAt: val('nce-' + id) });
     if (!r.ok) return tell(r.error);
-    S.open[nk] = false; S.sayGood = true; S.say = '«' + r.class.name + '» 수업을 만들었습니다 — [학생 초대 링크]를 보내 학생을 부르세요'; await load();
+    S.open[nk] = false; S.sayGood = true; S.fresh = true; S.say = '«' + r.class.name + '» 수업을 만들었습니다 — [학생 초대 링크]를 보내 학생을 부르세요'; await load();
   };
   const saveDates = async (c) => {
     const r = await edu('class.dates', { classId: c.id, startsAt: val('cds-' + c.id), endsAt: val('cde-' + c.id) });
     if (!r.ok) return tell(r.error);
-    S.dates[c.id] = false; S.sayGood = true; S.say = '수업 기간을 바꿨습니다'; await load();
+    S.dates[c.id] = false; S.sayGood = true; S.fresh = true; S.say = '수업 기간을 바꿨습니다'; await load();
   };
   const archive = async (c) => {
     const closing = c.status === 'active';
     if (closing && !confirm('«' + c.name + '» 수업을 닫을까요?\n닫으면 이 수업에 새 작품을 만들거나 초대 링크로 새로 들어올 수 없습니다.\n이미 든 학생과 작품은 그대로 남고, «다시 열기»로 되돌릴 수 있습니다.')) return;
     const r = await edu('class.archive', { classId: c.id, reopen: !closing });
     if (!r.ok) return tell(r.error);
-    S.sayGood = true; S.say = '«' + c.name + '» ' + (closing ? '수업을 닫았습니다' : '수업을 다시 열었습니다'); await load();
+    S.sayGood = true; S.fresh = true; S.say = '«' + c.name + '» ' + (closing ? '수업을 닫았습니다' : '수업을 다시 열었습니다'); await load();
   };
   const sorted = [...classes].sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1));
   return h('div', null,
@@ -614,7 +614,7 @@ function aiTab(id) {
     if ($(kk)) $(kk).value = '';
     if (!r.ok) return tell(r.error);
     S.open['addkey-' + id] = false;
-    S.sayGood = true; S.say = AI_CO[provOf(kk)] + ' 키를 저장했습니다(다시 보이지 않습니다) — [연결 확인]으로 확인해 보세요';
+    S.sayGood = true; S.fresh = true; S.say = AI_CO[provOf(kk)] + ' 키를 저장했습니다(다시 보이지 않습니다) — [연결 확인]으로 확인해 보세요';
     await load();
   };
   const tiers = START_TIERS.filter((t) => !(live && live.allowed_model_tiers) || live.allowed_model_tiers.includes(t));
@@ -622,7 +622,7 @@ function aiTab(id) {
     h('div', { class: 'lab', text: '이 기관 작품에 쓰는 AI' }),
     keyed.length ? h('div', { class: 'line' }, keyed.map((p) => h('button', {
       class: (prov || keyed[0]) === p ? 'btn' : 'btn-line', text: AI_CO[p],
-      onclick: async () => { const r = await edu('org.settings', { orgId: id, aiProvider: p }); if (!r.ok) return tell(r.error); S.sayGood = true; S.say = AI_CO[p] + '를 씁니다'; await load(); },
+      onclick: async () => { const r = await edu('org.settings', { orgId: id, aiProvider: p }); if (!r.ok) return tell(r.error); S.sayGood = true; S.fresh = true; S.say = AI_CO[p] + '를 씁니다'; await load(); },
     }))) : h('div', { class: 'notice', text: '아직 AI 키가 없습니다 — 아래에서 키를 넣으면 그 회사가 기본이 됩니다' }),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '키(학생 작업이 이 키로 돕니다 · 다시 보이지 않습니다)' }),
     keyRows(keys, 'org.key', { orgId: id }, load),
@@ -637,7 +637,7 @@ function aiTab(id) {
     h('div', { class: 'lab', style: 'margin-top:16px', text: '새 수업 작품의 시작 등급(학생이 작품마다 바꿀 수 있습니다)' }),
     h('div', { class: 'line' }, tiers.map((t) => h('button', {
       class: tier === t ? 'btn' : 'btn-line', text: TIER_CO[t] + (t === 'balanced' ? ' (기본)' : ''),
-      onclick: async () => { const r = await edu('org.settings', { orgId: id, aiTier: t }); if (!r.ok) return tell(r.error); S.sayGood = true; S.say = TIER_CO[t] + '로 시작합니다'; await load(); },
+      onclick: async () => { const r = await edu('org.settings', { orgId: id, aiTier: t }); if (!r.ok) return tell(r.error); S.sayGood = true; S.fresh = true; S.say = TIER_CO[t] + '로 시작합니다'; await load(); },
     }))),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '사용량(이 기관 키)' }),
     S.usage['o-' + id] ? h('button', { class: 'btn-line', text: '사용량 닫기', onclick: () => { delete S.usage['o-' + id]; render(); } })
@@ -712,7 +712,7 @@ function makeMemberBox(orgId) {
     if (!r.ok) return tell(r.error);
     S.shown[k] = r.loginId + ' / ' + (r.password || pw);
     S.open[k] = null;
-    S.sayGood = true; S.say = '계정을 만들었습니다 — 아이디와 비밀번호를 본인에게 전해 주세요';
+    S.sayGood = true; S.fresh = true; S.say = '계정을 만들었습니다 — 아이디와 비밀번호를 본인에게 전해 주세요';
     await load(); await showMembers(orgId);   // 학생 자리 수(상태 카드)도 다시
   };
   const classes = o.classes.filter((c) => c.status === 'active');
@@ -849,7 +849,7 @@ function wfEditor(orgId) {
       if (!clear) for (const k of Object.keys(typed)) if (typed[k] !== undefined && !same(k)) data[k] = typed[k];
       const r = await edu('workflow.save', { ...(orgId ? { orgId } : {}), stageKey: st.key, data });
       if (!r.ok) return tell(r.error);
-      S.sayGood = true; S.say = (clear ? '원래대로 되돌렸습니다' : '저장했습니다 — 다음 생성부터 쓰입니다') + ' (' + st.n + '  ' + (clear ? st.original.title : (data.title || st.effective.title)) + ')';
+      S.sayGood = true; S.fresh = true; S.say = (clear ? '원래대로 되돌렸습니다' : '저장했습니다 — 다음 생성부터 쓰입니다') + ' (' + st.n + '  ' + (clear ? st.original.title : (data.title || st.effective.title)) + ')';
       S.wfOpen[k] = false;   // 저장하면 그 단계는 접는다
       await loadWf(sk, orgId);
     };
@@ -902,11 +902,11 @@ function opsView() {
     if (status === 'disabled' && !confirm(loginId + ' — 계정을 멈출까요? 곧바로 로그아웃되고 다시 열 때까지 들어올 수 없습니다.')) return;
     const r = await edu('user.status', { loginId, status });
     if (!r.ok) return tell(r.error);
-    S.sayGood = true; S.say = r.loginId + (status === 'disabled' ? ' — 멈췄습니다' : ' — 다시 열었습니다'); $('us-id').value = ''; render();
+    S.sayGood = true; S.fresh = true; S.say = r.loginId + (status === 'disabled' ? ' — 멈췄습니다' : ' — 다시 열었습니다'); $('us-id').value = ''; render();
   };
   const orgList = Object.values(S.orgs);
   return h('div', null,
-    tabRow([['현황', '현황'], ['감사 기록', '감사 기록'], ['단계', '단계 · 강의 카드(전체)'], ['계정', '계정 멈추기']], t, (k) => { S.opsTab = k; if (k === '현황') S.ops = null; render(); }),
+    tabRow([['현황', '현황'], ['감사 기록', '감사 기록'], ['단계', '단계 · 강의 카드(전체)'], ['계정', '계정 멈추기']], t, (k) => { S.opsTab = k; S.say = ''; if (k === '현황') S.ops = null; render(); }),
     t === '현황' ? h('div', null,
       h('div', { class: 'lab', text: '기관' }),
       orgList.length ? orgList.map(({ org }) => {
@@ -984,7 +984,7 @@ function manageView() {
   const pills = [...(admin ? [['ops', '운영']] : []), ...ids.map((id) => [id, S.orgs[id].org.name]), ...(admin ? [['new', '+ 새 기관']] : [])];
   return h('div', null,
     pills.length > 1 ? h('div', { class: 'line', style: 'margin-bottom:16px;flex-wrap:wrap' },
-      pills.map(([k, name]) => h('button', { class: S.sel === k ? 'nav-btn on' : 'nav-btn', style: S.sel === k ? 'background:var(--blue);color:var(--on-color)' : '', text: name, onclick: () => { S.sel = k; render(); } }))) : null,
+      pills.map(([k, name]) => h('button', { class: S.sel === k ? 'nav-btn on' : 'nav-btn', style: S.sel === k ? 'background:var(--blue);color:var(--on-color)' : '', text: name, onclick: () => { S.sel = k; S.say = ''; render(); } }))) : null,
     S.sel === 'ops' ? opsView() : S.sel === 'new' ? newOrgView() : orgView(S.sel));
 }
 
@@ -1010,7 +1010,29 @@ function whoLine() {
   return h('div', { class: 'who' }, h('span', { class: 'who-id', text: S.me.loginId }), h('span', { text: names.length ? names.join(' · ') : '개인' }));
 }
 
+// 다시 그려도 치던 글은 남긴다 — 칸을 새로 지으면 친 것이 사라졌다(2026-10-07 검수: 기관 이름을 치고 «이용 기간도 바로 열기»를 누르니 이름이 지워짐).
+// 일이 막 끝났을 때(S.fresh — 성공 알림)만 비운 채로 둔다: 만든 뒤에 칸이 비어야 다음 것을 넣는다. 실패했을 때는 친 것을 그대로 두어 고쳐 넣게 한다.
 function render() {
+  const keep = {};
+  const was = document.activeElement && document.activeElement.id;
+  let caret = null;
+  if (!S.fresh) for (const el of document.querySelectorAll('#root input[id], #root textarea[id]')) {
+    if (el.type === 'hidden' || el.type === 'checkbox' || el.value === el.defaultValue) continue;
+    keep[el.id] = el.value;
+    if (el.id === was) { try { caret = el.selectionStart; } catch { /* 고르기가 없는 칸 */ } }
+  }
+  S.fresh = false;
+  paint();
+  for (const [id, v] of Object.entries(keep)) {
+    const el = $(id);
+    if (!el || !('value' in el)) continue;
+    el.value = v;
+    if (el.dataset.lock) { el.readOnly = false; delete el.dataset.lock; }
+  }
+  if (was && $(was) && keep[was] != null) { $(was).focus(); try { if (caret != null) $(was).setSelectionRange(caret, caret); } catch { /* 고르기가 없는 칸 */ } }
+}
+
+function paint() {
   const head = (title) => h('div', { class: 'line', style: 'margin-bottom:22px;align-items:flex-start' },
     h('div', { style: 'flex:1' }, h('div', { class: 'top-name', style: 'font-size:28px', text: title }), whoLine()),
     S.loggedIn ? h('a', { class: 'btn-line', href: '/', text: '작업실로' }) : h('a', { class: 'btn-line', href: '/login', text: '로그인' }));
