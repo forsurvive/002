@@ -225,17 +225,24 @@ export async function run({ pool, ok, eq }) {
     eq('**로그인 없이는 가져오지 못한다**', (await fetch(base + '/api/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ bundle }) })).status, 401);
     ok('가져온 것은 감사 기록에', (await pool.query("SELECT 1 FROM audit_logs WHERE action = 'project.import' AND target_id = $1", [im.pid])).rowCount === 1);
 
-    // ---------------- 참조가 많아 «입력이 너무 깁니다» — 줄여서 다시 불러 끝낸다(2026-10-07 «실패 — 실패»)
-    const longRef = (await op('doc.create', { pid, title: '긴 참조', body: '가'.repeat(450000) })).id;
+    // ---------------- 참조가 많아 한 번에 실리지 않으면 — 자르지 않고 나눠 읽어 모아 쓴다(2026-10-08 사용자 지시)
+    const longRef = (await op('doc.create', { pid, title: '긴 참조', body: Array.from({ length: 9 }, (_, i) => '〈R' + i + '〉' + '가'.repeat(50000)).join('\n\n') })).id;
     await op('doc.write', { pid, id: doc, refIds: [longRef] });
-    const asked = [];
-    behave = async (input) => { asked.push(input.userPrompt.length); return input.userPrompt.length > 200000 ? failure('invalid', '입력이 너무 깁니다') : success({ text: '줄여 지은 글' }); };
+    const asked = []; let lastPrompt = '';
+    behave = async (input) => {
+      asked.push(input.userPrompt.length);
+      if (input.userPrompt.length > 200000) return failure('invalid', '입력이 너무 깁니다');
+      lastPrompt = input.userPrompt;
+      const got = input.userPrompt.match(/〈R\d〉/g);
+      return success({ text: /나눠 읽는 부분/.test(input.userPrompt) ? '뽑음' + (got || []).join('') : '모아 지은 글' });
+    };
     const jL = (await op('doc.update', { pid, id: doc })).jobId;
-    const dL = await until(pid, jL, (j) => j.status === 'done' || j.status === 'failed');
-    ok('**참조가 넘쳐 거절당해도 줄여 다시 불러 끝낸다**', dL.status === 'done' && (await state(pid)).docs.find((d) => d.id === doc).body === '줄여 지은 글', JSON.stringify(dL) + ' ' + asked.join(','));
-    ok('처음엔 통째로 → 줄인 몫으로', asked.length >= 2 && asked[0] > 450000 && asked[asked.length - 1] <= 200000, asked.join(','));
+    const dL = await until(pid, jL, (j) => j.status === 'done' || j.status === 'failed', 15000);
+    ok('**참조가 넘쳐 거절당해도 나눠 읽고 모아 써서 끝낸다**', dL.status === 'done' && (await state(pid)).docs.find((d) => d.id === doc).body === '모아 지은 글', JSON.stringify(dL) + ' ' + asked.join(','));
+    ok('**긴 참조의 모든 부분이 모아 쓰는 프롬프트에 닿는다(자르지 않는다)**', [0, 1, 2, 3, 4, 5, 6, 7, 8].every((i) => lastPrompt.includes('〈R' + i + '〉')) && !/여기까지만/.test(lastPrompt), asked.join(','));
+    ok('처음엔 통째로 → 조각마다 → 모아 쓰기', asked[0] > 450000 && asked.length >= 3, asked.join(','));
     const lr = (await pool.query("SELECT status, error_code FROM generation_runs WHERE job_id = $1 ORDER BY started_at", [jL])).rows;
-    ok('생성 기록에 거절(invalid)과 성공이 차례로 남는다', lr[0].error_code === 'invalid' && lr[lr.length - 1].status === 'succeeded', JSON.stringify(lr));
+    ok('생성 기록에 거절(invalid) · 나눠 읽기 · 모아 쓰기가 차례로 남는다', lr[0].error_code === 'invalid' && lr.length === asked.length && lr.slice(1).every((x) => x.status === 'succeeded'), JSON.stringify(lr));
     await op('doc.write', { pid, id: doc, refIds: [] });
 
     // ---------------- 작업이 예외로 끝나도 «실패» 한 마디가 아니라 무슨 일인지 — 한 번 다시 해 본 뒤
@@ -245,7 +252,7 @@ export async function run({ pool, ok, eq }) {
     await pool.query('UPDATE jobs SET run_after = now() WHERE id = $1', [jT]);
     worker.wake();
     const fT = await until(pid, jT, (j) => j.status === 'failed');
-    ok('**예외로 끝난 작업은 «작업 중 오류»로 알린다(빈 «실패»가 아니다) · 본문은 그대로**', fT.status === 'failed' && /작업 중 오류/.test(fT.error) && (await state(pid)).docs.find((d) => d.id === doc).body === '줄여 지은 글', JSON.stringify(fT));
+    ok('**예외로 끝난 작업은 «작업 중 오류»로 알린다(빈 «실패»가 아니다) · 본문은 그대로**', fT.status === 'failed' && /작업 중 오류/.test(fT.error) && (await state(pid)).docs.find((d) => d.id === doc).body === '모아 지은 글', JSON.stringify(fT));
 
   } finally {
     await worker.stop({ graceMs: 2000 });

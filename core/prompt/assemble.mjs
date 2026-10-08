@@ -20,6 +20,41 @@ export const RESPONSE_RULE = `답은 문서 본문 하나다. 인사말, 머리�
 
 const s = (v) => (v == null ? '' : String(v));
 
+// ---------------------------------------------------------------- 나눠 읽기(한 번에 실리지 않을 때)
+// 자르지 않는다 — 한 번에 실리지 않는 글은 조각조각 읽어 «반영할 것»을 빠짐없이 뽑아 옮기고, 그것을 싣고 쓴다(2026-10-08 사용자 지시:
+// «문서를 쪼개서 작업하든 어떻게 하든 참조된 문서와 수정/생성할 문서, 요청사항 모두 결과에 반드시 반영되어야 해»). 본체: core/generation/reading.mjs
+
+// 조각 하나를 읽는 호출의 할 일 — 나중에 할 일(본래의 할 일)과 요청사항을 보며 이 조각에서 반영할 것을 뽑는다
+export function readTask({ name, k, n, role = 'reference', again = false, later = '' }) {
+  const what = role === 'final' ? '확정본(최우선 사실)' : role === 'material' ? '자료' : role === 'target' ? '대상 원고' : '참조 문서';
+  return [
+    again
+      ? `지금은 긴 ${what} «${s(name)}»에서 이미 뽑아 옮긴 것이 너무 길어 다시 모으는 중이다. «나눠 읽는 부분»은 그 뽑아 옮긴 것의 ${k}/${n} 부분이다.`
+      : `지금은 한 번에 실리지 않는 긴 ${what} «${s(name)}»를 나눠 읽는 중이다. «나눠 읽는 부분»은 그 글의 ${k}/${n} 부분이다.`,
+    '이 부분을 읽고, 아래 «나중에 할 일»과 요청사항(작품 요청사항 · 이번 요청사항)을 해내는 데 반영해야 할 것을 이 부분에서 하나도 빠뜨리지 말고 뽑아 옮겨라.',
+    '이름 · 설정 · 규칙 · 사건 · 관계 · 순서 · 수치 · 고유한 표현은 원문 그대로 옮긴다. 줄이느라 뜻을 바꾸거나 다른 것과 섞지 않는다.',
+    '반영할지 망설여지면 옮긴다. 이 부분에 없는 것을 지어내지 않고, 평가나 제안을 붙이지 않는다. 뽑아 옮긴 것만 내놓는다.',
+    role === 'final' ? '이 글은 확정본이다 — 사실은 하나도 빠짐없이 원문 그대로 옮긴다.' : null,
+    '',
+    '나중에 할 일:',
+    s(later).trim() || '(이 작품의 다음 글을 쓴다)',
+  ].filter((x) => x !== null).join('\n');
+}
+
+// 고칠 원고가 한 번에 실리지 않을 때 — 원고를 부분으로 나눠 부분마다 고치고 잇는다(보고서꼴은 부분마다 따로 본다)
+export function partTask({ k, n, mode = 'rewrite', before = '', after = '' }) {
+  const lines = mode === 'rewrite'
+    ? [`«대상»은 한 번에 실리지 않는 긴 원고의 ${k}/${n} 부분이다. 이 부분만 이번 일과 요청사항에 맞게 쓰고, 이 부분에 해당하는 본문만 내놓는다.`,
+      '다른 부분을 다시 쓰거나 줄여 옮기지 않는다. 이 부분에 있던 내용은 요청사항이 바꾸라고 한 것이 아니면 빠뜨리지 않는다. 앞뒤 부분과 이어지게 쓴다.']
+    : [`«대상»은 한 번에 실리지 않는 긴 원고의 ${k}/${n} 부분이다. 이번 일은 이 부분에 대해서만 한다 — 다른 부분은 따로 본다.`];
+  if (s(before).trim()) lines.push('앞 부분의 끝:\n' + neutralize(before));
+  if (s(after).trim()) lines.push('뒤 부분의 처음:\n' + neutralize(after));
+  return lines.join('\n');
+}
+
+// 뽑아 옮긴 것을 원문 자리에 실을 때 붙이는 머리 — 읽는 쪽이 «원문 전체를 대신하는 것»임을 알게
+export const digestNote = (chars) => `(원문 ${Number(chars).toLocaleString('en-US')}자가 한 번에 실리지 않아, 나눠 읽으며 이번 일에 반영할 것을 빠짐없이 뽑아 옮긴 것이다)\n`;
+
 // 본문이 구획 머리표를 흉내 내지 못하게 막는다. 이 손질 말고는 한 글자도 고치지 않는다.
 export function neutralize(body) {
   return s(body).split('\n').map((ln) => (ln.startsWith('■') || ln.startsWith('▶') ? ' ' + ln : ln)).join('\n');
@@ -78,7 +113,7 @@ export function specBlock(project, { capNote = true } = {}) {
  * 어느 구획도 자르지 않는다.
  */
 export function buildUser({
-  project, materials = [], refs = [], finals = [], targets = [], talk = [],
+  project, materials = [], refs = [], finals = [], targets = [], talk = [], reading = [],
   request = '', task = '', noCount = true,
 } = {}) {
   // 한 문서가 여러 자격을 가지면 한 구획에만 남긴다(부르는 쪽에서 이미 갈라 놓지만 한 번 더 막는다).
@@ -96,6 +131,7 @@ export function buildUser({
     section('확정본 — 최우선 사실', itemsOf(fin)),
     section('대상', itemsOf(targets)),
     section('대화', itemsOf(talk)),
+    section('나눠 읽는 부분', itemsOf(reading)),
     s(request).trim() ? section('이번 요청사항', [neutralize(request)]) : '',
     section('이번에 할 일', [s(task) + (noCount ? '\n세어 말하지 않는다.' : '')]),
   ];

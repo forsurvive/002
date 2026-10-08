@@ -11,6 +11,7 @@
 import * as model from '../domain/model.mjs';
 import { buildSystem, buildUser, cleanResponse } from '../prompt/assemble.mjs';
 import { materialItems } from '../reference/plan.mjs';
+import { readingInParts } from './reading.mjs';
 
 export const CRAFT_MIN = 2000; // 기획서가 못 박은 하한. 위쪽 상한은 두지 않는다.
 export const STUDY_TITLE = '자료 분석';
@@ -188,12 +189,9 @@ export async function runStudy(deps, pid, ctx, request = '') {
   if (ctx) ctx.step(STUDY_TITLE);
 
   const delays = deps.retryDelays || RETRY_MS;
-  // 길이로 거절당하면(invalid — «입력이 너무 깁니다») 자료를 줄여 다시: 그대로 → 40만 자 → 15만 자 → 6만 자
-  let r = null;
-  for (const budget of [0, 400000, 150000, 60000]) {
-    r = await persist(() => call({ pid, code: 'S02', materials: true, allFinals: true, request, materialsMax: budget, signal: ctx && ctx.signal }, ctx), ctx, delays);
-    if (r.ok || (ctx && ctx.signal && ctx.signal.aborted) || r.reason !== 'invalid') break;
-  }
+  // 자료가 한 번에 실리지 않으면(invalid — «입력이 너무 깁니다») 자르지 않고 나눠 읽어 모은다(reading.mjs, 2026-10-08 사용자 지시)
+  const readCall = readingInParts(call, store);
+  const r = await persist(() => readCall({ pid, code: 'S02', materials: true, allFinals: true, request, signal: ctx && ctx.signal }, ctx), ctx, delays);
   if (!r.ok) return PASSING.has(r.reason || 'other') || r.reason === 'invalid' ? r : stopped(r);
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
 

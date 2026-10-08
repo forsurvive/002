@@ -799,7 +799,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 문구는 마지막 수단
   eq('문구로도 크레딧을 알아본다', c({ stderr: 'Your credit balance is too low' }), 'credit');
   eq('문구로도 로그인을 알아본다', c({ stderr: 'Invalid API key' }), 'auth');
-  // 입력이 너무 길면 invalid — 줄여서 다시 부르는 문(core/generation/fit.mjs)이 이것을 본다. 한도(limit)로 잘못 읽지 않는다.
+  // 입력이 너무 길면 invalid — 나눠 읽는 문(core/generation/reading.mjs)이 이것을 본다. 한도(limit)로 잘못 읽지 않는다.
   eq('**길이 초과는 invalid(문구)**', c({ finalResult: { is_error: true, result: 'Prompt is too long' } }), 'invalid');
   eq('길이 초과는 invalid(400 + 문구)', c({ finalResult: { api_error_status: 400, result: 'API Error: 400 prompt is too long: 812345 tokens > 200000 maximum' } }), 'invalid');
   eq('길이 초과는 invalid(413)', c({ finalResult: { api_error_status: 413 } }), 'invalid');
@@ -2212,38 +2212,80 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const viaKind = [];
   await kinds.runKind({ store: memStore, call: async (a) => { viaKind.push(a.code); return { ok: true, text: '정리' }; } }, 'update', { docId: mo.id }, { pid: mem.id, step() {}, addDoc() {} });
   eq('표를 지나 같은 실행에 닿는다', viaKind.join(','), 'F-UPDATE');
-  // 참조가 많아 «입력이 너무 깁니다»(invalid)로 거절당하면 줄여서 다시 — 원고는 통째로, 참조는 표를 달고 줄인다(2026-10-07)
+  // 한 번에 실리지 않으면 자르지 않고 나눠 읽어 모아 쓴다 — 참조 · 원고 · 요청사항이 빠짐없이 결과에 닿는다(2026-10-08 사용자 지시)
   {
     const plan = await import('../core/reference/plan.mjs');
-    const fitMod = await import('../core/generation/fit.mjs');
-    const bigA = model.docCreate(mem, { title: '긴 참조 A', body: '가'.repeat(300000) });
-    const bigB = model.docCreate(mem, { title: '긴 참조 B', body: '나'.repeat(300000) });
-    const manu = model.docCreate(mem, { title: '권별 플롯', body: '원고 본문' });
-    model.docWrite(mem, manu.id, { refIds: [bigA.id, bigB.id], request: '권별로' });
-    const sizes = []; const steps = [];
-    const picky = async (a) => {
-      const p0 = plan.planCall(mem, { ...a }, { pr: { task: 't', name: 'n', role: 'r', craft: '' } });
-      sizes.push(p0.userPrompt.length);
-      if (p0.userPrompt.length > 200000) return { ok: false, reason: 'invalid', error: '입력이 너무 깁니다' };
-      return { ok: true, text: '권별 플롯 결과', seenPrompt: p0.userPrompt };
+    const rd = await import('../core/generation/reading.mjs');
+    const PR = { task: '할 일', name: 'n', role: 'r', craft: '' };
+    const LIMIT = 200000;
+    // 표지를 박은 긴 글 — 표지가 모두 결과 쪽 프롬프트에 닿았는지로 «빠짐없이»를 잰다
+    const marked = (tag, parts, each = 50000) => Array.from({ length: parts }, (_, i) => '〈' + tag + i + '〉' + '가'.repeat(each)).join('\n\n');
+    const marks = (t) => (String(t).match(/〈[A-Z]\d+〉/g) || []).join('');
+    const bigA = model.docCreate(mem, { title: '긴 참조 A', body: marked('A', 6) });
+    const bigB = model.docCreate(mem, { title: '긴 참조 B', body: marked('B', 6) });
+    const small = model.docCreate(mem, { title: '짧은 참조', body: '짧은 참조의 원문〈S0〉' });
+    const manu = model.docCreate(mem, { title: '권별 플롯', body: '원고 본문〈M0〉' });
+    model.docWrite(mem, manu.id, { refIds: [bigA.id, bigB.id, small.id], request: '권별로 나눠라' });
+    const reads = []; const finals = []; const steps = [];
+    const fake = async (a) => {
+      const p0 = plan.planCall(mem, a, { pr: PR });
+      if (p0.userPrompt.length > LIMIT) return { ok: false, reason: 'invalid', error: '입력이 너무 깁니다' };
+      if (a.reading) { reads.push(p0.userPrompt); return { ok: true, text: '뽑음' + marks(a.reading.text) }; }
+      finals.push(p0.userPrompt);
+      return { ok: true, text: '권별 플롯 결과', runId: 'run-final' };
     };
-    const got2 = await kinds.runKind({ store: memStore, call: picky }, 'update', { docId: manu.id }, { pid: mem.id, step: (t) => steps.push(t), addDoc() {} });
-    ok('**길이로 거절당하면 줄여 다시 불러 문서를 만든다**', got2.ok === true && model.findDoc(mem, manu.id).body === '권별 플롯 결과', JSON.stringify(got2) + ' ' + sizes.join(','));
-    ok('처음엔 그대로(줄이지 않음) → 40만 → 15만 자 몫에서 통과', sizes.length === 3 && sizes[0] > 600000 && sizes[2] < 200000, sizes.join(','));
-    ok('작업 줄에 «길이를 줄여 다시»가 보인다', steps.some((t) => /길이를 줄여 다시/.test(t)));
-    const cut = plan.planCall(mem, { refIds: [bigA.id, bigB.id], targetIds: [manu.id], inputMax: 150000 }, { pr: { task: 't', name: 'n', role: 'r', craft: '' } });
-    const refIn = cut.inputs.filter((x) => x.role === 'reference');
-    ok('**줄인 참조에는 «여기까지만 실었다» 표 — 두 참조를 같은 비율로, 원고는 통째로**',
-      refIn.length === 2 && refIn.every((x) => /여기까지만 실었다/.test(x.text) && x.text.length < 80000) && cut.inputs.find((x) => x.role === 'target').text === model.findDoc(mem, manu.id).body, JSON.stringify(cut.inputs.map((x) => [x.role, x.name, x.text.length])));
-    const plain = plan.planCall(mem, { refIds: [bigA.id], targetIds: [manu.id] }, { pr: { task: 't', name: 'n', role: 'r', craft: '' } });
-    ok('몫을 주지 않으면 아무것도 줄이지 않는다', !/여기까지만 실었다/.test(plain.userPrompt));
+    const got2 = await kinds.runKind({ store: memStore, call: fake }, 'update', { docId: manu.id }, { pid: mem.id, step: (t) => steps.push(t), addDoc() {} });
+    ok('**한 번에 실리지 않아도 나눠 읽고 모아 써서 문서를 만든다**', got2.ok === true && model.findDoc(mem, manu.id).body === '권별 플롯 결과', JSON.stringify(got2));
+    const last = finals[finals.length - 1] || '';
+    const allMarks = ['A', 'B'].flatMap((t) => [0, 1, 2, 3, 4, 5].map((i) => '〈' + t + i + '〉'));
+    ok('**긴 참조의 모든 부분이 읽혀 모아 쓰는 프롬프트에 닿는다(빠진 조각 없음)**', allMarks.every((m) => last.includes(m)), marks(last));
+    ok('**짧은 참조 · 원고는 원문 그대로, 요청사항은 통째로 실린다**', last.includes('짧은 참조의 원문〈S0〉') && last.includes('원고 본문〈M0〉') && last.includes('권별로 나눠라'));
+    ok('**자르지 않는다 — «여기까지만 실었다» 같은 표가 없고, 뽑아 옮긴 것임을 밝힌다**', !/여기까지만/.test(last) && /나눠 읽으며 이번 일에 반영할 것을 빠짐없이 뽑아 옮긴 것/.test(last));
+    ok('**나눠 읽는 호출마다 요청사항 · 할 일이 함께 간다**', reads.length >= 10 && reads.every((t) => t.includes('권별로 나눠라') && t.includes('나중에 할 일') && t.includes('할 일')), String(reads.length));
+    ok('작업 줄에 «나눠 읽기 — 문서 k/n» · «모아 쓰기»가 보인다', steps.some((t) => /^나눠 읽기 — 긴 참조 A \d+\/\d+$/.test(t)) && steps.includes('모아 쓰기'));
+    ok('결과는 마지막(모아 쓴) 부르기의 것 — 생성 기록 잇기(runId)가 그대로', got2.ok && finals.length >= 1);
+
+    // 체크포인트 — 읽은 조각은 남기고, 다시 걸면 다시 읽지 않는다
+    const cp = {};
+    const ctxA = { pid: mem.id, step() {}, addDoc() {}, save: async (d) => { Object.assign(cp, structuredClone(d)); } };
+    reads.length = 0;
+    await kinds.runKind({ store: memStore, call: fake }, 'update', { docId: manu.id }, ctxA);
+    const firstReads = reads.length;
+    reads.length = 0;
+    await kinds.runKind({ store: memStore, call: fake }, 'update', { docId: manu.id }, { pid: mem.id, step() {}, addDoc() {}, resume: cp });
+    ok('**다시 걸면(재시도 · 이어 하기) 읽은 조각을 다시 부르지 않는다**', firstReads > 0 && reads.length === 0 && cp.reading && Object.keys(cp.reading).length === firstReads, firstReads + '/' + reads.length);
+
+    // 고칠 원고 자체가 한 번에 실리지 않으면 — 부분씩 고쳐 잇는다(빠진 부분 없음)
+    const bigM = model.docCreate(mem, { title: '긴 원고', body: marked('M', 4) });
+    model.docWrite(mem, bigM.id, { refIds: [small.id], request: '문체를 고쳐라' });
+    const partCalls = [];
+    const fakeP = async (a) => {
+      const p0 = plan.planCall(mem, a, { pr: PR });
+      if (p0.userPrompt.length > 120000) return { ok: false, reason: 'invalid', error: '입력이 너무 깁니다' };
+      if (a.targetPart) { partCalls.push({ k: a.targetPart.k, n: a.targetPart.n, before: a.targetPart.before, prompt: p0.userPrompt }); return { ok: true, text: '고친' + a.targetPart.k + marks(a.targetPart.text) }; }
+      return { ok: true, text: '통째' };
+    };
+    const got3 = await kinds.runKind({ store: memStore, call: fakeP }, 'update', { docId: bigM.id }, { pid: mem.id, step() {}, addDoc() {} });
+    const body3 = model.findDoc(mem, bigM.id).body;
+    ok('**긴 원고는 부분씩 고쳐 이어 붙인다 — 모든 부분이 결과에**', got3.ok && ['〈M0〉', '〈M1〉', '〈M2〉', '〈M3〉'].every((m) => body3.includes(m)) && partCalls.length === partCalls[0].n && /^고친1/.test(body3), body3.slice(0, 200));
+    ok('**부분마다 요청사항 · 참조가 함께 가고, 앞 부분의 새 글 끝을 이어 받는다**', partCalls.every((c) => c.prompt.includes('문체를 고쳐라') && c.prompt.includes('짧은 참조의 원문') && c.prompt.includes(c.k + '/' + c.n + ' 부분'))
+      && partCalls.slice(1).every((c) => c.before.startsWith('고친')));
+    // 보고서꼴(모순 검사)은 부분마다 따로 보고 묶는다
+    const chk = model.docCreate(mem, { kind: 'check', title: '긴 검사', body: '' });
+    model.docWrite(mem, chk.id, { targetIds: [bigM.id] });
+    model.docWrite(mem, bigM.id, { body: marked('M', 4) });
+    const got4 = await kinds.runKind({ store: memStore, call: fakeP }, 'update', { docId: chk.id }, { pid: mem.id, step() {}, addDoc() {} });
+    const body4 = model.findDoc(mem, chk.id).body;
+    ok('**모순 검사 · 합평은 원고 부분마다 따로 보고 «부분» 머리로 묶는다**', got4.ok && /## 긴 원고 — 1\/\d+ 부분/.test(body4) && ['〈M0〉', '〈M3〉'].every((m) => body4.includes(m)), body4.slice(0, 120));
+
+    // 길이 말고 다른 실패는 나눠 읽지 않는다 · 끝까지 안 되면 까닭을 말한다
     let n = 0;
-    const always = await fitMod.fitting(async () => { n += 1; return { ok: false, reason: 'auth', error: '키' }; })({ pid: mem.id }, null);
+    const always = await rd.readingInParts(async () => { n += 1; return { ok: false, reason: 'auth', error: '키' }; }, memStore)({ pid: mem.id, code: 'F-UPDATE', targetIds: [manu.id] }, null);
     ok('길이 말고 다른 실패는 다시 부르지 않는다', always.ok === false && n === 1);
-    let m = 0;
-    const never = await fitMod.fitting(async () => { m += 1; return { ok: false, reason: 'invalid', error: '깁니다' }; })({ pid: mem.id }, null);
-    ok('끝까지 길면 세 번 줄여 본 뒤 그 까닭을 돌려준다', never.ok === false && never.reason === 'invalid' && m === 4);
-    for (const d of [bigA, bigB, manu]) model.docDelete(mem, d.id);
+    const never = await rd.readingInParts(async () => ({ ok: false, reason: 'invalid', error: '깁니다' }), memStore)({ pid: mem.id, code: 'F-UPDATE', refIds: [bigA.id], targetIds: [manu.id] }, null);
+    ok('끝까지 실리지 않으면 invalid 와 사람 말 까닭을 돌려준다', never.ok === false && never.reason === 'invalid' && never.error === rd.TOO_LONG);
+    ok('나눠 자르기는 경계에서 — 이어 붙이면 원문 그대로', rd.splitText(marked('A', 6), 60000).join('') === marked('A', 6) && rd.splitText(marked('A', 6), 60000).every((x) => x.length <= 60000));
+    for (const d of [bigA, bigB, small, manu, bigM, chk]) model.docDelete(mem, d.id);
   }
   // 이미 저장된 말에 답하기(온라인판 — 말을 작업 앞에 저장한다) — 말이 두 번 얹히지 않고 그 말 밑에 답이 붙는다
   const tAsk = model.threadCreate(mem, { title: '먼저 저장' });
@@ -2674,17 +2716,23 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const p3 = baseProject();
   r = await core.prepareAgents({ store: mkStore(p3), raw: async () => ({ ok: false, reason: 'credential', error: 'AI 연결이 필요합니다' }), prompts, retryDelays: [1] }, 'p3', null);
   ok('**키가 없으면 멈추고 «키를 넣으면 다시 합니다»라고 말한다**', !r.ok && r.reason === 'credential' && /키를 넣으면/.test(r.error));
-  // 자료가 너무 길어 거절당하면 줄여 다시 — 줄인 표가 프롬프트에 남는다
+  // 자료가 너무 길어 거절당하면 자르지 않고 나눠 읽어 모은다 — 자료의 모든 부분이 분석에 닿는다(2026-10-08)
   const p4 = baseProject();
   p4.agents = { __kind: '소설' };
-  let seenMax = [];
-  const call4 = async (args) => { seenMax.push(args.materialsMax); return args.materialsMax && args.materialsMax <= 150000 ? { ok: true, text: '분석 결과' } : { ok: false, reason: 'invalid', error: '입력이 너무 깁니다' }; };
   const store4 = mkStore(p4);
-  p4.docs = [{ id: 'm1', title: '자료', body: '본문', material: true, versions: [] }];
+  const longMat = Array.from({ length: 4 }, (_, i) => '〈Z' + i + '〉' + '자'.repeat(50000)).join('\n\n');
+  p4.docs = [{ id: 'm1', title: '자료', body: longMat, material: true, versions: [] }];
+  const studyReads = []; let studyFinal = '';
+  const call4 = async (args) => {
+    const pl = planM.planCall(p4, args, { pr: { task: '자료를 정리한다', name: 'n', role: 'r', craft: '' } });
+    if (pl.userPrompt.length > 120000) return { ok: false, reason: 'invalid', error: '입력이 너무 깁니다' };
+    if (args.reading) { studyReads.push(args.reading.k + '/' + args.reading.n); return { ok: true, text: '뽑음' + (args.reading.text.match(/〈Z\d〉/g) || []).join('') }; }
+    studyFinal = pl.userPrompt;
+    return { ok: true, text: '분석 결과' };
+  };
   r = await core.runStudy({ store: store4, call: call4, retryDelays: [1] }, 'p4', null);
-  ok('**자료가 길어 거절당하면 줄여서 다시 부른다(그대로 → 40만 → 15만 자)**', r.ok && seenMax.join(',') === '0,400000,150000', seenMax.join(','));
-  const cut = planM.fitMaterials([{ id: 'a', name: 'A', text: 'x'.repeat(10000) }, { id: 'b', name: 'B', text: 'y'.repeat(30000) }], 4000);
-  ok('자료 줄이기는 자료마다 같은 비율 · 줄였다는 표를 단다', cut[0].text.startsWith('x'.repeat(1000)) && cut[1].text.startsWith('y'.repeat(3000)) && /여기까지만 실었다/.test(cut[1].text) && !/y{3001}/.test(cut[1].text));
+  ok('**자료가 길어 거절당하면 나눠 읽어 모은 뒤 분석한다(자르지 않는다)**', r.ok && studyReads.length >= 4 && ['〈Z0〉', '〈Z1〉', '〈Z2〉', '〈Z3〉'].every((m) => studyFinal.includes(m)) && !/여기까지만/.test(studyFinal), studyReads.join(','));
+  ok('자료 분석 결과가 문서로 선다', p4.docs.some((d) => d.title === core.STUDY_TITLE && d.body === '분석 결과'));
 }
 
 // ---------------------------------------------------------------- 마크다운 — 화면은 꼴대로, 내려받기는 MD · 텍스트 중 고른다(2026-10-07)

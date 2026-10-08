@@ -4,7 +4,7 @@
 // tools/engine.mjs 의 callOnce 앞부분을 의미 그대로 옮겼다(온라인화 Phase 1 — Core 분리).
 // 계획이 «실은 것의 목록»(inputs)을 함께 돌려주므로, 생성 기록이 «이 결과는 무엇을 보고 만들었나»를 남길 수 있다.
 
-import { buildSystem, buildUser } from '../prompt/assemble.mjs';
+import { buildSystem, buildUser, readTask, partTask, digestNote } from '../prompt/assemble.mjs';
 import * as model from '../domain/model.mjs';
 
 const asItem = (d) => ({ id: d.id, name: d.title, text: model.bodyOf(d) });
@@ -31,33 +31,6 @@ export function materialItems(project) {
   return model.materialDocs(project).map(asItem);
 }
 
-// 자료가 모델이 받을 수 있는 길이를 넘을 때(«입력이 너무 깁니다») — 자료마다 같은 비율로 앞부분을 남기고 줄였다는 표를 단다.
-// max 가 0 이면 그대로. 자료 분석(S02)이 길이로 거절당했을 때만 줄인 예산으로 다시 부른다(core/generation/agents.mjs).
-export function fitMaterials(items, max = 0, what = '자료') {
-  const total = items.reduce((n, m) => n + String(m.text || '').length, 0);
-  if (!(max > 0) || total <= max) return items;
-  const ratio = max / total;
-  return items.map((m) => {
-    const t = String(m.text || '');
-    const keep = Math.max(200, Math.floor(t.length * ratio));
-    return t.length <= keep ? m : { ...m, text: t.slice(0, keep) + '\n\n…(' + what + '가 길어 여기까지만 실었다 — 원문 ' + t.length.toLocaleString('en-US') + '자 중 ' + keep.toLocaleString('en-US') + '자)' };
-  });
-}
-
-// 실을 것 전체가 모델이 받는 길이를 넘을 때(«입력이 너무 깁니다» — 2026-10-07 참조가 많은 문서 생성이 실패하던 것).
-// 고치는 대상(원고)은 되도록 통째로 두고, 남은 몫을 자료 · 참조 · 확정본에 같은 비율로 나눈다. 줄인 문서마다 표를 단다.
-// 대상만으로 몫의 절반을 넘으면 대상도 절반까지 줄인다. max 가 0 이면 그대로.
-export function fitInputs({ mats, refs, finals, targets }, max = 0) {
-  const len = (xs) => xs.reduce((n, m) => n + String(m.text || '').length, 0);
-  const others = [...mats, ...refs, ...finals];
-  if (!(max > 0) || len(others) + len(targets) <= max) return { mats, refs, finals, targets };
-  const keptTargets = len(targets) > max / 2 ? fitMaterials(targets, Math.floor(max / 2), '원고') : targets;
-  const room = Math.max(Math.floor(max / 10), max - len(keptTargets));
-  const cut = new Map(fitMaterials(others, room, '문서').map((m, i) => [others[i], m]));
-  const pick = (xs) => xs.map((m) => cut.get(m) || m);
-  return { mats: pick(mats), refs: pick(refs), finals: pick(finals), targets: keptTargets };
-}
-
 /**
  * pr 은 그 자리의 프롬프트(작가 고침 > 지은 것 > 내장을 이미 고른 것), slotModel 은 그 자리에 정해 둔 모델(없으면 '').
  * 돌려주는 값: { systemPrompt, userPrompt, model, modelSource, inputs }
@@ -67,11 +40,11 @@ export function planCall(project, {
   refIds = [], targetIds = [], agentIds = [], request = '', taskExtra = '',
   materials = false, allFinals = false, talk = [], prev = '', next = '',
   noCount = null, finalFirst = false, keepSeat = false,
-  extraTargets = [], modelPick = '', materialsMax = 0, inputMax = 0,
+  extraTargets = [], modelPick = '', digests = null, reading = null, targetPart = null,
 } = {}, { pr, slotModel = '' } = {}) {
   // 자료도 보통 문서다 — 참조로 걸면 참조로, 확정본이면 확정본으로 실린다.
   // 다만 에이전트 준비(materials)가 자료를 통째로 «■ 자료» 구획에 실을 때는 그 문서들을 다른 구획에 겹쳐 싣지 않는다.
-  const mats = materials ? fitMaterials(materialItems(project), materialsMax) : [];
+  const mats = materials ? materialItems(project) : [];
   const matIds = new Set(mats.map((m) => m.id));
 
   // 한 문서는 한 구획에만 실린다.
@@ -94,15 +67,18 @@ export function planCall(project, {
     finals = finalsAll.filter((d) => !taken.has(d.id));
     finals.forEach((d) => taken.add(d.id));
   }
-  let refs = docsByIds(project, refIds).filter((d) => !taken.has(d.id));
-  // 길이로 거절당한 뒤의 다시 부르기(inputMax — core/generation/fit.mjs)면 실을 것을 그 몫에 맞춘다
-  let fitMats = mats;
-  if (inputMax > 0) ({ mats: fitMats, refs, finals, targets } = fitInputs({ mats, refs, finals, targets }, inputMax));
+  const refs = docsByIds(project, refIds).filter((d) => !taken.has(d.id));
+  // 한 번에 실리지 않아 나눠 읽은 문서는 원문 자리에 «뽑아 옮긴 것»을 싣는다(core/generation/reading.mjs). 자르지 않는다.
+  const swap = (xs) => (digests ? xs.map((d) => (digests[d.id] != null ? { ...d, text: digestNote(String(d.text || '').length) + digests[d.id] } : d)) : xs);
+  if (digests) targets = swap(targets);   // 큰 대상이 여럿일 때 — 부분씩 보는 하나 말고는 나눠 읽은 것으로
+  // 고칠 원고가 한 번에 실리지 않으면 부분씩 — 이번 부분만 대상 자리에 선다
+  if (targetPart) targets = targets.map((d) => (d.id === targetPart.id ? { ...d, name: d.name + ' — ' + targetPart.k + '/' + targetPart.n + ' 부분', text: String(targetPart.text || '') } : d));
   // 문서가 아닌 것도 «대상» 자리에 설 수 있다(합평 모으기가 받는 여러 합평 같은 것).
   const docTargets = targets;
   if (extraTargets.length) targets = [...targets, ...extraTargets];
 
-  const task = [pr.task, taskExtra].filter((x) => String(x || '').trim()).join('\n');
+  const task0 = [pr.task, taskExtra].filter((x) => String(x || '').trim()).join('\n');
+  const task = targetPart ? task0 + '\n\n' + partTask(targetPart) : task0;
   // 작가가 걸어 둔 사람들 — 있으면 이들이 «누가 쓰는가»를 대신한다.
   // keepSeat 이면 그 자리의 사람이 맨 앞에 그대로 남고 걸린 사람은 거기에 더해진다(논의 스레드).
   // 자리의 작법은 «■ 작법» 첫 덩이로 이미 실리므로 여기서는 이름과 역할만 세운다.
@@ -116,18 +92,34 @@ export function planCall(project, {
   const modelSource = pick ? 'pick' : bringsModel ? 'agent' : slotModel ? 'slot' : 'project';
   // 부르는 쪽이 따로 정하지 않았으면 작품에 걸어 둔 토글을 따른다.
   const nc = noCount == null ? project.noCount !== false : !!noCount;
+  const tag = (role) => (d) => ({ role, id: d.id || '', name: d.name, text: String(d.text || '') });
+
+  // 나눠 읽는 호출 — 그 조각 하나와 요청사항 · 할 일만 싣고 «반영할 것»을 뽑는다. 대상은 이름만 세운다(본문은 모아 쓸 때 싣는다).
+  // 수치 · 고유한 표현을 그대로 옮겨야 하므로 «쓰지 않는 말» 규칙을 걸지 않는다.
+  if (reading) {
+    const later = [task0, targets.length ? '쓰거나 고칠 대상: ' + targets.map((d) => '«' + d.name + '»').join(' ') : ''].filter(Boolean).join('\n');
+    const part = { id: reading.id || '', name: reading.name + ' — ' + reading.k + '/' + reading.n + ' 부분', text: String(reading.text || '') };
+    const smallTalk = talk.reduce((n, m) => n + String(m.text || '').length, 0) <= 20000 ? talk : [];
+    return {
+      systemPrompt: buildSystem({ prompt: pr, crew, withFinalRule: false, withNoCount: false }),
+      userPrompt: buildUser({ project, reading: [part], talk: smallTalk, request, task: readTask({ ...reading, later }), noCount: false }),
+      model: useModel, modelSource,
+      inputs: [{ role: reading.role || 'reference', id: part.id, name: part.name, text: part.text }],
+    };
+  }
+
+  const mSwap = swap(mats); const rSwap = swap(refs); const fSwap = swap(finals);
   const systemPrompt = buildSystem({ prompt: pr, prev, next, crew, withFinalRule: finals.length > 0, withNoCount: nc });
   const userPrompt = buildUser({
     project,
     // 에이전트 준비만 자료를 통째로 싣는다. 손으로 여는 자리에서 고른 자료는 참조 · 확정본 구획으로 간다.
-    materials: fitMats,
-    refs, finals, targets, talk, request, task, noCount: nc,
+    materials: mSwap,
+    refs: rSwap, finals: fSwap, targets, talk, request, task, noCount: nc,
   });
 
   // 실린 것의 목록 — buildUser 의 구획 차례(자료 → 참조 → 확정본 → 대상 → 대화)대로.
-  const tag = (role) => (d) => ({ role, id: d.id || '', name: d.name, text: String(d.text || '') });
   const inputs = [
-    ...fitMats.map(tag('material')), ...refs.map(tag('reference')), ...finals.map(tag('final')),
+    ...mSwap.map(tag('material')), ...rSwap.map(tag('reference')), ...fSwap.map(tag('final')),
     ...docTargets.map(tag('target')), ...extraTargets.map(tag('extra')), ...talk.map(tag('talk')),
   ];
   return { systemPrompt, userPrompt, model: useModel, modelSource, inputs };

@@ -6,6 +6,7 @@
 
 import * as model from '../domain/model.mjs';
 import * as wf from '../workflow/stages.mjs';
+import { saveCheckpoint } from './reading.mjs';
 
 const KIND_CODE = { doc: 'F-UPDATE', check: 'F-CONTRA', review: 'F-REVIEW' };
 
@@ -67,7 +68,7 @@ async function runPanelReview({ store, call }, pid, d, agentIds, common, ctx) {
     if (!r.ok) return r;
     heard.push({ agentId: one.id, text: r.text });
     said.push({ id: '', name: one.name + '의 합평', text: r.text });
-    if (ctx && ctx.save) await ctx.save({ panel: { docId: d.id, heard } });
+    await saveCheckpoint(ctx, { panel: { docId: d.id, heard } });   // 나눠 읽은 것(reading)과 함께 남긴다
   }
 
   if (ctx && ctx.gate) await ctx.gate();
