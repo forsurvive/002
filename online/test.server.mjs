@@ -5,11 +5,21 @@ import { createOnlineServer, onlinePlan } from './server.mjs';
 import { createUser, resetThrottle } from './auth.mjs';
 
 export async function run({ pool, ok, eq }) {
-  resetThrottle();
-  await createUser(pool, { loginId: 'web-a', password: 'long-enough-a', displayName: '가' });
-  await createUser(pool, { loginId: 'web-b', password: 'long-enough-b', displayName: '나' });
+  await suite({ pool, ok, eq, edition: 'school' });
+}
 
-  const srv = createOnlineServer({ pool, plan: onlinePlan({ SE2_PORT: '0' }), denyFrames: true });
+// 같은 시험을 판마다 돌린다 — 같은 DB 라서 사람 이름은 판마다 따로 짓고, 시험 이름 앞에 판을 단다(school 은 그대로)
+async function suite({ pool, ok: ok0, eq: eq0, edition }) {
+  const sfx = edition === 'school' ? '' : '-' + edition;
+  const tag = edition === 'school' ? '' : '[' + edition + '] ';
+  const ok = (name, cond, detail) => ok0(tag + name, cond, detail);
+  const eq = (name, a, b) => eq0(tag + name, a, b);
+  const A = 'web-a' + sfx; const B = 'web-b' + sfx;
+  resetThrottle();
+  await createUser(pool, { loginId: A, password: 'long-enough-a', displayName: '가' });
+  await createUser(pool, { loginId: B, password: 'long-enough-b', displayName: '나' });
+
+  const srv = createOnlineServer({ pool, plan: onlinePlan({ SE2_PORT: '0', SE_EDITION: edition }), denyFrames: true });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const base = 'http://127.0.0.1:' + srv.address().port;
 
@@ -41,7 +51,7 @@ export async function run({ pool, ok, eq }) {
       && /frame-ancestors 'none'/.test(home.headers.get('content-security-policy') || '') && !/script-src[^;]*unsafe/.test(home.headers.get('content-security-policy') || ''));
     {
       // 운영이 아니면(작업 공간 미리보기 iframe) 틀 막기를 켜지 않는다 — 나머지 머리줄은 같다
-      const dev = createOnlineServer({ pool, plan: onlinePlan({}) });
+      const dev = createOnlineServer({ pool, plan: onlinePlan({ SE_EDITION: edition }) });
       await new Promise((r) => dev.listen(0, '127.0.0.1', r));
       const hd = await fetch('http://127.0.0.1:' + dev.address().port + '/healthz');
       ok('스테이징은 iframe 을 막지 않는다', !hd.headers.get('x-frame-options') && !/frame-ancestors/.test(hd.headers.get('content-security-policy') || '') && hd.headers.get('x-content-type-options') === 'nosniff');
@@ -53,18 +63,18 @@ export async function run({ pool, ok, eq }) {
     ok('가입 시도로 계정이 생기지 않는다', (await pool.query("SELECT 1 FROM users WHERE login_id = 'stranger'")).rowCount === 0);
 
     // ---------------- 로그인
-    const wrong = await req('/api/auth/login', { method: 'POST', body: { loginId: 'web-a', password: 'nope-nope-nope' } });
+    const wrong = await req('/api/auth/login', { method: 'POST', body: { loginId: A, password: 'nope-nope-nope' } });
     ok('틀리면 401 · 쿠키 없음', wrong.status === 401 && !wrong.headers.get('set-cookie'));
     for (const who of ['a', 'b']) {
-      const r = await req('/api/auth/login', { method: 'POST', body: { loginId: 'web-' + who, password: 'long-enough-' + who } });
+      const r = await req('/api/auth/login', { method: 'POST', body: { loginId: 'web-' + who + sfx, password: 'long-enough-' + who } });
       const ck = r.headers.get('set-cookie') || '';
       ok('로그인하면 HttpOnly 쿠키(' + who + ')', r.status === 200 && /HttpOnly/.test(ck) && /SameSite=Lax/.test(ck));
       jar[who] = ck.split(';')[0];
     }
-    ok('루프백에서는 Secure 를 달지 않는다(로컬 http)', !/Secure/.test((await req('/api/auth/login', { method: 'POST', body: { loginId: 'web-a', password: 'long-enough-a' } })).headers.get('set-cookie')));
+    ok('루프백에서는 Secure 를 달지 않는다(로컬 http)', !/Secure/.test((await req('/api/auth/login', { method: 'POST', body: { loginId: A, password: 'long-enough-a' } })).headers.get('set-cookie')));
     eq('로그인한 사람이 /login 에 오면 첫 화면으로', (await req('/login', { who: 'a' })).headers.get('location'), '/');
     const me = await (await req('/api/me', { who: 'a' })).json();
-    ok('나는 누구인가', me.ok && me.me.loginId === 'web-a' && me.me.displayName === '가');
+    ok('나는 누구인가', me.ok && me.me.loginId === A && me.me.displayName === '가');
 
     // ---------------- 같은 문 · 같은 응답 꼴
     const miss = await op('a', 'project.create', { name: '', spec: {} });
@@ -78,7 +88,7 @@ export async function run({ pool, ok, eq }) {
     ok('자료는 «자료» 카테고리의 문서로', mat && s.project.categories.some((c) => c.name === '자료' && c.docIds.includes(mat.id)));
     ok('작법서 구획은 개인판처럼 서지 않는다(기본 작법서를 두지 않는다)', !s.project.docs.some((d) => d.src));
     ok('과금 갈래가 화면에 오지 않는다', s.project.auth && s.project.auth.modes.length === 0 && s.project.auth.hasKey === false);
-    ok('목록에 내 작품', s.projects.some((p) => p.id === pid) && s.me.loginId === 'web-a');
+    ok('목록에 내 작품', s.projects.some((p) => p.id === pid) && s.me.loginId === A);
 
     const dc = await op('a', 'doc.create', { pid, title: '플롯', body: '첫 판' });
     ok('문서 만들기', dc.ok && dc.id);
