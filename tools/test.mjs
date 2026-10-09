@@ -2005,11 +2005,12 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 
   // ── 박힌 경로도, 다른 판·옛 폴더의 이름도 없다
   // Core(core/) · Provider(ai/) · 온라인판(online/) 코드도 같은 그물 안에 둔다 — 옮겼다고 규칙이 풀리지 않는다.
-  const coreFiles = (function walk(dir) {
+  const walk = (dir) => {
     if (!existsSync(dir)) return [];
     return readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : /\.(mjs|json)$/.test(e.name) ? [join(dir, e.name)] : []));
-  })(join(ROOT, 'core')).concat(...['ai', 'online'].filter((d) => existsSync(join(ROOT, d)))
-    .map((d) => readdirSync(join(ROOT, d)).filter((f) => f.endsWith('.mjs')).map((f) => join(ROOT, d, f))));
+  };
+  // online/ 은 아래 폴더(online/billing/ …)까지 — 결제 대행 어댑터도 같은 그물 안에
+  const coreFiles = walk(join(ROOT, 'core')).concat(...['ai', 'online'].map((d) => walk(join(ROOT, d)).filter((f) => f.endsWith('.mjs'))));
   const codeFiles = [
     ...readdirSync(HERE).filter((f) => /\.(mjs|json)$/.test(f) && f !== 'test.mjs').map((f) => join(HERE, f)),
     ...coreFiles,
