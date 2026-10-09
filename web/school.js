@@ -446,13 +446,13 @@ const tabRow = (list, cur, pick) => h('div', { class: 'line', style: 'margin:4px
 const toggleRow = (label, on, flip, note) => h('div', { style: 'padding:10px 0;border-bottom:1px solid var(--line-soft)' },
   h('div', { class: 'line' }, h('div', { class: 'name', style: 'flex:1', text: label }), flip ? h('button', { class: 'tg' + (on ? ' on' : ''), onclick: flip }) : h('span', { class: 'mark', text: on ? '켜짐' : '꺼짐' })),
   note ? h('div', { class: 'when', style: 'margin-top:2px', text: note }) : null);
-S.sub = {};
+S.orgTab = {};   // 기관마다 지금 탭(S.sub 는 운영자 구독 형편 — 이름이 겹쳐 보통 사람에게도 구독 상자가 섰다)
 
 function orgView(id) {
   const o = S.orgs[id];
   // 처음 열 때 — AI 키가 없으면 [AI] 부터(그것 없이는 학생 작업이 돌지 않는다), 있으면 [수업]
-  const tab = S.sub[id] || (keyedOf(o.keys).length ? '수업' : 'AI');
-  const go = (t) => { S.sub[id] = t; S.say = ''; render(); };   // 다른 탭으로 가면 앞 탭의 알림은 걷는다
+  const tab = S.orgTab[id] || (keyedOf(o.keys).length ? '수업' : 'AI');
+  const go = (t) => { S.orgTab[id] = t; S.say = ''; render(); };   // 다른 탭으로 가면 앞 탭의 알림은 걷는다
   return h('div', null,
     orgCard(id, go),
     tabRow([['수업', '수업'], ['사용자', '사용자'], ['AI', 'AI'], ['설정', '설정']], tab, go),
@@ -980,7 +980,7 @@ function newOrgView() {
     S.sel = id;
     const bad = [l && !l.ok ? '이용 기간을 열지 못했습니다 — ' + l.error : '', m && !m.ok ? '기관 관리자 계정을 만들지 못했습니다 — ' + m.error : ''].filter(Boolean);
     if (m && m.ok) S.shown['mk-' + id] = m.loginId + ' / ' + (m.password || apw);   // [사용자] 탭에 그대로 보인다(지금만)
-    S.sub[id] = m && m.ok ? '사용자' : 'AI';
+    S.orgTab[id] = m && m.ok ? '사용자' : 'AI';
     S.sayGood = !bad.length;
     S.say = bad.length ? '«' + r.organization.name + '» 기관은 만들었지만 — ' + bad.join(' · ')
       : '«' + r.organization.name + '» 기관을 만들었습니다' + (l ? ' · 이용 기간을 열었습니다' : '') + (m ? ' · 기관 관리자 계정을 만들었습니다(아래 아이디 / 비밀번호를 전해 주세요)' : '') + ' — 다음으로 [AI] 탭에서 키를 넣으세요';

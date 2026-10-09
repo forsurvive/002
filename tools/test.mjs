@@ -370,6 +370,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     const sj = src(join(ROOT, 'web', 'school.js'));
     ok('관리 화면 — 기관마다 탭 넷(수업 · 사용자 · AI · 설정)과 운영 탭', sj.includes("[['수업', '수업'], ['사용자', '사용자'], ['AI', 'AI'], ['설정', '설정']]") && sj.includes("['현황', '현황'], ['감사 기록', '감사 기록']"));
     ok('AI 회사는 키를 넣은 회사만 고른다(관리 · 내 계정 · 작품 설정)', sj.includes('have.has(p) && (!allowed') && sj.includes('keyedOf(keys).filter(') && src(join(ROOT, 'web', 'app.js')).includes('.filter((x) => keys.has(x))'));
+    // 운영자 구독 상자는 운영자에게만 — S.sub 를 다른 표로 쓰면 보통 사람에게도 상자가 섰다(2026-10-09)
+    ok('운영자 구독 형편(S.sub)을 다른 표로 쓰지 않는다', !/S\.sub\s*=\s*\{\}/.test(sj) && !/S\.sub\[/.test(sj) && sj.includes("const v = await edu('me.sub.view'); S.sub = v.ok ? v : null;"));
   }
   ok('초대 · 재설정 코드는 링크로도 보낸다(재설정은 1:1 안내) · 링크로 오면 첫 화면이 코드를 채운다',
     src(join(ROOT, 'web', 'school.js')).includes("'/login?invite='") && src(join(ROOT, 'web', 'school.js')).includes("'/login?reset='") && src(join(ROOT, 'web', 'school.js')).includes('1:1로 보내세요')
