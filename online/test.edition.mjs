@@ -1,10 +1,16 @@
 // 판 스위치 시험 — SE_EDITION=open(자유 가입판)에서 기관 · 수업 · 초대에 딸린 문은 404, 남긴 기능은 그대로. online/test.mjs 가 이어 부른다.
 // 편집기 문 · 격리 · 문지기는 test.server.mjs 가 두 판에서 각각 돈다.
 
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createOnlineServer, onlinePlan } from './server.mjs';
 import { createUser, resetThrottle } from './auth.mjs';
-import { editionOf, eduOpAllowed, SCHOOL_ONLY_OPS, ORG_SCOPED_OPS } from './edition.mjs';
+import { editionOf, eduOpAllowed, isOpenOnlyOp, SCHOOL_ONLY_OPS, ORG_SCOPED_OPS } from './edition.mjs';
 import { createEdu } from './edu.mjs';
+import { createBilling } from './billing/service.mjs';
+
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 export async function run({ pool, ok, eq }) {
   // ---------------- 판 읽기 — 모르는 값은 닫힌 쪽(school)
@@ -19,6 +25,13 @@ export async function run({ pool, ok, eq }) {
     const names = createEdu({ pool }).OP_NAMES;
     const stray = [...SCHOOL_ONLY_OPS, ...ORG_SCOPED_OPS].filter((op) => !names.includes(op));
     ok('판 스위치의 문 이름은 모두 교육기관 문 표에 있다', stray.length === 0, stray.join(' '));
+    ok('이용권 · 결제 문은 자유 가입판에만', isOpenOnlyOp('me.pass') && isOpenOnlyOp('me.pass.checkout') && isOpenOnlyOp('billing.events') && !isOpenOnlyOp('me.key.set')
+      && !eduOpAllowed('school', 'billing.customers') && eduOpAllowed('open', 'billing.customers') && eduOpAllowed('open', 'me.pass'));
+    // 화면(school.js)이 부르는 문은 모두 있는 문이다 — 자유 가입판 문 표(이용권 · 고객 · 결제)까지. 이름이 어긋나면 단추가 404 를 받는다.
+    const used = [...new Set([...readFileSync(join(ROOT, 'web', 'school.js'), 'utf8').matchAll(/edu\('([a-z_.]+)'/g)].map((m) => m[1]))];
+    const all = createEdu({ pool, edition: 'open', billing: createBilling({ pool }) }).OP_NAMES;
+    const missing = used.filter((op) => !all.includes(op));
+    ok('**화면이 부르는 교육기관 문은 모두 문 표에 있다**', used.length > 30 && missing.length === 0, missing.join(' ') || String(used.length));
   }
 
   resetThrottle();

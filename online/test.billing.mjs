@@ -4,6 +4,7 @@ import * as groble from './billing/groble.mjs';
 import { createBilling, passActive, summarize, dayEndPlus, kstDay } from './billing/service.mjs';
 import { createOnlineServer, onlinePlan } from './server.mjs';
 import { createUser, resetThrottle } from './auth.mjs';
+import { maskName, maskPhone, maskEmail } from './billing/admin.mjs';
 
 const SECRET = 'test-groble-secret-' + 'x'.repeat(8);
 // 가이드의 꼴을 따른 본문(값은 지어낸 것)
@@ -92,6 +93,7 @@ export async function run({ pool, ok, eq }) {
     ok('살아 있는 줄 가운데 «이용 중»이 대표 · 결제 실패는 경고로', two.status === 'active' && two.active && two.warn);
     ok('운영자 · 무료 이용은 줄이 없어도 쓸 수 있다', summarize([], { operator: true }).active && summarize([], { free: true }).active);
     eq('그날 끝(한국) + 여유 10일', dayEndPlus('2026-11-09', 10).toISOString(), '2026-11-19T15:00:00.000Z');
+    ok('가리기 — 이름 · 전화 · 이메일', maskName('홍길동') === '홍*동' && maskName('김수') === '김*' && maskPhone('010-1234-5678') === '***-****-5678' && maskEmail('Buyer@Example.com') === 'Bu***@Example.com' && maskEmail('') === '');
   }
 
   // ---------------- 받는 문 · 반영 · 이용권 검사(자유 가입판)
@@ -288,6 +290,101 @@ export async function run({ pool, ok, eq }) {
     const free = await mk('bl-free');
     await pool.query('INSERT INTO billing_customers (user_id, free) VALUES ($1, true)', [free.id]);
     ok('무료 이용 계정은 결제 없이 쓴다', await passActive(pool, free.id));
+
+    // ================================================================ 운영 화면 — 고객 · 결제 관리(최상위 운영자만)
+    {
+      eq('**보통 사람에게 고객 목록은 없다(403)**', (await edu('bl-buyer', 'billing.customers')).status, 403);
+      eq('보통 사람은 남의 이용권을 늘리지 못한다(403)', (await edu('bl-buyer', 'billing.extend', { userId: buyer.id, days: 30 })).status, 403);
+      {
+        const school = createOnlineServer({ pool, plan: onlinePlan({}) });
+        await new Promise((r) => school.listen(0, '127.0.0.1', r));
+        const lr = await fetch('http://127.0.0.1:' + school.address().port + '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loginId: 'bl-root', password: 'long-enough-bl-root' }) });
+        const ck = (lr.headers.get('set-cookie') || '').split(';')[0];
+        const call = async (op) => (await fetch('http://127.0.0.1:' + school.address().port + '/api/edu', { method: 'POST', headers: { 'content-type': 'application/json', cookie: ck }, body: JSON.stringify({ op }) })).status;
+        ok('**교육기관판에는 이용권 · 고객 · 결제 문이 없다(404)**', (await call('me.pass')) === 404 && (await call('billing.customers')) === 404 && (await call('billing.events')) === 404);
+        await new Promise((r) => school.close(r));
+      }
+
+      // ---------------- 고객 목록 · 찾기 · 거르기
+      const all = await edu('bl-root', 'billing.customers', { q: 'bl-' });
+      const row = (id) => all.customers.find((c) => c.loginId === id) || {};
+      ok('**고객 목록 — 아이디 · 가입일 · 이용권 상태 · 기한 · 다음 결제일**', all.ok && row('bl-buyer').status === 'active' && !!row('bl-buyer').nextBilling && row('bl-root').operator === true && row('bl-free').free === true, JSON.stringify(row('bl-buyer')));
+      eq('찾기(아이디 일부)', (await edu('bl-root', 'billing.customers', { q: 'bl-buy' })).customers.map((c) => c.loginId).join(), 'bl-buyer');
+      ok('상태로 거르기 — 무료 이용', (await edu('bl-root', 'billing.customers', { q: 'bl-', status: 'free' })).customers.every((c) => c.free) && (await edu('bl-root', 'billing.customers', { q: 'bl-', status: 'free' })).total >= 1);
+      ok('상태로 거르기 — 없음', (await edu('bl-root', 'billing.customers', { q: 'bl-', status: 'none' })).customers.every((c) => c.status === 'none'));
+      const one = (await edu('bl-root', 'billing.customer', { userId: buyer.id })).customer;
+      ok('**한 사람 — 이용권 줄 · 결제 기록(이름 · 전화 · 이메일은 가려서)**', one.subscriptions.length >= 3 && one.events.length >= 3 && one.events.some((e) => e.buyer.name === '홍*동' && e.buyer.email === 'Bu***@Example.com' && e.buyer.phone === '***-****-5678')
+        && !JSON.stringify(one).includes('010-1234-5678') && !JSON.stringify(one).includes('Buyer@Example.com'));
+
+      // ---------------- 손으로 바꾸기 — 연장 · 끝내기 · 무료 이용 · 메모(모두 감사 기록)
+      const audits = async (action) => ((await pool.query('SELECT details FROM audit_logs WHERE action = $1 ORDER BY id DESC LIMIT 1', [action])).rows[0] || {}).details || {};
+      const before2 = (await pool.query('SELECT max(paid_until) AS m FROM subscriptions WHERE user_id = $1', [other.id])).rows[0].m;
+      const ext = await edu('bl-root', 'billing.extend', { userId: other.id, days: 30, reason: '웹훅이 끊긴 동안 메움' });
+      ok('**[기간 연장] — 지금 기한부터 30일 더(손 연장 줄)**', ext.ok && Math.abs(new Date(ext.paidUntil) - (new Date(before2).getTime() + 30 * 86400000)) < 5000 && (await audits('billing.extend')).reason === '웹훅이 끊긴 동안 메움');
+      eq('연장 일수는 1~3650', (await edu('bl-root', 'billing.extend', { userId: other.id, days: 0 })).status, 422);
+      ok('**[이용권 끝내기] — 곧바로 막힌다(감사 기록)**', (await edu('bl-root', 'billing.end', { userId: other.id, reason: '환불' })).ok && !(await passActive(pool, other.id)) && (await audits('billing.end')).reason === '환불');
+      ok('[무료 이용 켜기] — 결제 없이 쓴다', (await edu('bl-root', 'billing.free', { userId: other.id, on: true })).ok && (await passActive(pool, other.id)));
+      ok('[무료 이용 끄기]', (await edu('bl-root', 'billing.free', { userId: other.id, on: false })).ok && !(await passActive(pool, other.id)));
+      ok('메모 — 저장되고 감사 기록에는 길이만', (await edu('bl-root', 'billing.memo', { userId: other.id, memo: '전화로 환불 요청함' })).ok
+        && (await edu('bl-root', 'billing.customer', { userId: other.id })).customer.user.memo === '전화로 환불 요청함' && !JSON.stringify(await audits('billing.memo')).includes('환불'));
+      eq('없는 사람은 404', (await edu('bl-root', 'billing.customer', { userId: '00000000-0000-0000-0000-000000000000' })).status, 404);
+
+      // ---------------- 결제 기록 — 확인 필요 · [이 계정에 연결] · [무시]
+      const E = await edu('bl-root', 'billing.events');
+      ok('**결제 기록 — «확인 필요»(연결 안 됨 · 금액 다름 · 읽지 못함)를 따로**', E.ok && ['unlinked', 'amount_mismatch', 'unreadable'].every((r) => E.review.some((e) => e.result === r)) && E.recent.length > 0);
+      ok('이번 달 반영된 결제 수 · 합계(운영자에게만)', E.month.count >= 3 && E.month.total >= 15000);
+      ok('결제 기록도 가려서', !JSON.stringify(E).includes('010-1234-5678'));
+      const evId = async (where, args) => Number((await pool.query('SELECT id FROM billing_events WHERE ' + where + ' ORDER BY id DESC LIMIT 1', args)).rows[0].id);
+      const unlinkedId = await evId(`ref = 'unknown-ref-1'`, []);
+      const lk = await edu('bl-root', 'billing.link', { eventId: unlinkedId, loginId: 'bl-other', reason: '고객이 결제 내역을 보내옴' });
+      ok('**[이 계정에 연결] — 그 사람에게 반영되고 확인 필요에서 내려간다**', lk.ok && lk.result === 'applied' && (await passActive(pool, other.id))
+        && (await pool.query('SELECT review, user_id FROM billing_events WHERE id = $1', [unlinkedId])).rows[0].review === false);
+      await hook(ev('subscription_payment.completed', 'unknown-ref-1', 130, { subscription: { billingReason: 'RENEWAL', nextBillingDate: day(62) } }));
+      ok('**연결한 참조값은 기억한다 — 다음 갱신부터 저절로 잇는다**', (await lastEvent()).user_id === other.id && (await lastEvent()).result === 'applied');
+      const takenId = await evId(`ref = $1 AND result = 'amount_mismatch'`, [ref2]);
+      eq('다른 사람에게 묶인 참조값의 결제는 다른 계정에 연결하지 못한다(409)', (await edu('bl-root', 'billing.link', { eventId: takenId, loginId: 'bl-other' })).status, 409);
+      eq('읽지 못한 꼴은 연결하지 못한다(422)', (await edu('bl-root', 'billing.link', { eventId: await evId(`result = 'unreadable' AND type = ''`, []), loginId: 'bl-other' })).status, 422);
+      await hook(ev('subscription_payment.completed', '', 140, { buyer: { email: 'alias@example.com' }, subscription: { billingReason: 'INITIAL', nextBillingDate: day(31) } }));
+      const aliasId = await evId(`result = 'unlinked'`, []);
+      ok('참조값 · 이메일 없는 결제는 연결 안 됨', (await lastEvent()).result === 'unlinked');
+      ok('참조값이 없는 결제를 연결하면 구매자 이메일을 기억한다', (await edu('bl-root', 'billing.link', { eventId: aliasId, loginId: 'bl-free' })).ok);
+      await hook(ev('subscription_payment.completed', '', 150, { buyer: { email: 'ALIAS@example.com' }, subscription: { billingReason: 'RENEWAL', nextBillingDate: day(62) } }));
+      ok('**다음부터 그 이메일의 결제는 저절로 그 사람에게**', (await lastEvent()).user_id === free.id && (await lastEvent()).result === 'applied');
+      const ig = await evId(`result = 'amount_mismatch' AND review`, []);
+      ok('[무시] — 확인 필요에서 내린다(기록은 그대로 · 감사 기록)', (await edu('bl-root', 'billing.ignore', { eventId: ig, reason: '할인 결제' })).ok
+        && (await pool.query('SELECT review, result FROM billing_events WHERE id = $1', [ig])).rows[0].review === false && (await audits('billing.ignore')).reason === '할인 결제');
+
+      // ---------------- 웹훅 상태
+      await pool.query(`INSERT INTO subscriptions (user_id, provider, ref, status, paid_until, next_billing_date, occurred_at) VALUES ($1, 'groble', 'overdue-ref', 'active', now() + interval '5 days', current_date - 5, now())`, [free.id]);
+      const H = (await edu('bl-root', 'billing.health')).health;
+      ok('**웹훅 상태 — 시크릿 있음 · 마지막으로 받은 때 · 서명이 틀린 요청 · 소식이 늦은 정기결제**', H.secret.current === true && !!H.lastReceivedAt && H.rejected >= 2 && H.overdue >= 1 && H.path === '/api/billing/groble' && !JSON.stringify(H).includes(SECRET));
+
+      // ---------------- 결제 옵션(요금제)
+      eq('결제창 링크는 https 만', (await edu('bl-root', 'billing.plan.save', { name: '잘못', checkoutUrl: 'http://x.example/pay', price: 5000 })).status, 422);
+      const np = await edu('bl-root', 'billing.plan.save', { name: '월 이용권(새 가격)', checkoutUrl: 'https://www.groble.im/pay/se-month-2', price: 6000, cycleMonths: 1, productId: '', sortOrder: 2 });
+      ok('결제 옵션을 넣는다', np.ok && np.plans.some((p) => p.price === 6000));
+      eq('**가격은 바꾸지 못한다 — 새 줄을 넣고 옛 줄을 끈다**', (await edu('bl-root', 'billing.plan.save', { id: np.plan.id, price: 7000 })).status, 422);
+      ok('상품 번호는 비어 있을 때 한 번 채운다', (await edu('bl-root', 'billing.plan.save', { id: np.plan.id, productId: 'C-88' })).ok
+        && (await edu('bl-root', 'billing.plan.save', { id: np.plan.id, productId: 'C-99' })).status === 422);
+      ok('옛 줄을 끈다 — 사용자의 [결제하기]에서 빠진다', (await edu('bl-root', 'billing.plan.save', { id: plan.id, enabled: false })).ok
+        && (await edu('bl-buyer', 'me.pass')).pass.plans.map((p) => p.name).join() === '월 이용권(새 가격)');
+      await hook(ev('subscription_payment.completed', ref2, 160, { subscription: { billingReason: 'RENEWAL', nextBillingDate: day(93) } }));
+      ok('**꺼진 옛 상품의 갱신도 계속 받는다**', (await lastEvent()).result === 'applied' && (await subOf(ref2)).nbd === day(93));
+      eq('보통 사람에게 결제 옵션(금액)은 없다', (await edu('bl-buyer', 'billing.plans')).status, 403);
+
+      // ---------------- 이용 규칙
+      eq('여유는 0~60일', (await edu('bl-root', 'billing.rules.save', { trialDays: 0, graceDays: 100 })).status, 422);
+      const rs = await edu('bl-root', 'billing.rules.save', { trialDays: 2, graceDays: 7 });
+      ok('이용 규칙 저장 — 막는 범위는 «새 AI 작업만»(바꿀 수 없다)', rs.ok && (await edu('bl-root', 'billing.rules')).rules.graceDays === 7 && (await edu('bl-root', 'billing.rules')).rules.blocks === 'ai');
+      await pool.query(`DELETE FROM app_settings WHERE key = 'billing.rules'`);
+
+      // ---------------- 비밀번호를 잊었을 때 — 운영자가 재설정 코드(자유 가입판에는 «윗사람»이 없다)
+      eq('보통 사람은 재설정 코드를 못 만든다', (await edu('bl-buyer', 'user.reset_code', { userId: other.id })).status, 403);
+      eq('운영자 계정은 이 길로 되찾지 않는다', (await edu('bl-root', 'user.reset_code', { userId: (await pool.query("SELECT id FROM users WHERE login_id = 'bl-root'")).rows[0].id })).status, 422);
+      const rc = await edu('bl-root', 'user.reset_code', { userId: other.id });
+      const pr = await fetch(base + '/api/edu', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'password.reset', loginId: 'bl-other', code: rc.resetCode, password: 'brand-new-other-pw' }) });
+      ok('**운영자가 준 재설정 코드로 새 비밀번호를 정하고 들어간다**', rc.ok && pr.status === 200 && /se_session=/.test(pr.headers.get('set-cookie') || ''));
+    }
 
     // ---------------- 지킨 것 — 410 을 돌려준 적이 없다 · 로그에 개인정보 없음
     ok('**받는 문은 410 을 돌려주지 않는다**', ![...codes].includes(410) && [...codes].every((c) => [200, 401, 429, 503].includes(c)), [...codes].join(','));

@@ -520,6 +520,8 @@ const ACT = {
   'member.remove': '사용자 뺌', 'member.reset_password': '비밀번호 재설정', 'workflow.save': '단계 고침', 'project.create': '작품 만듦', 'project.delete': '작품 지움',
   'project.copy_personal': '개인 작품으로 복사', 'project.import': '작품 가져옴', 'ai.choose': 'AI 회사 고름', 'auth.login': '로그인', 'auth.login_failed': '로그인 실패',
   'auth.password_changed': '비밀번호 바꿈', 'user.status': '계정 상태', 'admin.password_reset': '비밀번호 재설정(도구)', 'admin.user_created': '계정 만듦(도구)', 'setup.first_admin': '첫 관리자 만듦',
+  'auth.signup': '가입', 'user.reset_code': '비밀번호 재설정 코드', 'billing.extend': '이용 기간 연장', 'billing.end': '이용권 끝냄', 'billing.free': '무료 이용', 'billing.memo': '고객 메모',
+  'billing.link': '결제 연결', 'billing.ignore': '결제 무시', 'billing.plan_create': '결제 옵션 넣음', 'billing.plan_update': '결제 옵션 고침', 'billing.rules': '이용 규칙',
 };
 const when = (t) => (t ? new Date(t).toLocaleString() : '');
 async function toggleAudit(key, orgId) {
@@ -1047,6 +1049,253 @@ function wfEditor(orgId) {
   }), close());
 }
 
+// ---------------------------------------------------------------- 고객 · 결제 관리(자유 가입판 — 최상위 운영자만, docs/OPEN_EDITION.md §4-6)
+// 고객(이용권 상태 · 손 연장 · 끝내기 · 무료 이용 · 계정 정지 · 메모) · 결제 기록(확인 필요 · 웹훅 상태) · 결제 옵션(요금제) · 이용 규칙.
+// 금액 · 매출은 이 화면에만. 결제 기록의 이름 · 전화 · 이메일은 서버가 가려서 보낸다. 카드 청구(정기결제)는 여기서 끊지 않는다 — 그로블 판매 관리에서.
+
+S.bill = { cust: { q: '', status: '', list: null, total: 0, open: '', detail: null }, events: null, health: null, plans: null, rules: null };
+const PASS_SAY = { active: '이용 중', past_due: '결제 실패', cancel_pending: '해지 예정', ended: '끝남', none: '없음', free: '무료 이용' };
+const PROV_SAY = { groble: '정기결제', manual: '운영자 연장', trial: '무료 체험' };
+const TYPE_SAY = {
+  'subscription_payment.completed': '정기결제 결제', 'subscription_payment.failed': '갱신 실패', 'subscription.cancel_requested': '해지 예고', 'subscription.terminated': '해지 완료',
+  'subscription_payment.refunded': '회차 환불', 'payment.completed': '단건 결제', 'payment.cancel_requested': '단건 취소 요청', 'payment.refunded': '단건 환불',
+};
+const RESULT_SAY = { applied: '반영', stale: '늦게 온 소식(기록만)', recorded: '기록만', unlinked: '연결 안 됨', amount_mismatch: '금액 · 상품 다름', unreadable: '읽지 못함', pending: '처리 중' };
+const won = (n) => (n == null ? '' : Number(n).toLocaleString('ko-KR') + '원');
+
+async function loadCustomers(more = false) {
+  const f = S.bill.cust;
+  f.loading = true;
+  const r = await edu('billing.customers', { q: f.q, status: f.status, offset: more ? (f.list || []).length : 0 });
+  f.loading = false;
+  if (!r.ok) return tell(r.error);
+  f.list = more ? [...(f.list || []), ...r.customers] : r.customers;
+  f.total = r.total;
+  render();
+}
+async function openCustomer(userId) {
+  const f = S.bill.cust;
+  if (f.open === userId && f.detail) { f.open = ''; f.detail = null; return render(); }
+  const r = await edu('billing.customer', { userId });
+  if (!r.ok) return tell(r.error);
+  f.open = userId; f.detail = r.customer;
+  render();
+}
+const passText = (c) => (c.free ? '무료 이용' : PASS_SAY[c.status] || c.status);
+
+function customerDetail(d) {
+  const u = d.user;
+  const k = 'cd-' + u.userId;
+  const reason = () => val(k + '-why');
+  const reload = async (say) => { const r = await edu('billing.customer', { userId: u.userId }); if (r.ok) S.bill.cust.detail = r.customer; S.bill.cust.list = null; done(say); };
+  const act = async (op, body, say, ask) => {
+    if (ask && !confirm(ask)) return;
+    const r = await edu(op, { userId: u.userId, reason: reason(), ...body });
+    if (!r.ok) return tell(r.error);
+    await reload(typeof say === 'function' ? say(r) : say);
+  };
+  const resetCode = async () => {
+    const r = await edu('user.reset_code', { userId: u.userId });
+    if (!r.ok) return tell(r.error);
+    S.shown['mk-reset-' + u.userId] = r.loginId + ' / 재설정 코드 ' + r.resetCode;
+    S.bill.cust.resetLink = resetUrl(r.resetCode, r.loginId);
+    done('재설정 코드를 만들었습니다(' + r.days + '일 · 한 번) — 본인에게만 1:1로 보내세요');
+  };
+  const p = d.pass;
+  return h('div', { class: 'card-box', style: 'margin:6px 0 12px' },
+    h('div', { class: 'line' },
+      h('div', { class: 'name', style: 'flex:1;font-weight:700', text: (u.name || u.loginId) + ' · ' + u.loginId }),
+      u.operator ? h('span', { class: 'mark', text: '운영자' }) : null,
+      u.accountStatus !== 'active' ? h('span', { class: 'mark', style: 'color:var(--red)', text: '정지됨' }) : null),
+    h('div', { class: 'when', text: '가입 ' + day(u.createdAt) + (u.lastLoginAt ? ' · 마지막 로그인 ' + day(u.lastLoginAt) : '') }),
+    h('div', { class: 'lab', text: '이용권' }),
+    h('div', { class: 'notice' + (p.active ? ' good' : ''), text: (p.operator ? '운영자 — 이용권 없이' : p.free ? '무료 이용' : PASS_SAY[p.status] || p.status)
+      + (p.paidUntil && !p.free && !p.operator ? ' · 기한 ' + when(p.paidUntil) : '') + (p.nextBillingDate ? ' · 다음 결제일 ' + p.nextBillingDate : '') + (p.serviceEndsAt ? ' · ' + when(p.serviceEndsAt) + ' 해지' : '') }),
+    d.subscriptions.length ? d.subscriptions.map((s) => h('div', { class: 'row', style: 'cursor:default' },
+      h('div', { class: 'name', text: (PROV_SAY[s.provider] || s.provider) + (s.plan ? ' · ' + s.plan : '') + (s.ref ? ' · 참조 ' + s.ref : '') }),
+      h('span', { class: 'mark', text: PASS_SAY[s.status] || s.status }),
+      h('div', { class: 'when', text: (s.paidUntil ? '~ ' + when(s.paidUntil) : '') + (s.lastPaidAt ? ' · 마지막 결제 ' + day(s.lastPaidAt) + (s.lastAmount ? ' ' + won(s.lastAmount) : '') : '') }))) : h('div', { class: 'when', text: '이용권 기록이 없습니다' }),
+    h('div', { class: 'lab', text: '결제 기록(이름 · 전화 · 이메일은 가림)' }),
+    d.events.length ? d.events.map((e) => h('div', { class: 'row', style: 'cursor:default' },
+      h('div', { class: 'name', text: (TYPE_SAY[e.type] || e.type || '?') + (e.amount ? ' · ' + won(e.amount) : '') + ' · ' + (RESULT_SAY[e.result] || e.result) }),
+      h('div', { class: 'when', text: when(e.occurredAt || e.receivedAt) + (e.buyer.email ? ' · ' + e.buyer.email : '') }))) : h('div', { class: 'when', text: '받은 결제가 없습니다' }),
+    h('div', { class: 'lab', text: '손으로 바꾸기 — 모두 감사 기록에 남습니다' }),
+    field('왜(감사 기록에 남습니다)', k + '-why', 'text', { placeholder: '예: 웹훅이 끊긴 동안 메움' }),
+    h('div', { class: 'line', style: 'margin-top:8px;align-items:center' },
+      h('input', { id: k + '-days', type: 'text', value: '30', style: 'width:70px' }), h('span', { class: 'when', text: '일' }),
+      h('button', { class: 'btn-line', text: '기간 연장', onclick: () => {
+        const days = Number(val(k + '-days'));
+        act('billing.extend', { days }, (r) => days + '일 연장했습니다 — ' + when(r.paidUntil) + '까지');
+      } }),
+      h('button', { class: 'btn-text red', text: '이용권 끝내기', onclick: () => act('billing.end', {}, '이용권을 끝냈습니다', (u.name || u.loginId) + ' — 이용권을 지금 끝낼까요? 새 AI 작업이 곧바로 막힙니다(작품은 그대로).\n그로블의 카드 청구는 끊기지 않습니다 — 끊으려면 그로블 판매 관리에서.') }),
+      h('button', { class: 'btn-line', text: u.free ? '무료 이용 끄기' : '무료 이용 켜기', onclick: () => act('billing.free', { on: !u.free }, u.free ? '무료 이용을 껐습니다' : '무료 이용을 켰습니다 — 결제 없이 씁니다') }),
+      u.operator ? null : h('button', { class: 'btn-text' + (u.accountStatus === 'active' ? ' red' : ''), text: u.accountStatus === 'active' ? '계정 정지' : '정지 풀기', onclick: async () => {
+        const to = u.accountStatus === 'active' ? 'disabled' : 'active';
+        if (to === 'disabled' && !confirm(u.loginId + ' — 계정을 멈출까요? 곧바로 로그아웃되고 다시 열 때까지 들어올 수 없습니다.')) return;
+        const r = await edu('user.status', { loginId: u.loginId, status: to });
+        if (!r.ok) return tell(r.error);
+        await reload(to === 'disabled' ? '계정을 멈췄습니다' : '계정을 다시 열었습니다');
+      } }),
+      u.operator ? null : h('button', { class: 'btn-text', text: '비밀번호 재설정 코드', onclick: resetCode })),
+    codeBox('mk-reset-' + u.userId, '본인에게만 1:1로 보내세요 · 7일 · 한 번'),
+    S.shown['mk-reset-' + u.userId] && S.bill.cust.resetLink ? h('div', { class: 'line' }, linkBtns(S.bill.cust.resetLink, '스토리 엔진 비밀번호 재설정')) : null,
+    h('div', { class: 'lab', text: '메모(운영자만 봅니다)' }),
+    h('textarea', { id: k + '-memo', placeholder: '이 고객에 대한 메모' }),
+    h('div', { class: 'line', style: 'margin-top:6px' }, h('button', { class: 'btn-line', text: '메모 저장', onclick: async () => {
+      const r = await edu('billing.memo', { userId: u.userId, memo: $(k + '-memo').value });
+      if (!r.ok) return tell(r.error);
+      u.memo = $(k + '-memo').value; done('메모를 저장했습니다');
+    } })),
+    h('div', { class: 'when', text: '카드 청구(정기결제)는 여기서 끊기지 않습니다 — 해지 · 환불은 그로블 «판매 관리»에서 합니다.' }));
+}
+
+function customersTab() {
+  const f = S.bill.cust;
+  if (!f.list && !f.loading) loadCustomers();
+  const search = () => { f.q = val('cu-q'); f.open = ''; f.detail = null; loadCustomers(); };
+  // 메모 칸은 그리기가 끝난 뒤 한 번만 채운다(치던 글을 덮지 않게)
+  if (f.detail) setTimeout(() => { const n = $('cd-' + f.detail.user.userId + '-memo'); if (n && !n.dataset.filled) { n.value = f.detail.user.memo || ''; n.dataset.filled = '1'; } }, 0);
+  return h('div', null,
+    h('div', { class: 'line', style: 'align-items:flex-end' },
+      field('찾기(아이디 · 이름)', 'cu-q', 'text', { autocapitalize: 'none', spellcheck: 'false', onkeydown: (e) => { if (e.key === 'Enter') search(); } }),
+      h('button', { class: 'btn-line', text: '찾기', onclick: search })),
+    h('div', { class: 'line', style: 'margin:8px 0' }, [['', '전체'], ...Object.entries(PASS_SAY)].map(([k, n]) => h('button', {
+      class: f.status === k ? 'btn' : 'btn-line', text: n, onclick: () => { f.status = k; f.open = ''; f.detail = null; loadCustomers(); },
+    }))),
+    !f.list ? h('div', { class: 'when', text: '불러오는 중…' }) : [
+      h('div', { class: 'when', text: f.total + '명' }),
+      f.list.map((c) => [
+        h('div', { class: 'row', onclick: () => openCustomer(c.userId) },
+          h('div', { class: 'name', text: (c.name || c.loginId) + ' · ' + c.loginId }),
+          c.operator ? h('span', { class: 'mark', text: '운영자' }) : null,
+          c.accountStatus !== 'active' ? h('span', { class: 'mark', style: 'color:var(--red)', text: '정지됨' }) : null,
+          c.operator ? null : h('span', { class: 'mark', style: c.status === 'past_due' ? 'color:var(--red)' : '', text: passText(c) }),
+          c.hasMemo ? h('span', { class: 'mark', text: '메모' }) : null,
+          h('div', { class: 'when', text: '가입 ' + day(c.createdAt) + (c.until && c.status !== 'none' ? ' · 기한 ' + day(c.until) : '') + (c.nextBilling ? ' · 다음 결제 ' + c.nextBilling : '') + (c.lastPaidAt ? ' · 마지막 결제 ' + day(c.lastPaidAt) : '') })),
+        f.open === c.userId && f.detail ? customerDetail(f.detail) : null,
+      ]),
+      f.list.length < f.total ? h('button', { class: 'btn-line', style: 'margin-top:8px', text: '더 보기', onclick: () => loadCustomers(true) }) : null,
+    ]);
+}
+
+async function loadEvents() {
+  const [ev, he] = await Promise.all([edu('billing.events'), edu('billing.health')]);
+  if (!ev.ok) return tell(ev.error);
+  S.bill.events = ev; S.bill.health = he.ok ? he.health : null;
+  render();
+}
+function eventRow(e, actions) {
+  return h('div', { style: 'padding:8px 0;border-bottom:1px solid var(--line-soft)' },
+    h('div', { class: 'line' },
+      h('div', { class: 'name', style: 'flex:1', text: (TYPE_SAY[e.type] || e.type || '?') + (e.amount ? ' · ' + won(e.amount) : '') }),
+      h('span', { class: 'mark', style: e.review ? 'color:var(--red)' : '', text: RESULT_SAY[e.result] || e.result }),
+      e.user ? h('span', { class: 'mark', text: e.user.loginId }) : null,
+      h('div', { class: 'when', text: when(e.occurredAt || e.receivedAt) })),
+    h('div', { class: 'when', style: 'white-space:normal', text: [e.note, e.buyer.name, e.buyer.email, e.buyer.phone, e.contentId ? '상품 ' + e.contentId : '', e.merchantUid ? '결제 건 ' + e.merchantUid : '', e.ref ? '참조 ' + e.ref : ''].filter(Boolean).join(' · ') }),
+    actions || null);
+}
+function eventsTab() {
+  if (!S.bill.events && !S.bill.loadingEvents) { S.bill.loadingEvents = true; loadEvents().finally(() => { S.bill.loadingEvents = false; }); }
+  const E = S.bill.events; const H = S.bill.health;
+  if (!E) return h('div', { class: 'when', text: '불러오는 중…' });
+  const link = async (e) => {
+    const loginId = val('lk-' + e.id);
+    if (!loginId) return tell('연결할 계정의 아이디를 적어 주세요');
+    if (!confirm('이 결제를 ' + loginId + ' 계정에 반영할까요? (금액 검사 없이 — 확인한 뒤에)')) return;
+    const r = await edu('billing.link', { eventId: e.id, loginId, reason: val('lk-why-' + e.id) });
+    if (!r.ok) return tell(r.error);
+    S.bill.events = null; S.bill.cust.list = null;
+    done(r.loginId + ' — ' + (RESULT_SAY[r.result] || r.result) + (r.note ? ' · ' + r.note : ''));
+  };
+  const ignore = async (e) => {
+    const r = await edu('billing.ignore', { eventId: e.id, reason: val('lk-why-' + e.id) });
+    if (!r.ok) return tell(r.error);
+    S.bill.events = null; done('확인 필요에서 내렸습니다(기록은 그대로)');
+  };
+  const hookUrl = location.origin + '/api/billing/groble';
+  const lastAgo = H && H.lastReceivedAt ? (Date.now() - new Date(H.lastReceivedAt).getTime()) / 86400000 : null;
+  return h('div', null,
+    H ? h('div', { class: 'card-box', style: 'margin-bottom:14px' },
+      h('div', { class: 'lab', text: '웹훅 상태' }),
+      h('div', { class: H.secret.current ? 'when' : 'notice', text: H.secret.current ? '시크릿 있음' + (H.secret.previous ? ' · 교체 중(옛 시크릿도 받음)' : '') : '시크릿 없음 — 웹훅을 받지 못합니다(Secrets 의 GROBLE_WEBHOOK_SECRET)' + (H.noSecret ? ' · 그사이 온 요청 ' + H.noSecret + '건(그로블이 다시 보냅니다)' : '') }),
+      h('div', { class: 'line' }, h('div', { class: 'mark', style: 'font-size:13px;padding:4px 8px;word-break:break-all;white-space:normal', text: hookUrl }), copyBtn(hookUrl), h('span', { class: 'when', text: '← 그로블 «내 스토어 → 연동»에 넣는 주소' })),
+      h('div', { class: 'when', text: '마지막으로 받은 때: ' + (H.lastReceivedAt ? when(H.lastReceivedAt) : '아직 없음') }),
+      H.rejected ? h('div', { class: 'notice', text: '서명이 맞지 않은 요청 ' + H.rejected + '건(마지막 ' + when(H.rejectedAt) + ') — 그로블의 시크릿과 Secrets 의 값이 같은지 확인해 주세요' }) : null,
+      H.overdue ? h('div', { class: 'notice', text: '다음 결제일이 지났는데 소식이 없는 정기결제 ' + H.overdue + '건 — 웹훅이 끊겼을 수 있습니다(그로블 «연동»에서 확인 · 다시 켜기, 그동안은 고객 탭의 [기간 연장]으로 메움)' }) : null,
+      lastAgo != null && lastAgo > 3 && !H.overdue ? h('div', { class: 'when', text: '사흘 넘게 받은 웹훅이 없습니다 — 그로블은 20건 연속 실패 + 3일이면 엔드포인트를 끕니다' }) : null,
+      h('div', { class: 'when', text: '이번 달 반영된 결제 ' + E.month.count + '건 · ' + won(E.month.total) })) : null,
+    h('div', { class: 'lab', text: '확인 필요 ' + E.review.length + '건' }),
+    E.review.length ? E.review.map((e) => eventRow(e, h('div', { class: 'line', style: 'margin-top:6px;align-items:center' },
+      h('input', { id: 'lk-' + e.id, type: 'text', placeholder: '연결할 아이디', autocapitalize: 'none', spellcheck: 'false', style: 'width:150px', value: e.user ? e.user.loginId : '' }),
+      h('button', { class: 'btn-line', text: '이 계정에 연결', onclick: () => link(e) }),
+      h('input', { id: 'lk-why-' + e.id, type: 'text', placeholder: '왜(감사 기록)', style: 'flex:1;min-width:120px' }),
+      h('button', { class: 'btn-text', text: '무시', onclick: () => ignore(e) })))) : h('div', { class: 'when', text: '없음' }),
+    h('div', { class: 'lab', style: 'margin-top:16px', text: '받은 웹훅(최근 100)' }),
+    E.recent.length ? E.recent.map((e) => eventRow(e)) : h('div', { class: 'when', text: '아직 없습니다' }),
+    h('button', { class: 'btn-text', style: 'margin-top:8px', text: '다시 불러오기', onclick: () => { S.bill.events = null; render(); } }));
+}
+
+async function loadPlans() {
+  const r = await edu('billing.plans');
+  if (!r.ok) return tell(r.error);
+  S.bill.plans = r.plans; render();
+}
+function plansTab() {
+  if (!S.bill.plans && !S.bill.loadingPlans) { S.bill.loadingPlans = true; loadPlans().finally(() => { S.bill.loadingPlans = false; }); }
+  const P = S.bill.plans;
+  if (!P) return h('div', { class: 'when', text: '불러오는 중…' });
+  const save = async (body, say) => { const r = await edu('billing.plan.save', body); if (!r.ok) return tell(r.error); S.bill.plans = r.plans; S.open.planEdit = ''; S.open.planNew = false; done(say); };
+  const add = () => save({ name: val('pl-name'), checkoutUrl: val('pl-url'), price: Number(val('pl-price')), cycleMonths: Number(val('pl-months') || 1), productId: val('pl-product'), sortOrder: Number(val('pl-order') || 0) },
+    '결제 옵션을 넣었습니다 — 사용자의 «내 계정 → 이용권»에 [결제하기]가 섭니다');
+  return h('div', null,
+    P.length ? P.map((p) => h('div', { style: 'padding:10px 0;border-bottom:1px solid var(--line-soft)' + (p.enabled ? '' : ';opacity:.6') },
+      h('div', { class: 'line' },
+        h('div', { class: 'name', style: 'flex:1;font-weight:600', text: p.name }),
+        h('span', { class: 'mark', text: won(p.price) + ' / ' + p.cycleMonths + '개월' }),
+        h('span', { class: 'mark', text: p.productId ? '상품 ' + p.productId : '상품 번호 없음(금액만 견줌)' }),
+        h('button', { class: 'tg' + (p.enabled ? ' on' : ''), title: p.enabled ? '켜짐' : '꺼짐', onclick: () => save({ id: p.id, enabled: !p.enabled }, p.enabled ? '껐습니다 — 새 결제는 받지 않고, 이 상품을 쓰던 사람의 갱신은 계속 받습니다' : '켰습니다') }),
+        h('button', { class: 'btn-text', text: S.open.planEdit === p.id ? '닫기' : '고치기', onclick: () => { S.open.planEdit = S.open.planEdit === p.id ? '' : p.id; render(); } })),
+      h('div', { class: 'when', style: 'word-break:break-all;white-space:normal', text: p.checkoutUrl + ' · 차례 ' + p.sortOrder }),
+      S.open.planEdit === p.id ? h('div', { class: 'line', style: 'margin-top:8px;align-items:flex-end' },
+        field('이름', 'pe-name-' + p.id, 'text', { value: p.name }),
+        field('그로블 결제창 링크', 'pe-url-' + p.id, 'text', { value: p.checkoutUrl, spellcheck: 'false' }),
+        p.productId ? null : field('상품 번호(웹훅의 content.id — 한 번만)', 'pe-product-' + p.id, 'text', { spellcheck: 'false' }),
+        field('차례', 'pe-order-' + p.id, 'text', { value: String(p.sortOrder) }),
+        h('button', { class: 'btn-line', text: '저장', onclick: () => save({ id: p.id, name: val('pe-name-' + p.id), checkoutUrl: val('pe-url-' + p.id), sortOrder: Number(val('pe-order-' + p.id) || 0),
+          ...($('pe-product-' + p.id) && val('pe-product-' + p.id) ? { productId: val('pe-product-' + p.id) } : {}) }, '고쳤습니다') })) : null))
+      : h('div', { class: 'when', text: '아직 결제 옵션이 없습니다 — 그로블에서 정기결제 상품(결제창)을 만든 뒤 여기에 넣으세요' }),
+    S.open.planNew ? h('div', { class: 'card-box', style: 'margin-top:12px' },
+      h('div', { class: 'line', style: 'align-items:flex-end' }, field('이름(사용자에게 보임)', 'pl-name', 'text', { placeholder: '예: 월 이용권(5,000원)' }), field('그로블 결제창 링크', 'pl-url', 'text', { placeholder: 'https://…', spellcheck: 'false' })),
+      h('div', { class: 'line', style: 'align-items:flex-end;margin-top:8px' }, field('가격(원)', 'pl-price', 'text', { value: '5000' }), field('주기(개월)', 'pl-months', 'text', { value: '1' }),
+        field('상품 번호(선택 — 웹훅의 content.id)', 'pl-product', 'text', { spellcheck: 'false' }), field('차례', 'pl-order', 'text', { value: '0' })),
+      h('div', { class: 'line', style: 'margin-top:10px' }, h('button', { class: 'btn-red', text: '넣기', onclick: add }), h('button', { class: 'btn-text', text: '취소', onclick: () => { S.open.planNew = false; render(); } })))
+      : h('button', { class: 'btn', style: 'margin-top:12px', text: '+ 새 결제 옵션', onclick: () => { S.open.planNew = true; render(); } }),
+    h('div', { class: 'when', style: 'margin-top:10px', text: '가격을 바꾸려면 그로블에서 새 상품을 만들고 새 줄을 넣은 뒤 옛 줄을 끕니다(그로블 정기결제는 판매된 옵션을 고칠 수 없다). 옛 상품을 쓰던 사람의 갱신은 계속 받습니다.' }));
+}
+
+async function loadRules() {
+  const r = await edu('billing.rules');
+  if (!r.ok) return tell(r.error);
+  S.bill.rules = r.rules; render();
+}
+function rulesTab() {
+  if (!S.bill.rules && !S.bill.loadingRules) { S.bill.loadingRules = true; loadRules().finally(() => { S.bill.loadingRules = false; }); }
+  const R = S.bill.rules;
+  if (!R) return h('div', { class: 'when', text: '불러오는 중…' });
+  const save = async () => {
+    const r = await edu('billing.rules.save', { trialDays: Number(val('ru-trial')), graceDays: Number(val('ru-grace')) });
+    if (!r.ok) return tell(r.error);
+    S.bill.rules = r.rules; done('이용 규칙을 저장했습니다 — 무료 체험은 이제부터 가입하는 사람에게, 여유는 다음 결제부터');
+  };
+  return h('div', null,
+    h('div', { class: 'line', style: 'align-items:flex-end' },
+      field('가입 직후 무료 체험(일, 기본 0)', 'ru-trial', 'text', { value: String(R.trialDays) }),
+      field('결제 실패 · 해지 뒤 여유(일, 기본 10)', 'ru-grace', 'text', { value: String(R.graceDays) }),
+      h('button', { class: 'btn-red', text: '저장', onclick: save })),
+    h('div', { class: 'when', style: 'margin-top:8px', text: '여유 — 다음 결제일 뒤 이만큼 더 씁니다(그로블의 갱신 재시도 3일 + 유예 7일). 갱신 소식이 끝내 오지 않아도 저절로 끝납니다.' }),
+    toggleRow('이용권이 끝났을 때 막는 것: 새 AI 작업만', true, null, '편집 · 열람 · 내보내기는 늘 됩니다 — 바꿀 수 없습니다(원칙: AI 실패 · 결제가 작품을 막지 않는다)'));
+}
+
 // ---------------------------------------------------------------- 운영(플랫폼 관리자)
 
 // ---------------------------------------------------------------- 운영(최상위 관리자) — 현황 · 감사 기록 · 단계(전체) · 계정
@@ -1064,8 +1313,11 @@ function opsView() {
     S.sayGood = true; S.fresh = true; S.say = r.loginId + (status === 'disabled' ? ' — 멈췄습니다' : ' — 다시 열었습니다'); $('us-id').value = ''; render();
   };
   const orgList = Object.values(S.orgs);
+  // 자유 가입판은 현황 다음에 고객 · 결제 탭 넷을 더한다(§4-6)
+  const tabs = [['현황', '현황'], ['감사 기록', '감사 기록'], ['단계', '단계 · 강의 카드(전체)'], ['계정', '계정 멈추기']];
+  if (S.edition === 'open') tabs.splice(1, 0, ['고객', '고객'], ['결제 기록', '결제 기록'], ['결제 옵션', '결제 옵션'], ['이용 규칙', '이용 규칙']);
   return h('div', null,
-    tabRow([['현황', '현황'], ['감사 기록', '감사 기록'], ['단계', '단계 · 강의 카드(전체)'], ['계정', '계정 멈추기']], t, (k) => { S.opsTab = k; S.say = ''; if (k === '현황') S.ops = null; render(); }),
+    tabRow(tabs, t, (k) => { S.opsTab = k; S.say = ''; if (k === '현황') S.ops = null; if (k === '결제 기록') S.bill.events = null; if (k === '고객') S.bill.cust.list = null; render(); }),
     t === '현황' ? h('div', null,
       S.edition === 'open' ? null : h('div', { class: 'lab', text: '기관' }),
       S.edition === 'open' ? null : orgList.length ? orgList.map(({ org }) => {
@@ -1079,6 +1331,10 @@ function opsView() {
       }) : h('div', { class: 'when', text: '아직 기관이 없습니다 — 위의 [+ 새 기관]으로 만드세요' }),
       S.ops ? opsBox() : h('div', { class: 'when', style: 'margin-top:10px', text: '불러오는 중…' })) : null,
     t === '감사 기록' ? (S.audit.all ? auditRows('all') : h('div', { class: 'when', text: '불러오는 중…' })) : null,
+    t === '고객' ? customersTab() : null,
+    t === '결제 기록' ? eventsTab() : null,
+    t === '결제 옵션' ? plansTab() : null,
+    t === '이용 규칙' ? rulesTab() : null,
     t === '단계' ? h('div', null, h('div', { class: 'when', style: 'margin-bottom:8px', text: '모든 기관 · 개인에게 쓰이는 기본입니다(기관은 그 위에 다시 고쳐 쓸 수 있습니다). 원문은 남습니다.' }), wfEditor(null)) : null,
     t === '계정' ? h('div', null,
       h('div', { class: 'when', style: 'margin-bottom:8px', text: '멈추면 곧바로 로그아웃되고 다시 열 때까지 들어올 수 없습니다. 작품은 그대로입니다.' }),

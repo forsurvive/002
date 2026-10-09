@@ -178,6 +178,17 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       return ok({ organization: o });
     },
 
+    // 비밀번호 재설정 코드 — 최상위 운영자가 운영자 아닌 계정 누구에게나(7일 · 한 번). 자유 가입판에는 «윗사람»이 없다(docs/OPEN_EDITION.md §4-5).
+    async 'user.reset_code'(user, b, ip) {
+      if (!user.isPlatformAdmin) return FORBIDDEN;
+      const u = isUuid(b.userId) ? await one('SELECT id, login_id, is_platform_admin FROM users WHERE id = $1', [b.userId]) : null;
+      if (!u) return NOT_FOUND;
+      if (u.is_platform_admin) return no(422, '운영자 계정은 Secrets 의 SE2_RECOVERY_CODE 로 되찾습니다', 'validation');
+      const code = await issueResetCode(u.id);
+      await log(user, null, 'user.reset_code', 'user', u.id, { loginId: u.login_id }, ip);
+      return ok({ resetCode: code, days: RESET_DAYS, loginId: u.login_id });
+    },
+
     // 계정 멈추기 · 다시 열기 — 멈추면 곧바로 로그인 · 세션이 막힌다(작품은 그대로). 운영자만, 자기 자신은 못 멈춘다.
     async 'user.status'(user, b, ip) {
       if (!user.isPlatformAdmin) return FORBIDDEN;
@@ -684,7 +695,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
   };
 
   // 이용권 · 고객 · 결제 관리(자유 가입판) — online/billing/ops.mjs
-  if (billing) Object.assign(OPS, billingOps({ billing }));
+  if (billing) Object.assign(OPS, billingOps({ pool, billing, log }));
 
   // 키를 넣으면 — 그 키로 돌 작품 가운데 «자료 분석»이 끝내 실패로 남은 것을 다시 건다(키가 없어 멈췄던 것이 저절로 이어진다).
   // 작품마다 가장 최근의 준비 작업만 본다. 이미 도는 것은 큐가 막는다(대상당 활성 하나).
