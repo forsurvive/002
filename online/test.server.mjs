@@ -17,6 +17,8 @@ async function suite({ pool, ok: ok0, eq: eq0, edition }) {
   const eq = (name, a, b) => eq0(tag + name, a, b);
   const A = 'web-a' + sfx; const B = 'web-b' + sfx;
   resetThrottle();
+  // 자유 가입판은 운영자(처음 설정)가 있어야 가입을 받는다 — 그 판의 운영자를 하나 둔다
+  if (edition === 'open') await createUser(pool, { loginId: 'web-op' + sfx, password: 'long-enough-op', isPlatformAdmin: true });
   await createUser(pool, { loginId: A, password: 'long-enough-a', displayName: '가' });
   await createUser(pool, { loginId: B, password: 'long-enough-b', displayName: '나' });
 
@@ -59,9 +61,15 @@ async function suite({ pool, ok: ok0, eq: eq0, edition }) {
       await new Promise((r) => dev.close(r));
     }
 
-    // 가입 문은 없다(결정: 운영자 발급 · 자유 가입은 결제가 정해질 때까지 닫힘 — docs/SECURITY.md §7-0)
-    eq('**가입 문이 없다**', (await req('/api/auth/signup', { method: 'POST', body: { loginId: 'stranger', password: 'long-enough-x' } })).status, 401);
-    ok('가입 시도로 계정이 생기지 않는다', (await pool.query("SELECT 1 FROM users WHERE login_id = 'stranger'")).rowCount === 0);
+    if (edition === 'school') {
+      // 교육기관판에는 가입 문이 없다(결정: 운영자 발급 · 초대 코드 — docs/SECURITY.md §7-0)
+      eq('**가입 문이 없다**', (await req('/api/auth/signup', { method: 'POST', body: { loginId: 'stranger', password: 'long-enough-x' } })).status, 401);
+      ok('가입 시도로 계정이 생기지 않는다', (await pool.query("SELECT 1 FROM users WHERE login_id = 'stranger'")).rowCount === 0);
+    } else {
+      // 자유 가입판 — 누구나 가입하고 곧바로 들어간다(자세한 것은 test.signup.mjs)
+      const su = await req('/api/auth/signup', { method: 'POST', body: { loginId: 'stranger' + sfx, displayName: '낯선', password: 'long-enough-x' } });
+      ok('**가입 문이 있다 — 가입하면 곧바로 들어간다**', su.status === 200 && /se_session=/.test(su.headers.get('set-cookie') || '') && (await pool.query('SELECT 1 FROM users WHERE login_id = $1', ['stranger' + sfx])).rowCount === 1);
+    }
 
     // ---------------- 로그인
     const wrong = await req('/api/auth/login', { method: 'POST', body: { loginId: A, password: 'nope-nope-nope' } });
@@ -158,8 +166,8 @@ async function suite({ pool, ok: ok0, eq: eq0, edition }) {
     eq('이상한 pid 도 같은 404', (await op('a', 'doc.write', { pid: "x' OR 1=1 --", id: dc.id })).status, 404);
     eq('pid 없이 고치는 문도 404', (await op('a', 'doc.write', { id: dc.id })).status, 404);
     eq('모르는 문은 404', (await op('a', 'admin.everything', {})).status, 404);
-    eq('로그인해도 가입 길은 없다(404)', (await req('/api/auth/signup', { who: 'a', method: 'POST', body: { loginId: 'stranger2', password: 'long-enough-x' } })).status, 404);
-    eq('가입 op 도 없다', (await op('a', 'auth.signup', { loginId: 'stranger3', password: 'long-enough-x' })).status, 404);
+    if (edition === 'school') eq('로그인해도 가입 길은 없다(404)', (await req('/api/auth/signup', { who: 'a', method: 'POST', body: { loginId: 'stranger2', password: 'long-enough-x' } })).status, 404);
+    eq('가입 op 도 없다(가입은 /api/auth/signup 한 길뿐)', (await op('a', 'auth.signup', { loginId: 'stranger3' + sfx, password: 'long-enough-x' })).status, 404);
 
     // ---------------- 키는 화면으로 받지 않는다
     const kw = await op('a', 'auth.write', { mode: 'api', apiKey: 'sk-fake-test-value' });

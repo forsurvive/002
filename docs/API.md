@@ -97,7 +97,7 @@
 
 | 묶음 | op | 누가 | 메모 |
 |---|---|---|---|
-| 인증 | `auth.signup` `auth.login` `auth.logout` `auth.me` `auth.password` | 누구나/본인 | `auth.signup` 은 **닫혀 있다**(결정: 지금은 운영자 발급, 자유 가입은 BYOK + 월 이용료 — 결제 결정 후, SECURITY §7-0). 로그인 실패는 같은 문구, 속도 제한 |
+| 인증 | `auth.signup` `auth.login` `auth.logout` `auth.me` `auth.password` | 누구나/본인 | 교육기관판에서 가입은 **닫혀 있다**(운영자 발급 · 초대 코드, SECURITY §7-0). 자유 가입판은 `POST /api/auth/signup`(§2-3 · OPEN_EDITION §4-2). 로그인 실패는 같은 문구, 속도 제한 |
 | 초대 | `invite.create` `invite.accept` `invite.list` `invite.revoke` | 기관 관리자·강사 / 학생 | 코드 원문은 만들 때 한 번만 보여 준다 |
 <!-- invite.list: 아직 쓸 수 있는 코드(원문 없이) — 기관 관리자 · 최상위는 기관 것 모두, 강사는 맡은 수업 것만. 관리 · 내 수업 화면의 «초대 코드 목록»에서 취소한다. -->
 | 기관 | `org.create` `org.update` `org.list` `org.members` `org.member.add/remove/role` | 플랫폼 관리자 / 기관 관리자 | 감사 로그 |
@@ -126,6 +126,7 @@
 | `GET /login` | 로그인 화면(`web/login.html`). 로그인한 사람이 오면 `/` 로 |
 | `POST /api/auth/login` `{ loginId, password }` | 성공 → `se_session` 쿠키(HttpOnly · SameSite=Lax · 바깥에 열면 Secure). 실패 → 401 `{ code: 'unauthenticated' }` 한 가지 문구, 거듭되면 429 `rate_limited` |
 | `POST /api/auth/logout` | 세션 폐기 + 쿠키 지움 |
+| `POST /api/auth/signup` `{ loginId, displayName, password }` | **자유 가입판(`SE_EDITION=open`)에만.** 계정을 만들고 곧바로 쿠키. 409 같은 아이디 · 422 꼴 · 429 고삐(같은 곳에서 15분에 시도 20 · 1시간에 계정 5) · 403 `setup_needed`(처음 설정 전). 교육기관판에는 이 길이 없다(로그인 전 401 · 뒤 404) |
 | `GET /api/me` | `{ me: { loginId, displayName } }` |
 | `POST /api` `{ op, pid, … }` | **개인판과 같은 문 표**(`tools/ops.mjs`) · 같은 응답 꼴. 다른 점: pid 가 필요한 문은 «이 사람의 프로젝트»가 아니면 **404**(남의 것 · 지운 것 · 이상한 id 모두 같은 답) · `auth.write` 403 · AI 작업을 여는 문(`doc.update` `thread.send` `thread.edit` `thread.doc`)은 **영속 큐에 넣고 곧바로 `{ ok, jobId }`**(같은 대상에 도는 작업이 있으면 «이미 도는 중») · `job.pause/resume/answer/remove` 는 큐의 손잡이 · `project.create` 는 개인판처럼 에이전트 준비 작업을 곧바로 세운다 · `project.prepare` 는 끊긴 준비를 다시 |
 | `GET /api/state[?pid]` | 개인판과 같은 꼴 + `me`. `project.jobs` 는 jobs 표에서(대기 중은 `status:'running', step:'대기 중'`, 사람의 답을 기다림은 `paused` + `ask.say`). `project.auth` 는 `{ mode:'online', modes:[], hasKey:false }` — 화면이 «무엇으로»(키 칸)를 세우지 않는다 |

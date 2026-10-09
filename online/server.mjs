@@ -283,6 +283,19 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
   };
   const setupFails = new Map();
 
+  // ---------------- 가입 고삐(자유 가입판) — 같은 곳(IP)에서 15분에 시도 20번 · 1시간에 새 계정 5개까지. 프로세스 메모리(인스턴스 하나 기준).
+  const SIGNUP_TRIES = 20; const SIGNUP_MADE = 5;
+  const signups = new Map();   // ip → { tries: [때], made: [때] }
+  const signupOpen = (ip, now = Date.now()) => {
+    if (signups.size > 5000) for (const [k, v] of signups) if (!v.tries.some((t) => t > now - 60 * 60 * 1000)) signups.delete(k);
+    const f = signups.get(ip) || { tries: [], made: [] };
+    f.tries = f.tries.filter((t) => t > now - 15 * 60 * 1000);
+    f.made = f.made.filter((t) => t > now - 60 * 60 * 1000);
+    signups.set(ip, f);
+    return f.tries.length < SIGNUP_TRIES && f.made.length < SIGNUP_MADE;
+  };
+  const signupNote = (ip, made, now = Date.now()) => { const f = signups.get(ip); f.tries.push(now); if (made) f.made.push(now); };
+
   async function handle(req, res) {
     try {
       const url = new URL(req.url, 'http://127.0.0.1');
@@ -317,6 +330,22 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const r = await auth.login(pool, { loginId: body.loginId, password: body.password, ip: ipOf(req), userAgent: req.headers['user-agent'] || '' });
         if (!r.ok) return json(res, r.code === 'rate_limited' ? 429 : 401, bad(r.error, r.code));
         return json(res, 200, ok(), { 'set-cookie': auth.sessionCookie(r.token, { secure }) });
+      }
+      // ---------------- 자유 가입 — 자유 가입판에만 있는 길(docs/OPEN_EDITION.md §4-2). 교육기관판에는 없다(로그인 전 401 · 뒤 404 — 시험).
+      // 아이디 · 이름 · 비밀번호만 받는다(이메일 확인은 결정 뒤). 만들면 곧바로 들어간다.
+      if (edition === 'open' && req.method === 'POST' && url.pathname === '/api/auth/signup') {
+        const ip = ipOf(req);
+        if (!signupOpen(ip)) return json(res, 429, bad('잠시 뒤에 다시 시도해 주세요', 'rate_limited'));
+        // 처음 설정(운영자 계정)을 마치기 전에는 받지 않는다 — 낯선 사람의 첫 계정이 처음 설정 문(계정이 없을 때만 열린다)을 닫지 못하게
+        if (!(await pool.query('SELECT EXISTS (SELECT 1 FROM users WHERE is_platform_admin) AS y')).rows[0].y) {
+          return json(res, 403, bad('아직 가입을 받지 않습니다 — 운영자가 처음 설정을 마친 뒤에 다시 와 주세요', 'setup_needed'));
+        }
+        const made = await auth.createUser(pool, { loginId: body.loginId, password: body.password, displayName: String(body.displayName || '').trim().slice(0, 60) });
+        signupNote(ip, made.ok);
+        if (!made.ok) return json(res, made.code === 'conflict' ? 409 : 422, bad(made.error, made.code));
+        await auth.audit(pool, { actor: made.user.id, action: 'auth.signup', targetType: 'user', targetId: made.user.id, ip });
+        const li = await auth.login(pool, { loginId: body.loginId, password: body.password, ip, userAgent: req.headers['user-agent'] || '' });
+        return json(res, 200, ok(), li.ok ? { 'set-cookie': auth.sessionCookie(li.token, { secure }) } : {});
       }
       // ---------------- 처음 설정 — 계정이 하나도 없을 때 한 번만. 운영자 계정(+ 그 계정의 AI 키)을 화면에서 만든다.
       // 이 컴퓨터 안(루프백)의 요청 · 출입 열쇠를 지나온 요청 · 서버 콘솔에 찍힌 «설정 코드»를 넣은 요청만 받는다

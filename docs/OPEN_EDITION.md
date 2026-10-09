@@ -92,6 +92,9 @@
    그리고 `audit.list` · `usage.summary` · `workflow.view/save` 에 `orgId` 를 실은 것. 수업에 만들기(`project.create classId`) 404 · 강사 · 기관 관리자 열람 없음(주인만) · `/school.html` → 첫 화면.
    `me.edition` 은 `/api/me` · `/api/state` · `me.memberships` · `GET /api/setup`(로그인 전 화면)에. 시험: `online/test.edition.mjs` + `test.server.mjs` 가 두 판에서 각각.
 2. **자유 가입** — 로그인 화면에 «가입하기»(아이디 · 이름 · 비밀번호, IP 마다 가입 고삐). `school` 에서는 지금처럼 닫혀 있다(시험이 지키는 규칙 «가입 문이 없다»는 school 에서 그대로).
+   → **만듦(2026-10-09)**: `POST /api/auth/signup {loginId, displayName, password}`(open 에만 — school 은 로그인 전 401 · 뒤 404 그대로). 이름은 60자까지.
+   고삐: 같은 곳(IP)에서 15분에 시도 20번 · 1시간에 새 계정 5개(넘으면 429). **처음 설정(운영자 계정) 전에는 403 `setup_needed`** — 낯선 사람의 첫 계정이 처음 설정 문(계정이 없을 때만 열린다)을 닫지 못하게.
+   만들면 곧바로 들어가 «내 계정»(키 넣기 · 이용권)으로 간다 · 감사 `auth.signup`. 로그인 화면 «처음 오셨나요? [가입하기]» — `/login?signup` 으로 오면 가입 칸이 열려 있다. 시험: `online/test.signup.mjs`.
 3. **키 등록 안내** — «내 계정 → 내 AI 키»를 회사별 3단계(발급 페이지 바로가기 · 붙여 넣기 · 자동 연결 확인)로. Gemini 는 무료 키 안내.
 4. **이용권(월 5,000원 · 그로블 정기결제)** — 새 AI 작업은 이용권이 «유효»할 때만(`subscription_inactive`). 편집 · 열람 · 내보내기는 늘 된다. AI 비용(본인 키)과 이용료를 섞어 기록하지 않는다(원칙 7).
    - **표**: `billing_refs`(사람 ↔ 무작위 참조값 — 사람마다 하나, 다시 만들 수 있음) · `subscriptions`(사람 · 상태 `active | past_due | cancel_pending | ended` · `paid_until` · `next_billing_date` · 마지막 반영 `occurred_at` · 출처) ·

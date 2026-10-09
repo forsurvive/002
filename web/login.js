@@ -108,6 +108,19 @@ async function join(e) {
   tell(out.error || '계정을 만들지 못했습니다');
 }
 
+// 자유 가입판 — 아이디 · 이름 · 비밀번호로 가입하고 곧바로 «내 계정»(키 넣기 · 이용권)으로 간다
+async function signup(e) {
+  e.preventDefault();
+  tell('');
+  if (!v('su-id') || !$('su-pw').value) return tell('아이디와 비밀번호를 정해 넣어 주세요');
+  if ($('su-pw').value !== $('su-pw2').value) return tell('비밀번호가 서로 다릅니다');
+  if (!(await passGate())) return;
+  const out = await post('/api/auth/signup', { loginId: v('su-id'), displayName: v('su-name'), password: $('su-pw').value });
+  if (out.ok) { location.href = '/account.html'; return; }
+  if (out.code === 'gate') { location.reload(); return; }
+  tell(out.error || '가입하지 못했습니다');
+}
+
 // 이미 계정이 있는 사람 — 새 계정을 만들지 않고, 로그인한 뒤 그 계정으로 이 수업 · 기관에 들어간다
 async function joinWithAccount(e) {
   e.preventDefault();
@@ -162,7 +175,7 @@ function mainForms() {
       field('새 비밀번호 한 번 더', 'rs-pw2', 'password', { autocomplete: 'new-password' }),
       h('div', { class: 'line', style: 'margin-top:14px' }, h('button', { class: 'btn-red', type: 'submit', text: '새 비밀번호로 들어가기' }))) : null,
     sayLine(),
-    S.edition === 'open' ? null : h('div', { style: 'margin-top:18px;padding-top:18px;border-top:1px solid var(--line-soft)' },
+    S.edition === 'open' ? signupBox() : h('div', { style: 'margin-top:18px;padding-top:18px;border-top:1px solid var(--line-soft)' },
       h('div', { class: 'lab', text: '처음 오셨나요? 초대 링크를 받았으면 그 링크를 누르면 됩니다 — 코드만 받았으면 여기에' }),
       inv && S.invite.have ? h('form', { onsubmit: joinWithAccount },
         h('div', { class: 'top-name', style: 'font-size:19px;margin-top:6px', text: '내 계정으로 참여' }),
@@ -188,6 +201,21 @@ function mainForms() {
           h('input', { id: 'iv-code', type: 'text', placeholder: 'ABCD-EFGH-JKLM', autocapitalize: 'characters', spellcheck: 'false', style: 'flex:1' }),
           h('button', { class: 'btn-line', type: 'submit', text: '다음' }))));
 }
+
+// 자유 가입판의 «처음 오셨나요?» — 누르면 그 자리에서 가입 칸이 열린다
+const signupBox = () => h('div', { style: 'margin-top:18px;padding-top:18px;border-top:1px solid var(--line-soft)' },
+  S.signup ? h('form', { onsubmit: signup },
+    h('div', { class: 'top-name', style: 'font-size:19px;margin-top:6px', text: '가입하기' }),
+    field('아이디(영문 소문자 · 숫자, 3자 이상)', 'su-id', 'text', { autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
+    field('이름', 'su-name', 'text'),
+    field('비밀번호(10자 이상)', 'su-pw', 'password', { autocomplete: 'new-password' }),
+    field('비밀번호 한 번 더', 'su-pw2', 'password', { autocomplete: 'new-password' }),
+    h('div', { class: 'line', style: 'margin-top:14px' },
+      h('button', { class: 'btn-red', type: 'submit', text: '가입하고 들어가기' }),
+      h('button', { class: 'btn-text', type: 'button', text: '닫기', onclick: () => { S.signup = false; draw(mainForms()); } })))
+    : h('div', { class: 'line', style: 'align-items:center' },
+      h('div', { class: 'lab', style: 'margin:0;flex:1', text: '처음 오셨나요?' }),
+      h('button', { class: 'btn-line', type: 'button', text: '가입하기', onclick: () => { S.signup = true; draw(mainForms()); if ($('su-id')) $('su-id').focus(); } })));
 
 const setupForm = (ai, code) => h('form', { onsubmit: setup },
   h('div', { class: 'when', text: '처음 설정 — 운영자 계정을 만듭니다. 이 화면은 한 번만 나옵니다.' }),
@@ -251,6 +279,8 @@ function draw(form) {
   const linkInvite = q.get('invite') || ''; const linkReset = q.get('reset') || ''; const linkId = q.get('id') || '';
   if (linkInvite || linkReset) history.replaceState(null, '', '/login');
   if (linkReset && !st.needed) S.forgot = true;
+  // 자유 가입판 — /login?signup 으로 오면(소개 페이지 · 결제창의 «진입 페이지») 가입 칸을 열어 둔다
+  if (S.edition === 'open' && q.has('signup') && !linkReset) S.signup = true;
   draw(st.needed ? setupForm(st.ai, st.code) : mainForms());
   if (!st.needed && linkReset) {
     if ($('rs-id')) $('rs-id').value = linkId;
