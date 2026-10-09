@@ -312,31 +312,99 @@ function keyRows(list, op, extra, reload) {
 }
 
 // ---------------------------------------------------------------- 내 AI 키(누구나 — 쓰기 전용). 내 개인 작품의 AI 는 이 키로.
+// 키 넣기는 클릭 몇 번과 붙여 넣기로 끝난다(2026-10-09 사용자 지시 — docs/OPEN_EDITION.md §4-3):
+//   ① [키 만들기 페이지 열기] — 그 회사의 키 화면을 새 탭으로 ② 만든 키를 복사해 [붙여 넣기](또는 칸에 붙여 넣기)
+//   ③ 붙여 넣는 순간 회사를 알아보고(키 앞머리) · 저장하고 · 연결을 확인한다. 워크스페이스 ID 는 그 회사가 요구할 때만 칸을 연다.
+const KEY_PAGE = {
+  anthropic: { url: 'https://platform.claude.com/settings/keys', how: '로그인 → [Create key] → 나온 키 복사' },
+  openai: { url: 'https://platform.openai.com/api-keys', how: '로그인 → [Create new secret key] → 나온 키 복사(잔액이 있어야 돕니다)' },
+  google: { url: 'https://aistudio.google.com/apikey', how: 'Google 계정으로 로그인 → [API 키 만들기] → 복사' },
+};
+// 키 앞머리로 회사 알아보기 — Claude sk-ant- · Gemini AIza · ChatGPT sk-
+const keyCompany = (key) => (/^sk-ant-/.test(key) ? 'anthropic' : /^AIza/.test(key) ? 'google' : /^sk-/.test(key) ? 'openai' : '');
+const cleanPaste = (t) => String(t || '').replace(/[\s\u200B-\u200D\u2060\uFEFF]/g, '').replace(/^["'`]+|["'`]+$/g, '');
+
+async function addMyKey(raw) {
+  const k = 'mykey';
+  const key = cleanPaste(raw);
+  if (!key) return tell('키를 붙여 넣어 주세요');
+  const guess = keyCompany(key);
+  if (guess) S.prov[k] = guess;   // 고른 회사와 달라도 키가 말하는 회사로
+  const p = provOf(k);
+  const ws = S.keyStep && S.keyStep.ws && $('mk-ws') ? val('mk-ws') : '';
+  S.keyStep = { say: AI_CO[p] + ' 키를 저장하고 연결을 확인하는 중…', good: true, ws: !!ws };
+  render();
+  const r = await edu('me.key.set', { provider: p, apiKey: key, workspaceId: ws });
+  if (!r.ok) { S.keyStep = { say: r.error, ws: !!ws }; return render(); }
+  if (S.me && r.aiProvider != null) S.me.aiProvider = r.aiProvider;
+  const t = await edu('me.key.test', { provider: p });
+  S.myKeys = (await edu('me.key.list')).credentials || [];
+  if (t.ok && t.verified) {
+    if ($('mk-key')) $('mk-key').value = '';
+    S.keyStep = { good: true, done: true, say: AI_CO[p] + ' — 연결됩니다. 이제 이 키로 돕니다' + (r.prepRetried ? '(멈춰 있던 자료 분석 ' + r.prepRetried + '건을 다시 겁니다)' : '') };
+  } else if (t.ok && t.reason === 'workspace') {
+    S.keyStep = { ws: true, say: t.say };   // 키는 칸에 그대로 — 워크스페이스 ID 를 붙여 넣으면 함께 다시 저장한다
+  } else {
+    if ($('mk-key')) $('mk-key').value = '';
+    S.keyStep = { say: AI_CO[p] + ' — ' + (t.ok ? t.say : t.error || '확인하지 못했습니다') + ' · 키를 다시 복사해 붙여 넣어 보세요' };
+  }
+  render();
+}
+
+function keyGuide() {
+  const k = 'mykey';
+  const have = new Set((S.myKeys || []).filter((x) => x.status === 'active').map((x) => x.provider));
+  if (!S.prov[k]) S.prov[k] = Object.keys(AI_CO).find((p) => !have.has(p)) || 'anthropic';
+  const p = provOf(k);
+  const st = S.keyStep || {};
+  // 키가 이미 있으면 접어 둔다 — 새 회사 키 · 바꿀 키가 있을 때만 연다
+  if (have.size && !S.open.keyAdd && !st.say) return h('button', { class: 'btn-line', style: 'margin-top:12px', text: '+ 키 넣기 · 바꾸기', onclick: () => { S.open.keyAdd = true; render(); } });
+  const pasteBtn = h('button', { class: 'btn-red', text: '붙여 넣기', onclick: async () => {
+    let t = '';
+    try { t = await navigator.clipboard.readText(); } catch { t = ''; }
+    if (!cleanPaste(t)) return tell('복사한 키를 읽지 못했습니다 — 오른쪽 칸을 누르고 붙여 넣어(Ctrl+V · 휴대폰은 길게 눌러) 주세요');
+    if ($('mk-key')) $('mk-key').value = cleanPaste(t);
+    addMyKey(t);
+  } });
+  const onPaste = (e) => {
+    const t = ((e.clipboardData || window.clipboardData) || { getData: () => '' }).getData('text');
+    if (!cleanPaste(t)) return;
+    e.preventDefault();
+    e.target.value = cleanPaste(t);
+    addMyKey(t);
+  };
+  return h('div', { class: 'card-box', style: 'margin-top:14px' },
+    h('div', { class: 'lab', text: '키 넣기 — 회사를 고르고 ①②만 하면 ③은 저절로' }),
+    h('div', { class: 'line' }, Object.entries(AI_CO).map(([id, name]) => h('button', { class: p === id ? 'btn' : 'btn-line', text: name + (have.has(id) ? ' ✓' : ''), onclick: () => { S.prov[k] = id; S.keyStep = null; render(); } }))),
+    h('div', { class: 'line', style: 'margin-top:8px' },
+      h('a', { class: 'btn-line', href: KEY_PAGE[p].url, target: '_blank', rel: 'noopener noreferrer', text: '① ' + AI_CO[p] + ' 키 만들기 페이지 열기 ↗' }),
+      h('span', { class: 'when', text: KEY_PAGE[p].how })),
+    h('div', { class: 'line', style: 'margin-top:8px;align-items:center' },
+      h('span', { class: 'when', text: '②' }), pasteBtn,
+      h('input', { id: 'mk-key', type: 'password', spellcheck: 'false', placeholder: '또는 여기에 붙여 넣기', style: 'flex:1;min-width:180px', onpaste: onPaste, onkeydown: (e) => { if (e.key === 'Enter') addMyKey(e.target.value); } }),
+      h('button', { class: 'btn-text', text: '저장', onclick: () => addMyKey(val('mk-key')) })),
+    st.ws ? h('div', { class: 'line', style: 'margin-top:8px;align-items:center' },
+      h('span', { class: 'when', text: '워크스페이스 ID' }),
+      h('input', { id: 'mk-ws', type: 'text', spellcheck: 'false', placeholder: 'wrkspc_… 를 붙여 넣기', style: 'flex:1;min-width:180px', onpaste: (e) => { setTimeout(() => addMyKey(val('mk-key')), 0); } }),
+      h('button', { class: 'btn-text', text: '다시 저장', onclick: () => addMyKey(val('mk-key')) })) : null,
+    h('div', { class: st.say ? 'notice' + (st.good ? ' good' : '') : 'when', style: 'margin-top:8px', text: st.say || '③ 붙여 넣으면 회사를 알아보고 저장 · 연결 확인까지 저절로 합니다' }),
+    p === 'google' ? h('div', { class: 'when', style: 'margin-top:4px', text: 'Gemini 는 무료 키로 시작할 수 있습니다 — 무료 등급은 횟수 한도가 있고, 보낸 글이 Google 의 제품 개선에 쓰일 수 있습니다(유료 등급은 쓰지 않습니다).' }) : null,
+    have.size ? h('button', { class: 'btn-text', style: 'align-self:flex-start;margin-top:4px', text: '접기', onclick: () => { S.open.keyAdd = false; S.keyStep = null; render(); } }) : null);
+}
+
 function myKeyBox() {
   const k = 'mykey';
   if (!S.open[k] && PAGE !== 'account') return h('button', { class: 'btn-text', text: '내 AI 키', onclick: async () => { S.myKeys = (await edu('me.key.list')).credentials || []; S.open[k] = true; render(); } });
-  const save = async () => {
-    const r = await edu('me.key.set', { provider: provOf(k), apiKey: val('mk-key'), workspaceId: $('mk-ws') ? val('mk-ws') : '' });
-    if ($('mk-key')) $('mk-key').value = '';
-    if (r.ok && $('mk-ws')) $('mk-ws').value = '';
-    if (!r.ok) return tell(r.error);
-    if (S.me && r.aiProvider != null) S.me.aiProvider = r.aiProvider;
-    S.myKeys = (await edu('me.key.list')).credentials || [];
-    done('저장했습니다');
-  };
   return section('내 AI 키',
     keyRows(S.myKeys, 'me.key', {}, load),
-    h('div', { class: 'when', style: 'margin-top:4px', text: '내 개인 작품의 AI 는 이 키로 돌고 비용은 키 주인에게 나갑니다. 수업 작품은 기관 키로 돕니다. 만 14세 이상만 넣어 주세요.' }),
     aiChoice('개인 작품에 쓸 AI 회사(작품마다 설정 탭에서 바꿀 수 있습니다)', (S.me && S.me.aiProvider) || '', S.myKeys, async (p) => {
       const r = await edu('me.ai.set', { provider: p });
       if (!r.ok) return tell(r.error);
       S.me.aiProvider = r.provider; tell(AI_CO[p] + '를 씁니다');
     }),
-    providerPick(k),
-    h('div', { class: 'line', style: 'align-items:flex-end;margin-top:10px' },
-      field(AI_KEY_LABEL[provOf(k)], 'mk-key', 'password', { autocomplete: 'off', spellcheck: 'false' }),
-      wsField(k, 'mk-ws'),
-      h('button', { class: 'btn-red', text: '저장', onclick: save })));
+    keyGuide(),
+    h('div', { class: 'when', style: 'margin-top:8px', text: S.edition === 'open' ? '내 작품의 AI 는 이 키로 돌고, 비용은 키 주인(본인)에게 나갑니다. 키는 저장한 뒤 다시 보이지 않습니다. 만 14세 이상만 넣어 주세요.'
+      : '내 개인 작품의 AI 는 이 키로 돌고 비용은 키 주인에게 나갑니다. 수업 작품은 기관 키로 돕니다. 만 14세 이상만 넣어 주세요.' }));
 }
 
 // ---------------------------------------------------------------- Claude 구독(최상위 운영자만). 켜면 내 개인 작품이 API 키 대신 구독 사용량으로 돈다.

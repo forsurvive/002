@@ -370,6 +370,13 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     const sj = src(join(ROOT, 'web', 'school.js'));
     ok('관리 화면 — 기관마다 탭 넷(수업 · 사용자 · AI · 설정)과 운영 탭', sj.includes("[['수업', '수업'], ['사용자', '사용자'], ['AI', 'AI'], ['설정', '설정']]") && sj.includes("['현황', '현황'], ['감사 기록', '감사 기록']"));
     ok('AI 회사는 키를 넣은 회사만 고른다(관리 · 내 계정 · 작품 설정)', sj.includes('have.has(p) && (!allowed') && sj.includes('keyedOf(keys).filter(') && src(join(ROOT, 'web', 'app.js')).includes('.filter((x) => keys.has(x))'));
+    // 키 넣기는 클릭 몇 번과 붙여 넣기로(2026-10-09 사용자 지시 — docs/OPEN_EDITION.md §4-3)
+    ok('키 넣기 ① — 세 회사의 키 만들기 페이지로 바로 가는 단추(새 탭)', sj.includes("url: 'https://platform.claude.com/settings/keys'") && sj.includes("url: 'https://platform.openai.com/api-keys'")
+      && sj.includes("url: 'https://aistudio.google.com/apikey'") && sj.includes("target: '_blank', rel: 'noopener noreferrer'"));
+    ok('키 넣기 ② — [붙여 넣기](클립보드) · 칸에 붙여 넣으면 곧바로', sj.includes('navigator.clipboard.readText()') && sj.includes('onpaste: onPaste'));
+    ok('키 넣기 ③ — 키 앞머리로 회사를 알아보고 · 저장하고 · 연결 확인까지', sj.includes("/^sk-ant-/.test(key) ? 'anthropic' : /^AIza/.test(key) ? 'google' : /^sk-/.test(key) ? 'openai'")
+      && /async function addMyKey[\s\S]{0,1200}edu\('me\.key\.set'[\s\S]{0,400}edu\('me\.key\.test'/.test(sj));
+    ok('워크스페이스 ID 칸은 그 회사가 요구할 때만 · Gemini 는 무료 키 안내', sj.includes("t.reason === 'workspace'") && sj.includes('st.ws ?') && sj.includes('Gemini 는 무료 키로 시작할 수 있습니다'));
     // 운영자 구독 상자는 운영자에게만 — S.sub 를 다른 표로 쓰면 보통 사람에게도 상자가 섰다(2026-10-09)
     ok('운영자 구독 형편(S.sub)을 다른 표로 쓰지 않는다', !/S\.sub\s*=\s*\{\}/.test(sj) && !/S\.sub\[/.test(sj) && sj.includes("const v = await edu('me.sub.view'); S.sub = v.ok ? v : null;"));
   }

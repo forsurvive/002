@@ -96,6 +96,10 @@
    고삐: 같은 곳(IP)에서 15분에 시도 20번 · 1시간에 새 계정 5개(넘으면 429). **처음 설정(운영자 계정) 전에는 403 `setup_needed`** — 낯선 사람의 첫 계정이 처음 설정 문(계정이 없을 때만 열린다)을 닫지 못하게.
    만들면 곧바로 들어가 «내 계정»(키 넣기 · 이용권)으로 간다 · 감사 `auth.signup`. 로그인 화면 «처음 오셨나요? [가입하기]» — `/login?signup` 으로 오면 가입 칸이 열려 있다. 시험: `online/test.signup.mjs`.
 3. **키 등록 안내** — «내 계정 → 내 AI 키»를 회사별 3단계(발급 페이지 바로가기 · 붙여 넣기 · 자동 연결 확인)로. Gemini 는 무료 키 안내.
+   **클릭 몇 번과 복붙만으로 등록되게**(2026-10-09 사용자 지시). → **만듦(2026-10-09)**: ① [○○ 키 만들기 페이지 열기 ↗](새 탭 —
+   [Claude](https://platform.claude.com/settings/keys) · [ChatGPT](https://platform.openai.com/api-keys) · [Gemini](https://aistudio.google.com/apikey)) ② [붙여 넣기](클립보드) 또는 칸에 붙여 넣기
+   ③ 붙여 넣는 순간 **키 앞머리로 회사를 알아보고**(`sk-ant-` Claude · `AIza` Gemini · `sk-` ChatGPT — 고른 칸과 달라도 키가 말하는 회사로) 저장 · 연결 확인까지 저절로, 결과는 그 자리에.
+   워크스페이스 ID 칸은 Claude 가 그것을 요구할 때만 열린다(붙여 넣으면 다시 저장). 키가 이미 있으면 [+ 키 넣기 · 바꾸기]로 접혀 있다. 두 판 모두 같은 상자.
 4. **이용권(월 5,000원 · 그로블 정기결제)** — 새 AI 작업은 이용권이 «유효»할 때만(`subscription_inactive`). 편집 · 열람 · 내보내기는 늘 된다. AI 비용(본인 키)과 이용료를 섞어 기록하지 않는다(원칙 7).
    - **표**: `billing_refs`(사람 ↔ 무작위 참조값 — 사람마다 하나, 다시 만들 수 있음) · `subscriptions`(사람 · 상태 `active | past_due | cancel_pending | ended` · `paid_until` · `next_billing_date` · 마지막 반영 `occurred_at` · 출처) ·
      `billing_events`(받은 웹훅 원문 · `X-Groble-Idempotency-Key` 유일 · `type` · `occurredAt` · 결과 · 연결된 사람). 운영자만 운영 화면에서 본다(전화번호 · 이름은 가려서). 로그에는 개인정보를 쓰지 않는다.
