@@ -1247,7 +1247,18 @@ function plansTab() {
   const save = async (body, say) => { const r = await edu('billing.plan.save', body); if (!r.ok) return tell(r.error); S.bill.plans = r.plans; S.open.planEdit = ''; S.open.planNew = false; done(say); };
   const add = () => save({ name: val('pl-name'), checkoutUrl: val('pl-url'), price: Number(val('pl-price')), cycleMonths: Number(val('pl-months') || 1), productId: val('pl-product'), sortOrder: Number(val('pl-order') || 0) },
     '결제 옵션을 넣었습니다 — 사용자의 «내 계정 → 이용권»에 [결제하기]가 섭니다');
+  // 그로블 쪽에 넣을 주소 셋 — 손으로 짓지 않게 이 사이트의 주소로 지어 [복사]로 건넨다(게시한 주소에서 열어야 그 주소가 나온다)
+  const addr = (label, url, where) => h('div', { class: 'line', style: 'align-items:center' },
+    h('span', { class: 'when', style: 'min-width:84px', text: label }),
+    h('div', { class: 'mark', style: 'font-size:13px;padding:4px 8px;word-break:break-all;white-space:normal', text: url }), copyBtn(url),
+    h('span', { class: 'when', text: where }));
   return h('div', null,
+    h('div', { class: 'card-box', style: 'margin-bottom:14px' },
+      h('div', { class: 'lab', text: '그로블에 넣을 주소 — [복사]해서 그로블 화면에 붙여 넣으세요' }),
+      addr('진입 페이지', location.origin + '/login?signup', '← 그로블 상품 설정(결제창에 오기 전 페이지)'),
+      addr('이동 페이지', location.origin + '/account.html?paid=1', '← 그로블 상품 설정(결제를 마친 뒤 돌아올 페이지)'),
+      addr('웹훅 주소', location.origin + '/api/billing/groble', '← 그로블 «내 스토어 → 연동»'),
+      h('div', { class: 'when', text: '이 주소들은 지금 연 사이트의 주소로 지어집니다 — 게시한 주소(….replit.app)에서 열었을 때 복사하세요.' })),
     P.length ? P.map((p) => h('div', { style: 'padding:10px 0;border-bottom:1px solid var(--line-soft)' + (p.enabled ? '' : ';opacity:.6') },
       h('div', { class: 'line' },
         h('div', { class: 'name', style: 'flex:1;font-weight:600', text: p.name }),
