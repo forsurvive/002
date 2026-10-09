@@ -7,8 +7,8 @@
 //   · [이 계정에 연결]은 그 결제를 그 사람에게 반영하고(금액 검사 없이 — 운영자가 확인했다), 참조값(없으면 구매자 이메일)을 기억해 다음 소식부터 저절로 잇는다.
 
 import { summarize, rulesOf, normEmail, kstDay, STATUS_SQL } from './service.mjs';
+import { isUuid } from '../tenancy.mjs';
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const PASS_FILTERS = ['active', 'past_due', 'cancel_pending', 'ended', 'none', 'free'];
 
 // 가리기 — 홍길동 → 홍*동 · 010-1234-5678 → ***-****-5678 · buyer@example.com → bu***@example.com
@@ -60,7 +60,7 @@ export function createBillingAdmin({ pool, billing }) {
 
     // 한 사람 — 이용권(줄들) · 결제 기록(가려서) · 메모
     async customer(userId) {
-      if (!UUID.test(String(userId || ''))) return null;
+      if (!isUuid(userId)) return null;
       const u = await one(`SELECT u.id, u.login_id, u.display_name, u.created_at, u.last_login_at, u.status, u.is_platform_admin, coalesce(c.free, false) AS free, coalesce(c.memo, '') AS memo
         FROM users u LEFT JOIN billing_customers c ON c.user_id = u.id WHERE u.id = $1`, [userId]);
       if (!u) return null;
@@ -173,7 +173,7 @@ export function createBillingAdmin({ pool, billing }) {
       const productId = String(b.productId == null ? '' : b.productId).trim().slice(0, 100);
       const linkOk = (u) => !!billing.adapter.checkoutUrl(u, 'check');
       if (b.id) {
-        const cur = UUID.test(String(b.id)) ? await one('SELECT * FROM billing_plans WHERE id = $1', [b.id]) : null;
+        const cur = isUuid(b.id) ? await one('SELECT * FROM billing_plans WHERE id = $1', [b.id]) : null;
         if (!cur) return { ok: false, code: 'missing', error: '그 결제 옵션이 없습니다' };
         if ((b.price != null && Number(b.price) !== cur.price) || (b.cycleMonths != null && Number(b.cycleMonths) !== cur.cycle_months)) {
           return { ok: false, error: '가격 · 주기는 바꿀 수 없습니다 — 그로블에서 새 상품을 만들고 새 결제 옵션을 넣은 뒤 이것을 꺼 주세요' };

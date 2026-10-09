@@ -54,8 +54,11 @@ async function passGate() {
   S.gate = false;
   if ($('gt-box')) $('gt-box').remove();
   const st = await fetch('/api/setup').then((r) => r.json()).catch(() => ({}));
+  const was = S.edition;
   if (st.edition) S.edition = st.edition === 'open' ? 'open' : 'school';
   if (st.needed) { draw(setupForm(st.ai, st.code)); return false; }
+  // 열쇠 전에는 판을 몰랐다(초대 코드 칸이 섰다) — 자유 가입판이면 가입 칸이 있는 첫 화면으로 다시 그린다
+  if (S.edition !== was) { draw(mainForms()); tell('출입 열쇠를 넘겼습니다 — 다시 한 번 눌러 주세요'); return false; }
   return true;
 }
 

@@ -296,17 +296,20 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
   const setupFails = new Map();
 
   // ---------------- 가입 고삐(자유 가입판) — 같은 곳(IP)에서 15분에 시도 20번 · 1시간에 새 계정 5개까지. 프로세스 메모리(인스턴스 하나 기준).
+  // 자리는 묻는 그 순간에 잡는다(기다리는 동안 들어온 동시 요청이 같은 빈자리를 보지 못하게) — 만들지 못했으면 계정 자리만 돌려준다.
   const SIGNUP_TRIES = 20; const SIGNUP_MADE = 5;
   const signups = new Map();   // ip → { tries: [때], made: [때] }
-  const signupOpen = (ip, now = Date.now()) => {
-    if (signups.size > 5000) for (const [k, v] of signups) if (!v.tries.some((t) => t > now - 60 * 60 * 1000)) signups.delete(k);
+  const signupTake = (ip, now = Date.now()) => {
+    if (signups.size > 5000) for (const [k, v] of signups) if (!v.tries.some((t) => t > now - 60 * 60 * 1000) && !v.made.some((t) => t > now - 60 * 60 * 1000)) signups.delete(k);
     const f = signups.get(ip) || { tries: [], made: [] };
     f.tries = f.tries.filter((t) => t > now - 15 * 60 * 1000);
     f.made = f.made.filter((t) => t > now - 60 * 60 * 1000);
     signups.set(ip, f);
-    return f.tries.length < SIGNUP_TRIES && f.made.length < SIGNUP_MADE;
+    if (f.tries.length >= SIGNUP_TRIES || f.made.length >= SIGNUP_MADE) return null;
+    f.tries.push(now); f.made.push(now);
+    return { f, now };
   };
-  const signupNote = (ip, made, now = Date.now()) => { const f = signups.get(ip); f.tries.push(now); if (made) f.made.push(now); };
+  const signupGiveBack = (slot) => { const i = slot.f.made.indexOf(slot.now); if (i >= 0) slot.f.made.splice(i, 1); };
 
   async function handle(req, res) {
     try {
@@ -356,14 +359,15 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       // 아이디 · 이름 · 비밀번호만 받는다(이메일 확인은 결정 뒤). 만들면 곧바로 들어간다.
       if (edition === 'open' && req.method === 'POST' && url.pathname === '/api/auth/signup') {
         const ip = ipOf(req);
-        if (!signupOpen(ip)) return json(res, 429, bad('잠시 뒤에 다시 시도해 주세요', 'rate_limited'));
+        const slot = signupTake(ip);
+        if (!slot) return json(res, 429, bad('잠시 뒤에 다시 시도해 주세요', 'rate_limited'));
         // 처음 설정(운영자 계정)을 마치기 전에는 받지 않는다 — 낯선 사람의 첫 계정이 처음 설정 문(계정이 없을 때만 열린다)을 닫지 못하게
         if (!(await pool.query('SELECT EXISTS (SELECT 1 FROM users WHERE is_platform_admin) AS y')).rows[0].y) {
+          signupGiveBack(slot);
           return json(res, 403, bad('아직 가입을 받지 않습니다 — 운영자가 처음 설정을 마친 뒤에 다시 와 주세요', 'setup_needed'));
         }
         const made = await auth.createUser(pool, { loginId: body.loginId, password: body.password, displayName: String(body.displayName || '').trim().slice(0, 60) });
-        signupNote(ip, made.ok);
-        if (!made.ok) return json(res, made.code === 'conflict' ? 409 : 422, bad(made.error, made.code));
+        if (!made.ok) { signupGiveBack(slot); return json(res, made.code === 'conflict' ? 409 : 422, bad(made.error, made.code)); }
         await auth.audit(pool, { actor: made.user.id, action: 'auth.signup', targetType: 'user', targetId: made.user.id, ip });
         if (bill) await bill.grantTrial(made.user.id);   // 이용 규칙의 무료 체험(기본 0일 — 없음)
         const li = await auth.login(pool, { loginId: body.loginId, password: body.password, ip, userAgent: req.headers['user-agent'] || '' });

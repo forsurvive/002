@@ -13,15 +13,19 @@
 import * as groble from './groble.mjs';
 
 export const DEFAULT_RULES = { trialDays: 0, graceDays: 10 };
+const STEP = { paid: 1, failed: 2, cancel_requested: 3, terminated: 4 };
+const STATUS_STEP = { active: 1, past_due: 2, cancel_pending: 3, ended: 4 };
 const DAY = 86400000;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;   // tenancy.mjs 의 isUuid 와 같다 — tenancy 가 이 파일을 부르므로 순환을 만들지 않으려 따로 둔다
 export const kstDay = (d) => new Date(d).toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
 // 'YYYY-MM-DD'(한국 날짜)의 그날 끝 + days 일 — 한국은 일광 절약 시간이 없어 하루는 늘 24시간
 export const dayEndPlus = (ymd, days = 0) => new Date(new Date(ymd + 'T00:00:00+09:00').getTime() + (1 + days) * DAY);
 const addMonths = (d, n) => { const x = new Date(d); x.setUTCMonth(x.getUTCMonth() + n); return x; };
 const errName = (e) => String((e && (e.code || e.name)) || 'error').replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
-// jsonb 는 \u0000 을 받지 않는다 — 원문을 남기다 막히지 않게 걷는다
-const safeJson = (o) => JSON.parse(JSON.stringify(o).replace(/\\u0000/g, ''));
+// jsonb 는 NUL 글자를 받지 않는다 — 원문을 남기다 막히지 않게 값 안의 NUL 만 걷는다
+// (직렬화한 글자에서 무늬로 지우면 구매자가 넣은 글자 «\\u0000»의 이스케이프를 깨뜨려 저장이 늘 실패한다)
+const noNul = (v) => (typeof v === 'string' ? v.replace(/\u0000/g, '') : Array.isArray(v) ? v.map(noNul)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k.replace(/\u0000/g, ''), noNul(x)])) : v);
 const rawText = (raw) => (Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw == null ? '' : raw)).replace(/\u0000/g, '').slice(0, 20000);
 export const normEmail = (e) => { const s = String(e || '').trim().toLowerCase(); return /^[^\s@]+@[^\s@]+$/.test(s) ? s.slice(0, 200) : ''; };
 
@@ -81,12 +85,13 @@ export function createBilling({ pool, adapter = groble, secrets = () => [], log 
    */
   async function receive({ rawBody, headers = {}, ip = '' }) {
     const now = Date.now();
-    const f = fails.get(ip);
-    if (f && f.n >= FAIL_LIMIT && f.until > now) return reply(429, { error: 'too many invalid signatures' });
+    // 서명부터 본다 — 맞는 서명은 고삐와 상관없이 받는다(남이 틀린 서명을 쏟아부어도 그로블의 정상 웹훅은 막히지 않게). 고삐는 틀린 것에만.
     const v = adapter.verify({ rawBody, headers, secrets: keys(), now });
     if (!v.ok) {
       if (v.reason === 'no_secret') { health.noSecret += 1; health.noSecretAt = now; return reply(503, { error: 'webhook secret is not set' }); }
       health.rejected += 1; health.rejectedAt = now;
+      const f = fails.get(ip);
+      if (f && f.n >= FAIL_LIMIT && f.until > now) return reply(429, { error: 'too many invalid signatures' });
       if (!f || f.until <= now) fails.set(ip, { n: 1, until: now + FAIL_WINDOW }); else f.n += 1;
       if (fails.size > 5000) for (const [k, x] of fails) if (x.until <= now) fails.delete(k);
       return reply(401, { error: 'invalid signature' });
@@ -101,7 +106,7 @@ export function createBilling({ pool, adapter = groble, secrets = () => [], log 
         `INSERT INTO billing_events (provider, idem_key, event_id, type, occurred_at, ref, merchant_uid, amount, raw)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (provider, idem_key) DO NOTHING RETURNING id`,
         [adapter.name, key, ev.ok ? ev.id.slice(0, 200) : '', ev.ok ? ev.type.slice(0, 100) : '', ev.ok ? ev.occurredAt : null, ev.ok ? ev.ref : '',
-          ev.ok ? ev.merchantUid : '', ev.ok ? ev.amount : null, ev.ok ? safeJson(ev.body) : { unreadable: true, text: rawText(rawBody) }]);
+          ev.ok ? ev.merchantUid : '', ev.ok ? ev.amount : null, ev.ok ? noNul(ev.body) : { unreadable: true, text: rawText(rawBody) }]);
       if (!ins.rowCount) { await c.query('COMMIT'); return reply(200, { duplicate: true }); }
       const out = await reflect(c, ev);
       await c.query('UPDATE billing_events SET result = $2, note = $3, user_id = $4, subscription_id = $5, review = $6 WHERE id = $1',
@@ -176,7 +181,12 @@ export function createBilling({ pool, adapter = groble, secrets = () => [], log 
       `SELECT id, status, paid_until, next_billing_date::text AS next_billing_date, service_ends_at, final_failure, occurred_at, plan_id, last_paid_at, last_amount
          FROM subscriptions WHERE user_id = $1 AND provider = 'groble' AND ref = $2 FOR UPDATE`, [userId, ev.ref])).rows[0];
     const at = ev.occurredAt || new Date();
-    if (row.occurred_at && at.getTime() <= new Date(row.occurred_at).getTime()) return { result: 'stale', note: '늦게 온 소식 — 더 나중 일을 이미 반영했다(기록만)', userId, subId: row.id };
+    // 더 이른 소식은 기록만. 때가 같으면 일의 차례(결제 < 실패 < 해지 예고 < 해지 완료)가 뒤인 것만 반영한다 —
+    // 즉시 해지(예고와 완료가 같은 때)의 «해지 완료»를 잃지 않고, 같은 소식이 다시 와도 두 번 반영하지 않는다.
+    if (row.occurred_at) {
+      const prev = new Date(row.occurred_at).getTime();
+      if (at.getTime() < prev || (at.getTime() === prev && STEP[ev.kind] <= STATUS_STEP[row.status])) return { result: 'stale', note: '늦게 온 소식 — 더 나중 일을 이미 반영했다(기록만)', userId, subId: row.id };
+    }
     const next = { ...row };
     let note = ''; let review = false;
     if (ev.kind === 'paid') {
@@ -187,17 +197,22 @@ export function createBilling({ pool, adapter = groble, secrets = () => [], log 
         service_ends_at: null, final_failure: false, last_paid_at: at, last_amount: ev.amount, plan_id: plan ? plan.id : row.plan_id });
       note = (ev.billingReason === 'RENEWAL' ? '갱신' : '결제') + ' — 다음 결제일 ' + day + ' + 여유 ' + rules.graceDays + '일까지' + (force ? ' (운영자가 연결)' : '');
       // 이미 이용 중인 사람의 새 정기결제 — 두 번 결제했을 수 있다(운영자가 본다 · 막지는 않는다)
-      if (ev.billingReason !== 'RENEWAL' && (await c.query(
-        `SELECT 1 FROM subscriptions WHERE user_id = $1 AND provider = 'groble' AND ref <> $2 AND status IN ('active', 'past_due') AND paid_until > now() LIMIT 1`, [userId, ev.ref])).rowCount) {
-        review = true; note += ' · 이미 이용 중인 정기결제가 또 있다(겹친 결제인지 확인)';
+      // 참조값 없이 온 정기결제는 사람마다 한 줄로 모인다(가려낼 값이 없다) — 그 줄이 이미 살아 있는데 새 최초 결제가 와도 겹친 결제로 본다
+      const sameRowLive = !ev.ref && ['active', 'past_due'].includes(row.status) && row.paid_until && new Date(row.paid_until) > new Date();
+      if (ev.billingReason !== 'RENEWAL' && (sameRowLive || (await c.query(
+        `SELECT 1 FROM subscriptions WHERE user_id = $1 AND provider = 'groble' AND ref <> $2 AND status IN ('active', 'past_due') AND paid_until > now() LIMIT 1`, [userId, ev.ref])).rowCount)) {
+        review = true; note += ' · 이미 이용 중인 정기결제가 또 있다(겹친 결제인지 확인' + (sameRowLive ? ' — 참조값 없는 결제는 한 줄로 모인다' : '') + ')';
       }
     } else if (ev.kind === 'failed') {
       Object.assign(next, { status: 'past_due', final_failure: !!ev.isFinal });
       note = ev.isFinal ? '마지막 재시도도 실패 — 유예가 끝나면 해지된다' : '갱신 결제 실패 — 그로블이 다시 시도한다(이용은 그대로)';
     } else if (ev.kind === 'cancel_requested') {
+      // 지금 막지는 않는다 — 다만 끝나는 날(화면이 보이는 날) + 하루에 저절로 끝나게 한다(«해지 완료»를 못 받아도 갱신 여유를 더 쓰지 않게)
       const day = ev.nextBillingDate || row.next_billing_date;
-      Object.assign(next, { status: 'cancel_pending', service_ends_at: ev.serviceEndsAt || (day ? dayEndPlus(day) : null) });
-      note = '해지 예고 — 이용 기간은 남는다';
+      const ends = ev.serviceEndsAt || (day ? dayEndPlus(day) : null);
+      const cap = ends ? new Date(new Date(ends).getTime() + DAY) : null;
+      Object.assign(next, { status: 'cancel_pending', service_ends_at: ends, paid_until: cap && row.paid_until && new Date(row.paid_until) > cap ? cap : row.paid_until });
+      note = '해지 예고 — 이용 기간은 남는다' + (ends ? '(' + kstDay(ends) + '까지)' : '');
     } else if (ev.kind === 'terminated') {
       Object.assign(next, { status: 'ended', paid_until: ev.terminatedAt || at });
       note = '해지 완료 — 이용권 끝';
@@ -220,7 +235,7 @@ export function createBilling({ pool, adapter = groble, secrets = () => [], log 
     return { ...summarize(rows, { free, operator: !!user.isPlatformAdmin }), plans };
   }
 
-  // [결제하기] — 누를 때마다 새 참조값(정기결제 하나 = 참조값 하나) + 결제창 링크. 쓰지 않은 참조값은 사람마다 최근 20개만 남긴다.
+  // [결제하기] — 누를 때마다 새 참조값(정기결제 하나 = 참조값 하나) + 결제창 링크.
   async function checkout(user, planId) {
     const plan = UUID.test(String(planId || '')) ? (await pool.query('SELECT id, checkout_url FROM billing_plans WHERE id = $1 AND enabled', [planId])).rows[0] : null;
     if (!plan) return { ok: false, code: 'missing' };
@@ -228,9 +243,10 @@ export function createBilling({ pool, adapter = groble, secrets = () => [], log 
     const url = adapter.checkoutUrl(plan.checkout_url, ref);
     if (!url) return { ok: false, code: 'bad_link' };
     await pool.query(`INSERT INTO billing_refs (kind, ref, user_id, plan_id) VALUES ('link', $1, $2, $3)`, [ref, user.id, plan.id]);
+    // 쓰지 않은 참조값 걷기 — 오래 열어 둔 결제창 탭도 잇도록 30일이 지난 것만, 그래도 사람마다 200개를 넘으면 오래된 것부터
     await pool.query(
-      `DELETE FROM billing_refs WHERE kind = 'link' AND user_id = $1 AND used_at IS NULL AND ref NOT IN (
-         SELECT ref FROM billing_refs WHERE kind = 'link' AND user_id = $1 AND used_at IS NULL ORDER BY created_at DESC LIMIT 20)`, [user.id]);
+      `DELETE FROM billing_refs WHERE kind = 'link' AND user_id = $1 AND used_at IS NULL AND (created_at < now() - interval '30 days' OR ref NOT IN (
+         SELECT ref FROM billing_refs WHERE kind = 'link' AND user_id = $1 AND used_at IS NULL ORDER BY created_at DESC LIMIT 200))`, [user.id]);
     return { ok: true, url };
   }
 

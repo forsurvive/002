@@ -55,6 +55,10 @@ export async function run({ pool, ok, eq }) {
       const r = [];
       for (let i = 1; i <= 6; i++) r.push((await made({ loginId: 'su-many-' + i, password: 'long-enough-many' })).status);
       ok('**같은 곳에서 새 계정은 1시간에 5개까지(여섯째는 429)**', r.slice(0, 5).every((x) => x === 200) && r[5] === 429 && !(await has('su-many-6')), r.join(','));
+      // 동시에 몰려와도 — 자리는 묻는 순간에 잡는다(기다리는 동안 같은 빈자리를 보지 못한다)
+      const race = await start();
+      await Promise.all(Array.from({ length: 12 }, (_, i) => race({ loginId: 'su-race-' + i, password: 'long-enough-race' })));
+      eq('**같은 곳에서 동시에 12개를 보내도 새 계정은 5개까지**', (await pool.query("SELECT count(*)::int AS n FROM users WHERE login_id LIKE 'su-race-%'")).rows[0].n, 5);
       const tries = await start();
       const t = [];
       for (let i = 1; i <= 21; i++) t.push((await tries({ loginId: 'su-try-' + i, password: 'short' })).status);

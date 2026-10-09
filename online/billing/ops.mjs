@@ -4,8 +4,8 @@
 // 손으로 바꾼 것은 모두 감사 기록(누가 · 언제 · 무엇을 · 왜). 메모 · 개인정보는 감사 기록에 싣지 않는다.
 
 import { createBillingAdmin } from './admin.mjs';
+import { isUuid } from '../tenancy.mjs';
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function billingOps({ pool, billing, log = async () => {} }) {
   const admin = createBillingAdmin({ pool, billing });
@@ -17,7 +17,7 @@ export function billingOps({ pool, billing, log = async () => {} }) {
   // 운영자만 — 대상은 있는 사람이어야 한다
   const target = async (user, b) => {
     if (!user.isPlatformAdmin) return { err: FORBIDDEN };
-    const u = UUID.test(String(b.userId || '')) ? (await pool.query('SELECT id, login_id FROM users WHERE id = $1', [b.userId])).rows[0] : null;
+    const u = isUuid(b.userId) ? (await pool.query('SELECT id, login_id FROM users WHERE id = $1', [b.userId])).rows[0] : null;
     return u ? { u } : { err: NOT_FOUND };
   };
 
@@ -80,7 +80,7 @@ export function billingOps({ pool, billing, log = async () => {} }) {
     async 'billing.link'(user, b, ip) {
       if (!user.isPlatformAdmin) return FORBIDDEN;
       const login = String(b.loginId || '').trim().toLowerCase();
-      const u = UUID.test(String(b.userId || '')) ? (await pool.query('SELECT id, login_id FROM users WHERE id = $1', [b.userId])).rows[0]
+      const u = isUuid(b.userId) ? (await pool.query('SELECT id, login_id FROM users WHERE id = $1', [b.userId])).rows[0]
         : login ? (await pool.query('SELECT id, login_id FROM users WHERE login_id = $1', [login])).rows[0] : null;
       if (!u) return no(404, '그 아이디의 계정이 없습니다', 'missing');
       const r = await admin.link(b.eventId, u.id, user.id);

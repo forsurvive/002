@@ -393,6 +393,45 @@ export async function run({ pool, ok, eq }) {
     const st = [];
     for (let i = 0; i < 31; i++) st.push((await hook(sample(), { secret: 'wrong-secret' })).status);
     ok('같은 곳에서 서명이 거듭 틀리면 429', st.slice(0, 28).every((x) => x === 401) && st[30] === 429, st.join(','));
+    // 틀린 서명이 쏟아져도(같은 곳 — 플랫폼 앞단 뒤라 주소가 하나로 보일 때) 그로블의 맞는 서명은 막히지 않는다
+    const good = await hook(sample({}, { sellerReference: '' , buyer: { email: 'nobody2@example.com' } }));
+    eq('**틀린 서명이 쏟아지는 중에도 맞는 서명의 웹훅은 200**', good.status, 200);
+
+    // ---------------- 구매자가 넣은 글자 — 이스케이프된 «\\u0000» 도, 진짜 NUL 글자도 원문을 남긴다(저장이 막혀 503 이 되풀이되지 않게)
+    {
+      const r1 = await hook(sample({}, { sellerReference: '', buyer: { displayName: 'a\\u0000b', email: 'nul1@example.com' } }));
+      const r2 = await hook(sample({}, { sellerReference: '', buyer: { displayName: 'c\u0000d', email: 'nul2@example.com' } }));
+      const names = (await pool.query(`SELECT raw->'data'->'object'->'buyer'->>'displayName' AS n FROM billing_events WHERE raw->'data'->'object'->'buyer'->>'email' IN ('nul1@example.com', 'nul2@example.com') ORDER BY id`)).rows.map((r) => r.n);
+      ok('**이름에 글자 «\\u0000» 이 있어도 · 진짜 NUL 이 있어도 200 으로 남긴다**', r1.status === 200 && r2.status === 200 && names[0] === 'a\\u0000b' && names[1] === 'cd', JSON.stringify([r1.status, r2.status, names]));
+    }
+
+    // ---------------- 해지 예고 — 끝나는 날 + 하루에 저절로 끝나게 · 즉시 해지(예고와 완료가 같은 때)도 «해지 완료»를 잃지 않는다
+    {
+      const cu = await mk('bl-cancel');
+      await pool.query(`INSERT INTO billing_refs (kind, ref, user_id) VALUES ('link', 'cancel-ref-1', $1)`, [cu.id]);
+      await hook(ev('subscription_payment.completed', 'cancel-ref-1', 165, { subscription: { billingReason: 'INITIAL', nextBillingDate: day(30) }, merchantUid: 'M-C1' }));
+      const ends = new Date(Date.now() + 3 * 86400000);
+      await hook(ev('subscription.cancel_requested', 'cancel-ref-1', 170, { serviceEndsAt: ends.toISOString() }));
+      const c1 = await subOf('cancel-ref-1');
+      ok('**해지 예고 — 지금은 쓰고, 끝나는 날 + 하루에 저절로 끝난다(해지 완료를 못 받아도)**', c1.status === 'cancel_pending' && Math.abs(new Date(c1.paid_until) - (ends.getTime() + 86400000)) < 2000 && (await passActive(pool, cu.id)));
+      const same = at(175);
+      await hook(sample({ type: 'subscription.cancel_requested', occurredAt: same }, { sellerReference: 'cancel-ref-1', serviceEndsAt: ends.toISOString() }));
+      await hook(sample({ type: 'subscription.terminated', occurredAt: same }, { sellerReference: 'cancel-ref-1', termination: { terminatedAt: same } }));
+      ok('**예고와 완료가 같은 때에 와도 «해지 완료»를 반영한다**', (await subOf('cancel-ref-1')).status === 'ended' && !(await passActive(pool, cu.id)) && (await lastEvent()).result === 'applied');
+      await hook(sample({ type: 'subscription.terminated', occurredAt: same }, { sellerReference: 'cancel-ref-1', termination: { terminatedAt: same } }));
+      eq('같은 때 같은 소식이 다른 열쇠로 다시 오면 기록만', (await lastEvent()).result, 'stale');
+    }
+
+    // ---------------- 참조값 없이 온 정기결제는 사람마다 한 줄로 모인다 — 살아 있는 줄에 새 최초 결제가 오면 겹친 결제로 «확인 필요»
+    {
+      const mu = await mk('bl-mail');
+      await pool.query("UPDATE users SET email = 'mail@example.com' WHERE id = $1", [mu.id]);
+      await hook(ev('subscription_payment.completed', '', 171, { buyer: { email: 'mail@example.com' }, subscription: { billingReason: 'INITIAL', nextBillingDate: day(31) }, merchantUid: 'M-R1' }));
+      const a1 = await lastEvent();
+      await hook(ev('subscription_payment.completed', '', 172, { buyer: { email: 'mail@example.com' }, subscription: { billingReason: 'INITIAL', nextBillingDate: day(31) }, merchantUid: 'M-R2' }));
+      const a2 = await lastEvent();
+      ok('**참조값 없는 두 번째 최초 결제 — 반영하고 겹친 결제로 «확인 필요»**', a1.result === 'applied' && !a1.review && a2.result === 'applied' && a2.review && /한 줄로 모인다/.test(a2.note), JSON.stringify([a1, a2]));
+    }
   } finally {
     await new Promise((r) => srv.close(r));
   }
