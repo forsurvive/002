@@ -17,6 +17,23 @@ export async function run({ pool, ok, eq }) {
   await store.update(pid, (p) => { M.docCreate(p, { title: '1화', body: '비밀 본문' }); });
   const personal = await store.create({ name: '개인 원고' }, { ownerUserId: owner.id });
 
+  // 읽기는 PUBLIC 에 걸려 있다(migrations/016 — 복사해도 서게) — 그래도 행은 정책이 거른다: se_reader 가 아닌 역할도 app.user_id 없이는 0행, 쓰지 못한다
+  await pool.query('DROP ROLE IF EXISTS se_probe');
+  await pool.query('CREATE ROLE se_probe NOLOGIN');
+  try {
+    const p = await pool.connect();
+    try {
+      await p.query('BEGIN'); await p.query('SET LOCAL ROLE se_probe');
+      const n = (await p.query('SELECT count(*)::int AS n FROM documents')).rows[0].n;
+      const pr = (await p.query('SELECT count(*)::int AS n FROM projects')).rows[0].n;
+      let wrote = true; try { await p.query(`UPDATE documents SET title = 'x'`); } catch { wrote = false; }
+      await p.query('ROLLBACK');
+      ok('**PUBLIC 에 준 읽기도 정책이 거른다 — 다른 역할은 app.user_id 없이 0행 · 쓰지 못한다**', n === 0 && pr === 0 && !wrote, JSON.stringify({ n, pr, wrote }));
+    } finally { p.release(); }
+  } finally {
+    await pool.query('DROP ROLE IF EXISTS se_probe');
+  }
+
   const on = await store.readerOn();
   if (!on) {
     ok('역할이 없는 DB 에서는 getAs 가 get 으로 접는다(1차 판정만)', !!(await store.getAs(pid, other.id)));

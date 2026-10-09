@@ -2949,6 +2949,15 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('**Replit 작업 공간의 기본 포트는 미리보기가 기다리는 5000 — .replit [[ports]] 와 같다**', hosting.resolveHosting({ REPL_ID: 'x' }).port === 5000
     && hosting.resolveHosting({ REPL_ID: 'x', PORT: '3000' }).port === 3000 && hosting.resolveHosting({ REPL_ID: 'x', SE2_PORT: '8801' }).port === 8801
     && new RegExp('localPort = ' + hosting.REPLIT_PORT + '\\b').test(replit));
+  // Replit 게시는 개발 DB 의 구조를 운영 DB 에 먼저 옮겨 적을 수 있다(docs/REPLIT_DEPLOYMENT §4-4 · §5) —
+  // 016 다음 마이그레이션은 이미 선 표 · 칸 · 색인을 만나도 넘어가게 쓴다(서버가 켤 때 같은 것을 다시 짓다 멈추지 않게)
+  const migDir = join(ROOT, 'migrations');
+  const rerunStops = readdirSync(migDir).filter((f) => /^\d{3}_[a-z0-9_]+\.sql$/.test(f) && Number(f.slice(0, 3)) > 16).filter((f) => {
+    const sql = src(join(migDir, f)).replace(/--[^\n]*/g, '');
+    return /CREATE\s+(UNIQUE\s+)?(TABLE|INDEX)\s+(?!IF\s+NOT\s+EXISTS)/i.test(sql) || /ADD\s+COLUMN\s+(?!IF\s+NOT\s+EXISTS)/i.test(sql) || /CREATE\s+FUNCTION/i.test(sql)
+      || (/CREATE\s+POLICY/i.test(sql) && !/DROP\s+POLICY\s+IF\s+EXISTS/i.test(sql)) || (/CREATE\s+TRIGGER/i.test(sql) && !/DROP\s+TRIGGER\s+IF\s+EXISTS/i.test(sql));
+  });
+  ok('**016 다음 마이그레이션은 이미 선 것을 만나도 넘어간다(IF NOT EXISTS · OR REPLACE · DROP … IF EXISTS)**', rerunStops.length === 0, rerunStops.join(', '));
 }
 
 server.close();

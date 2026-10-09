@@ -14,6 +14,17 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const MIGRATIONS_DIR = join(dirname(HERE), 'migrations');
 const LOCK_KEY = 7310021;   // 이 앱의 마이그레이션 잠금 번호
 
+// DB 2차 격리의 읽기 역할(se_reader)은 DB 밖(클러스터)의 것 — DB 를 복사(pg_dump → pg_restore)하면 따라가지 않는다(migrations/016).
+// 그래서 켤 때마다 확인해, 없으면 다시 세우고 이 연결이 그 역할로 바꿀 수 있게 한다. 만들 권한이 없는 DB 면 조용히 지나간다(store.getAs 가 접는다).
+// GRANT 는 늘 한다 — PostgreSQL 16 은 역할을 만든 이에게 ADMIN 만 주고 SET(역할 바꾸기)은 주지 않는다. 이미 있으면 알림만 난다.
+const ENSURE_READER = `DO $r$
+BEGIN
+  IF to_regprocedure('se_can_read(uuid)') IS NULL THEN RETURN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'se_reader') THEN CREATE ROLE se_reader NOLOGIN; END IF;
+  EXECUTE format('GRANT se_reader TO %I', current_user);
+EXCEPTION WHEN insufficient_privilege OR invalid_grant_operation OR duplicate_object THEN NULL;
+END $r$`;
+
 export function migrationFiles(dir = MIGRATIONS_DIR) {
   return readdirSync(dir).filter((f) => /^\d{3}_[a-z0-9_]+\.sql$/.test(f)).sort()
     .map((name) => {
@@ -47,6 +58,7 @@ export async function migrate(pool, { dir = MIGRATIONS_DIR, log = () => {} } = {
       applied.push(m.name);
       log('  [MIGRATE] applied ' + m.name);
     }
+    try { await c.query(ENSURE_READER); } catch { /* 2차 격리는 덧울타리 — 서지 못해도 앱은 1차 판정으로 돈다 */ }
     return { applied };
   } finally {
     try { await c.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY]); } catch { /* 연결이 끊겼으면 잠금도 풀렸다 */ }

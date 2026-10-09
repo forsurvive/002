@@ -32,6 +32,15 @@ await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   try { await migrate(pool); } catch (e) { stopped = String(e.message); }
   ok('적용한 파일이 바뀌면 멈춘다', stopped.includes('was changed'), stopped);
   await pool.query("UPDATE schema_migrations SET sha256 = $1 WHERE name = '001_initial_schema.sql'", [migrationFiles()[0].sha256]);
+  // 복사해도 선다(migrations/016) — 정책 · 권한이 주인과 PUBLIC 말고 다른 역할을 부르지 않는다.
+  // 역할은 DB 밖(클러스터)의 것이라 pg_dump 에 실리지 않는다 — 부르면 다른 곳에 붓다가 «role … does not exist» 로 멈춘다(Replit 개발 → 운영 복사).
+  const named = (await pool.query(`SELECT
+      (SELECT count(*) FROM pg_policy WHERE polroles <> '{0}')
+    + (SELECT count(*) FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a WHERE c.relnamespace = 'public'::regnamespace AND a.grantee NOT IN (0, c.relowner))
+    + (SELECT count(*) FROM pg_attribute t JOIN pg_class c ON c.oid = t.attrelid CROSS JOIN LATERAL aclexplode(t.attacl) a WHERE c.relnamespace = 'public'::regnamespace AND a.grantee NOT IN (0, c.relowner))
+    + (SELECT count(*) FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a WHERE p.pronamespace = 'public'::regnamespace AND a.grantee NOT IN (0, p.proowner))
+    + (SELECT count(*) FROM pg_namespace n CROSS JOIN LATERAL aclexplode(n.nspacl) a WHERE n.nspname = 'public' AND a.grantee NOT IN (0, n.nspowner)) AS n`)).rows[0].n;
+  eq('**복사해도 선다 — 정책 · 권한이 다른 역할 이름을 품지 않는다(pg_dump → pg_restore)**', Number(named), 0);
 }
 
 // ---------------------------------------------------------------- 인증

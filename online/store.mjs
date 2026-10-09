@@ -359,10 +359,22 @@ async function saveAggregate(db, pid, before, after, maps, { userId = null, runI
  *   get(pid) · update(pid, fn, { userId }) · create(fields, { ownerUserId, organizationId }) · remove(pid) · listFor(userId)
  */
 export function createProjectStore(pool) {
-  // DB 2차 격리를 쓸 수 있는가(migrations/014 가 se_reader 를 세웠고 이 연결이 그 역할로 바꿀 수 있는가) — 한 번만 본다
+  // DB 2차 격리를 쓸 수 있는가(se_reader 가 있고 이 연결이 정말 그 역할로 바꿀 수 있는가 — migrations/014 · 016, migrate 가 켤 때 세운다) — 한 번만 본다.
+  // 멤버인지만 보지 않고 바꿔 본다: PostgreSQL 16 은 ADMIN 만 있고 SET 이 없는 멤버를 «멤버»라 답한다.
   let readerOk = null;
-  const reader = () => (readerOk ??= pool.query(`SELECT pg_has_role(current_user, 'se_reader', 'MEMBER') AS ok FROM pg_roles WHERE rolname = 'se_reader'`)
-    .then((r) => !!(r.rows[0] && r.rows[0].ok)).catch(() => false));
+  const reader = () => (readerOk ??= (async () => {
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL ROLE se_reader');
+      return true;
+    } catch {
+      return false;
+    } finally {
+      try { await c.query('ROLLBACK'); } catch { /* 끊김 */ }
+      c.release();
+    }
+  })().catch(() => false));
   return {
     async get(pid) {
       const r = await loadAggregate(pool, pid);
