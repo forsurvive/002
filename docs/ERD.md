@@ -161,6 +161,10 @@ CREATE INDEX runs_org_time ON generation_runs (organization_id, started_at);
    `SET LOCAL ROLE se_reader` + `app.user_id` 로 읽는다. `se_reader` 에는 작품 · 문서 · 판 · 참조 · 카테고리 · 에이전트 · 스레드 · 휴지통 등 14표에
    SELECT 정책(`se_can_read` — tenancy 의 «읽기»와 같은 규칙)만 있고 쓰기 권한은 없다. 쓰기 길 · worker 는 표의 주인으로 돌아 RLS 를 지나간다(FORCE 없음).
    역할을 만들 권한이 없는 DB 면 마이그레이션이 그냥 지나가고 앱은 1차 판정만으로 돈다(`store.readerOn()` 이 false). 시험: `online/test.rls.mjs`.
+   → 복사해도 서게(2026-10-09, migrations/016): 정책 · 읽기(SELECT) 권한을 역할 이름 대신 PUBLIC 에 건다 — 행은 정책이 거르므로(`app.user_id` 없이는 0행) 새로 열리는 것은 없고,
+   DB 를 다른 곳에 복사(pg_dump → pg_restore, Replit 의 개발 → 운영 복사)해도 `role "se_reader" does not exist` 로 멈추지 않는다.
+   역할 `se_reader` 는 DB 밖(클러스터)의 것이라 복사본에 실리지 않는다 — `online/migrate.mjs` 가 켤 때마다 세우고 그 역할로 바꿀 권리를 준다
+   (PostgreSQL 16 은 역할을 만든 이에게 ADMIN 만 준다 — `store.readerOn()` 은 멤버인지 묻지 않고 정말 바꿔 본다). 시험: `online/test.mjs`(정책 · 권한이 주인과 PUBLIC 말고는 부르지 않는다).
    worker 는 작업의 프로젝트 하나로 범위를 좁힌 같은 방식으로 붙는다.
 
 ## 6. 지금 JSON → 표 대응(요약)
