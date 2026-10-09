@@ -166,6 +166,11 @@
 | `member.reset_password` `{orgId, userId}` | 기관 관리자(그 기관 — 기관 관리자는 최상위만) · 강사(맡은 수업의 학생만) | 비밀번호를 바꾸지 않고 **재설정 코드**(7일 · 한 번)를 준다 → `{resetCode, days}`. 쓰기 전까지 `org.members` · `class.progress` 에 다시 보인다(봉한 사본). 관리자는 남의 비밀번호를 모른다 |
 | (링크) `/login?invite=코드` · `/login?reset=코드&id=아이디` | 누구나 | 코드를 손으로 옮기지 않게 — 관리 화면의 [링크 복사] · [보내기](휴대폰 공유 창). 초대 링크는 코드가 채워진 «계정 만들기»(이미 로그인했으면 «내 계정 → 새 수업 코드 넣기»로), 재설정 링크는 아이디 · 코드가 채워진 «비밀번호를 잊었어요». 열면 주소창에서 코드를 지운다. 재설정 링크는 1:1로만(2026-10-05) |
 | `me.pass` · `me.pass.checkout` `{planId}` | 로그인한 사람(**자유 가입판에만** — 교육기관판은 404) | 내 이용권 `{active, status: active\|past_due\|cancel_pending\|ended\|none, provider, paidUntil, nextBillingDate, serviceEndsAt, finalFailure, plans:[{id,name}]}`(금액 없음) · [결제하기] → `{url}`(결제창 + 새 참조값) |
+| `billing.customers` `{q?, status?, limit?, offset?}` · `billing.customer` `{userId}` | **최상위 운영자**(자유 가입판에만) | 고객 목록(찾기 · 상태별 거르기 `active\|past_due\|cancel_pending\|ended\|none\|free` · 50명씩) · 한 사람(이용권 줄 · 결제 기록 — 이름 · 전화 · 이메일 가림 · 메모) |
+| `billing.extend` `{userId, days, reason}` · `billing.end` `{userId, reason}` · `billing.free` `{userId, on, reason}` · `billing.memo` `{userId, memo}` | 최상위 운영자 | 손 연장(지금 기한부터 n일 — `manual` 줄) · 이용권 끝내기(모든 줄 + 무료 이용 끔) · 무료 이용 · 메모. 감사 기록(왜 · 메모는 길이만). 그로블 카드 청구는 끊지 않는다 |
+| `billing.events` · `billing.link` `{eventId, loginId\|userId, reason}` · `billing.ignore` `{eventId, reason}` · `billing.health` | 최상위 운영자 | 결제 기록(«확인 필요» 따로 · 최근 100 · 이번 달 수 · 합계) · [이 계정에 연결](금액 검사 없이 반영 · 참조값(다른 계정 것이면 409) 또는 구매자 이메일을 기억) · [무시] · 웹훅 상태(시크릿 있음/없음 · 마지막 받은 때 · 틀린 서명 수 · 소식이 늦은 정기결제 수) |
+| `billing.plans` · `billing.plan.save` `{id?, name, checkoutUrl, price, cycleMonths, productId, enabled, sortOrder}` · `billing.rules` · `billing.rules.save` `{trialDays, graceDays}` | 최상위 운영자 | 결제 옵션(가격 · 주기는 만든 뒤 못 바꿈 · 상품 번호는 빈 때 한 번) · 이용 규칙(체험 0~90 · 여유 0~60, 막는 범위는 «새 AI 작업만» 고정) |
+| `user.reset_code` `{userId}` | 최상위 운영자(두 판) | 운영자 아닌 계정에 비밀번호 재설정 코드(7일 · 한 번) — 기관에 묶이지 않은 계정용(자유 가입판 §4-5) |
 | `password.reset` `{loginId, code, password}` | **로그인 없이** | 로그인 화면 «비밀번호를 잊었어요» — 재설정 코드(또는 운영자는 Secrets 의 `SE2_RECOVERY_CODE`)로 새 비밀번호를 정하고 곧바로 들어간다. 틀리면 초대 코드와 같은 맞히기 고삐 |
 
 새 작품은 작업실(홈)의 «+» 한 곳에서 만든다(2026-10-05): 창 맨 위 «어디에 만들까요?» — `/api/state` 의 `me.places`(열려 있고 기관 이용 기간 안인 내 수업)

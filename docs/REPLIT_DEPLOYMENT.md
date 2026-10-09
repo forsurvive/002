@@ -80,6 +80,7 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
 
 `DATABASE_URL`(Replit 이 넣어 줌) · `SESSION_SECRET` · `CREDENTIALS_KEY_V1`(credential 암호화 마스터 키, 32바이트 base64) · `NODE_ENV`(`staging`/`production`) ·
 `SE_EDITION`(`school` 기본 — 교육기관판 · `open` — 자유 가입판, docs/OPEN_EDITION.md. 모르는 값은 `school`) ·
+`GROBLE_WEBHOOK_SECRET` · `GROBLE_WEBHOOK_SECRET_PREVIOUS`(자유 가입판만 — 그로블 웹훅 서명 시크릿, 교체하는 24시간만 옛 값도 · §4-4) ·
 `SE_TRUST_PROXY=1`(플랫폼 앞단 뒤) · `SE_WORKER=0`(웹만 — worker 는 `npm run worker` 로 따로, `WORKER_POLL_MS` 기본 2000) · `SE_MIGRATE_ON_BOOT`(기본 켬) · `DB_POOL_MAX`(기본 5) · `WORKER_CONCURRENCY` · (플랫폼이 AI 를 대 줄 때만) `ANTHROPIC_API_KEY`·`OPENAI_API_KEY`·`GEMINI_API_KEY`.
 **기관/개인의 API 키는 환경 변수에 두지 않는다** — DB 에 암호화(명세 AH-7).
 
@@ -148,6 +149,25 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
 2. Replit → Secrets 에 `CLAUDE_CODE_OAUTH_TOKEN` = 그 토큰. 채팅 · 코드 · 파일에 붙여 넣지 않는다.
 3. `npm run update` → Run(처음 한 번 Claude Code 실행기를 받아 온다) → [다시 게시].
 4. 게시 사이트 «내 계정 → Claude 구독(운영자 전용)» 켜기 → [연결 확인].
+
+## 4-4. 자유 가입판 띄우기 — 두 번째 앱(2026-10-09, docs/OPEN_EDITION.md §4-7 · §5)
+
+코드는 같다 — 같은 GitHub 브랜치를 **App 하나 더**로 띄우고 `SE_EDITION=open` 만 다르다. DB 도 따로다(교육기관판의 계정 · 작품과 섞이지 않는다).
+
+1. **App 하나 더**: replit.com/import 에서 같은 저장소(`forsurvive/002`)로 새 App → Git 창에서 브랜치 `claude/charming-keller-12p0c5`.
+2. **데이터베이스**: 그 App 의 Database 에서 PostgreSQL 을 새로 만든다(`DATABASE_URL` 이 저절로).
+3. **Secrets**: `SE_EDITION` = `open`. 게시할 때는 `CREDENTIALS_KEY_V1` 도(`npm run key` 로 **교육기관판과 다른 값**).
+4. ▶ 실행 → Console 에 `Edition : open (open sign-up)` 가 찍히면 자유 가입판이다 → 처음 설정(운영자 계정). 처음 설정 전에는 가입을 받지 않는다(낯선 사람이 첫 계정을 차지하지 못하게).
+5. **결제 옵션 넣기**: 관리 → 운영 → [결제 옵션] → [+ 새 결제 옵션] — 이름(사용자에게 보임, 예: «월 이용권(5,000원)») · 그로블 결제창 링크 · 가격 5000 · 주기 1.
+6. **그로블 상품 설정**: «진입 페이지» = `https://<자유 가입판 주소>/login?signup`(가입 칸이 열린 첫 화면) · «이동 페이지» = `https://<자유 가입판 주소>/account.html?paid=1`(돌아오면 이용권을 1분까지 기다려 보인다).
+7. **웹훅 연결**: 그로블 «내 스토어 → 연동» → URL `https://<자유 가입판 주소>/api/billing/groble`(운영 → [결제 기록]의 «받는 주소» [복사]) → 이벤트 여덟 모두 켜기 →
+   **처음 한 번만 보이는 시크릿을 곧바로 Secrets 의 `GROBLE_WEBHOOK_SECRET` 에**(채팅 · 문서 · 깃에 붙이지 않는다) → 다시 게시(Secrets 는 다시 게시해야 들어간다).
+   시크릿이 없을 때 온 웹훅은 503 으로 돌려보내 그로블이 다시 보낸다(약 44시간까지) — 그동안 운영 → [결제 기록]이 «시크릿 없음»을 붉게 보인다.
+8. **확인**: 그로블 [테스트 발송] → [결제 기록]에 한 줄(테스트 값은 우리 참조값이 아니어서 «연결 안 됨» — [무시]로 닫는다) → **시험 결제 한 번 + 해지 한 번** →
+   [결제 기록]에 «반영» 줄 · [고객]에서 그 사람의 «이용 중 → 해지 예정 → 끝남».
+
+시크릿을 바꿀 때: 그로블에서 재발급 → 새 값을 `GROBLE_WEBHOOK_SECRET`, 옛 값을 `GROBLE_WEBHOOK_SECRET_PREVIOUS` 에 → 다시 게시 → 24시간 뒤 `…_PREVIOUS` 를 지운다(그동안 두 서명을 모두 받는다).
+웹훅이 오래 끊겼으면(그로블은 20건 연속 실패 + 3일이면 엔드포인트를 끈다): [결제 기록]의 «소식이 늦은 정기결제» → [고객]에서 [기간 연장]으로 메우고, 그로블 «연동»에서 다시 켠다.
 
 ## 5. PostgreSQL (Phase 3 계획)
 

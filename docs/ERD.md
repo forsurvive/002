@@ -117,6 +117,19 @@ erDiagram
 | `audit_logs` | id · at · actor_user_id · actor_role · organization_id · action · target_type · target_id · ip · user_agent · details jsonb(가린 값만) | 로그인·권한 변경·기관 생성·라이선스·credential·삭제/복구(명세 §61) |
 | `file_objects` | id · organization_id · project_id · storage_key · original_name · content_type · byte_size · sha256 · extracted_document_id · created_by · created_at · deleted_at | 업로드 원본은 Object Storage, 추출 텍스트는 자료 문서로 |
 
+### 3-5. 이용권 — 자유 가입판의 월 이용료(migrations/015, 2026-10-09)
+
+AI 비용(본인 키 — `generation_runs` · `usage_ledger`)과 **섞지 않는다**(원칙 7) — 이 표들은 생성 기록과 잇지 않는다. 교육기관판에서는 비어 있다. 설계: [OPEN_EDITION.md](OPEN_EDITION.md) §4-4 · §4-6.
+
+| 테이블 | 열 | 메모 |
+|---|---|---|
+| `billing_refs` | kind(`link`/`email`) · ref · user_id · plan_id · created_at · used_at | PK(kind, ref). `link` = [결제하기]마다 새로 짓는 무작위 참조값(결제창 `?ref=`) — 그로블이 그 정기결제의 모든 소식에 같은 값을 돌려주므로 **참조값 하나 = 정기결제 하나**. `email` = 운영자가 [이 계정에 연결]로 이어 준 구매자 이메일 |
+| `billing_plans` | id · name · checkout_url · price · cycle_months · product_id · enabled · sort_order · created_at · updated_at | 결제 옵션. 가격 · 주기는 만든 뒤 바꾸지 않는다(새 줄 · 옛 줄 끄기). 꺼진 줄도 옛 구독자의 갱신을 맞춰 본다 |
+| `subscriptions` | id · user_id · provider(`groble`/`manual`/`trial`) · ref · status(`active`/`past_due`/`cancel_pending`/`ended`) · paid_until · next_billing_date · service_ends_at · final_failure · occurred_at · plan_id · last_paid_at · last_amount · created_at · updated_at | UNIQUE(user_id, provider, ref) — 정기결제마다 한 줄 · 운영자 연장 · 가입 체험. **쓸 수 있는가 = paid_until > now() 인 줄이 있는가**(또는 무료 이용 · 운영자). `occurred_at` 보다 이르거나 같은 소식은 기록만 |
+| `billing_events` | id · provider · idem_key · event_id · type · occurred_at · received_at · ref · merchant_uid · amount · user_id · subscription_id · result · note · review · resolved_by · resolved_at · raw jsonb | UNIQUE(provider, idem_key) — 같은 `X-Groble-Idempotency-Key` 는 한 번만. `raw` 는 받은 원문(이름 · 이메일 · 전화 — 운영 화면에서 가려서). `review` = «확인 필요» |
+| `billing_customers` | user_id · free · memo · updated_by · updated_at | 무료 이용(운영자가 주는 계정) · 운영 메모 |
+| `app_settings` | key · value jsonb · updated_by · updated_at | `billing.rules` = { trialDays(기본 0), graceDays(기본 10) } |
+
 ## 4. 핵심 색인 · 제약
 
 ```sql

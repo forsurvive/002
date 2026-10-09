@@ -15,7 +15,7 @@
 | [REPLIT_DEPLOYMENT.md](REPLIT_DEPLOYMENT.md) | Replit 배포 구조 · 환경 변수 · Sprint 1 사용자 절차 · 비용 감 · 막힐 때 · 미확인 목록 |
 | [SECURITY.md](SECURITY.md) | 위협 모델 · 지금 있는 것 · 인증 · 권한 매트릭스 · credential 암호화 · **사람이 정할 정책** |
 | [TEST_PLAN.md](TEST_PLAN.md) | 시험 돌리는 법 · 규칙 · 지금 있는 것 · 단계별로 더할 시험 |
-| [OPEN_EDITION.md](OPEN_EDITION.md) | 자유 가입판(개인 가입 · 본인 키 · 월 이용료) 검토 — 회사별 «구독으로 돌리기» 허용 여부(출처) · 설계안 · 사람이 정할 것 |
+| [OPEN_EDITION.md](OPEN_EDITION.md) | 자유 가입판(개인 가입 · 본인 키 · 월 이용료 — 그로블 정기결제) — 회사별 «구독으로 돌리기» 허용 여부(출처) · 결정 · **만든 것(§4)** · 사람이 할 것(§5) |
 
 ## 진행 상태 (2026-10-06)
 
@@ -29,6 +29,7 @@
 | Sprint 13~14 — 워크플로우 단계 · 강의 카드 · 강사/기관 관리자/운영 화면 | 완료 |
 | Phase 9 — 작품 파일 내보내기/가져오기 · 글 파일(txt/md) 자료 | 완료 · docx/pdf 자료 · 파일 저장소는 아직 |
 | Sprint 15~16 — 파일럿 · production | 게시 중(Replit). 사람 검수 → 파일럿 |
+| 자유 가입판(2026-10-09) — 판 스위치 `SE_EDITION` · 자유 가입 · 키 등록(클릭 몇 번 + 붙여 넣기) · 이용권(그로블 정기결제 웹훅) · 고객 · 결제 관리 화면 | 완료 · 사람: 그로블 상품 · 웹훅 시크릿 · 두 번째 Replit 앱 · 약관(OPEN_EDITION §5 · REPLIT_DEPLOYMENT §4-4) |
 
 2026-10-07 더한 것: 운영자 구독(AI_PROVIDER §9-1) · 바뀜 알림 SSE/NOTIFY(API.md) · docx/pdf 자료(DESIGN «자료») · 사용량 장부 · 키 고삐(AI_PROVIDER §7-1) · DB 2차 격리 RLS(ERD «격리»).
 남은 것: 파일 저장소(원본 파일 보관 — 지금은 뽑은 글만 둔다, 필요해지면). 사람이 정할 것: SECURITY.md §7(개인정보 · 보존 · 미성년자 · 결제).
