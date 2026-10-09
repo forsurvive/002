@@ -29,6 +29,7 @@ import { createJobQueue } from './jobs.mjs';
 import { createTenancy, SAY } from './tenancy.mjs';
 import { createEdu } from './edu.mjs';
 import { editionOf } from './edition.mjs';
+import { createBilling, passActive } from './billing/service.mjs';
 import { createWorkflowSource } from './workflow.mjs';
 import { createWorker } from './worker.mjs';
 import { createChangeHub } from './events.mjs';
@@ -112,7 +113,7 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
       // 기관 프로젝트는 AI 작업을 넣을 때마다 라이선스를 다시 본다(worker 도 돌리기 직전에 한 번 더)
       if (tenancy) {
         const a = await tenancy.aiAllowed(pid);
-        if (!a.ok) return bad(SAY[a.reason] || SAY.missing);
+        if (!a.ok) return bad(SAY[a.reason] || SAY.missing, a.reason);
       }
       let p = { ...params };
       if (kind === 'talk') {
@@ -172,12 +173,15 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
  *   credentials : 자격증명 서비스(ai/credentials.mjs) — 처음 설정에서 AI 키를 봉해 넣을 때 쓴다
  *   denyFrames : 남의 페이지 안(iframe)에 싣지 못하게 한다 — 운영에서만 켠다(작업 공간의 미리보기 창이 iframe 이다, docs/SECURITY.md §6)
  */
-export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null, keyTester = null, subscription = null, hub = null, codeKeys = keysFromEnv(process.env) } = {}) {
+export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null, keyTester = null, subscription = null, hub = null, codeKeys = keysFromEnv(process.env), billing } = {}) {
   const store = createProjectStore(pool);
   const edition = plan.edition || 'school';
+  // 이용권(자유 가입판만) — 웹훅 시크릿은 Secrets 의 GROBLE_WEBHOOK_SECRET(교체 중이면 GROBLE_WEBHOOK_SECRET_PREVIOUS 도). 코드 · Git · 로그 · 응답에 두지 않는다.
+  const bill = billing !== undefined ? billing : edition === 'open'
+    ? createBilling({ pool, secrets: () => [process.env.GROBLE_WEBHOOK_SECRET, process.env.GROBLE_WEBHOOK_SECRET_PREVIOUS], log: (m) => console.log('  [billing] ' + m) }) : null;
   const tenancy = createTenancy(pool, { edition });
   const wfs = createWorkflowSource(pool);
-  const edu = createEdu({ pool, credentials, wfs, keyTester, subscription, codeKeys, recoveryCode: plan.recoveryCode || '', edition });
+  const edu = createEdu({ pool, credentials, wfs, keyTester, subscription, codeKeys, recoveryCode: plan.recoveryCode || '', edition, billing: bill });
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
 
   // 화면은 제 자리의 파일만 부른다 — 스크립트는 외부 파일만, 꾸밈은 style 속성을 쓰므로 인라인 꾸밈만 허락
@@ -200,6 +204,14 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
     }
     return req.socket.remoteAddress || '';
   };
+
+  // 원본 바이트 그대로(웹훅 서명은 파싱하기 전 본문으로 셈한다)
+  const readRaw = (req, max) => new Promise((resolve) => {
+    const parts = []; let n = 0; let over = false;
+    req.on('data', (c) => { n += c.length; if (n > max) over = true; else parts.push(c); });
+    req.on('end', () => resolve(over ? { tooBig: true } : { body: Buffer.concat(parts) }));
+    req.on('error', () => resolve({ tooBig: true }));
+  });
 
   const readBody = (req, max = MAX_BODY) => new Promise((resolve) => {
     let s = ''; let n = 0; let over = false;
@@ -300,6 +312,15 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
     try {
       const url = new URL(req.url, 'http://127.0.0.1');
       if (req.method === 'GET' && url.pathname === '/healthz') return send(res, 200, 'ok', 'text/plain; charset=utf-8');
+      // ---------------- 결제 대행 웹훅(자유 가입판) — 서명이 문을 지킨다(출입 열쇠 · 호스트 이름 · 로그인 · Origin 과 무관). docs/OPEN_EDITION.md §4-4
+      // 응답은 200 · 401 · 429 · 503(다시 보내 달라) — 410 은 돌려주지 않는다(대행이 엔드포인트를 끈다)
+      if (bill && url.pathname === '/api/billing/groble') {
+        if (req.method !== 'POST') return json(res, 405, bad('POST 만 받습니다'));
+        const raw = await readRaw(req, 256 * 1024);
+        if (raw.tooBig) return json(res, 413, bad('요청이 너무 큽니다'));
+        const r = await bill.receive({ rawBody: raw.body, headers: req.headers, ip: ipOf(req) });
+        return json(res, r.status, r.body);
+      }
       if (plan.gate && !gateOk(req, plan.gate) && !gateCookieOk(req)) {
         // 출입 열쇠는 브라우저의 뜻 모를 로그인 창 대신 로그인 화면에서 묻는다(열쇠를 넣으면 쿠키로 30일).
         // 열쇠 전에는 로그인 화면(원고 없는 파일 셋)과 열쇠 받기만 열린다.
@@ -344,6 +365,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         signupNote(ip, made.ok);
         if (!made.ok) return json(res, made.code === 'conflict' ? 409 : 422, bad(made.error, made.code));
         await auth.audit(pool, { actor: made.user.id, action: 'auth.signup', targetType: 'user', targetId: made.user.id, ip });
+        if (bill) await bill.grantTrial(made.user.id);   // 이용 규칙의 무료 체험(기본 0일 — 없음)
         const li = await auth.login(pool, { loginId: body.loginId, password: body.password, ip, userAgent: req.headers['user-agent'] || '' });
         return json(res, 200, ok(), li.ok ? { 'set-cookie': auth.sessionCookie(li.token, { secure }) } : {});
       }
@@ -393,7 +415,8 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         if (!me) return me;
         // 자유 가입판 — 기관 · 수업이 없다. 관리 단추는 운영자에게만(운영 화면), 내 수업 · 수업 자리는 없다.
         if (edition === 'open') {
-          return { ...me, edition, manage: !!user.isPlatformAdmin, platformAdmin: !!user.isPlatformAdmin, classes: 0, member: false, places: [], roles: user.isPlatformAdmin ? ['platform_admin'] : [] };
+          // pass — 이용권이 살아 있는가(새 AI 작업이 되는가). 첫 화면이 «이용권 없음» 한 줄을 세울 근거(막는 것은 서버다)
+          return { ...me, edition, manage: !!user.isPlatformAdmin, platformAdmin: !!user.isPlatformAdmin, classes: 0, member: false, places: [], roles: user.isPlatformAdmin ? ['platform_admin'] : [], pass: await passActive(pool, user.id) };
         }
         const r = (await pool.query(
           `SELECT bool_or(role = 'organization_admin') AS org_admin, count(*)::int AS n FROM organization_members WHERE user_id = $1 AND status = 'active'`, [user.id])).rows[0];

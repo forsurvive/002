@@ -92,7 +92,7 @@ export function createWorker({ queue, store, call, prepare = null, allowed = nul
     try {
       // 돌리기 직전에 한 번 더 — 줄에 서 있던 사이 기관 라이선스가 끝났을 수 있다(사람 말은 tenancy 가 정한다)
       const gate = allowed ? await allowed(row) : { ok: true };
-      res = gate.ok ? await runKind(deps, row.kind, params, ctx) : { ok: false, reason: 'license', error: TENANCY_SAY[gate.reason] || TENANCY_SAY.missing };
+      res = gate.ok ? await runKind(deps, row.kind, params, ctx) : { ok: false, reason: gate.reason === 'subscription_inactive' ? gate.reason : 'license', error: TENANCY_SAY[gate.reason] || TENANCY_SAY.missing };
     } catch (e) {
       // 예외로 끝난 작업 — 화면에는 «실패» 한 마디가 아니라 무슨 일인지를, 로그에는 원인을 남긴다(2026-10-07 «실패 — 실패»).
       // 로그에는 ASCII 만 · 짧게(원고가 섞일 수 있는 글자는 걷는다). 한 번은 다시 해 본다(other 와 같은 갈래).

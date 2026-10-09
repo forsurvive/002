@@ -64,6 +64,8 @@ const done = (text) => tell(text, true);
   const q = new URLSearchParams(location.search);
   S.linkInvite = PAGE === 'account' ? q.get('invite') || '' : '';
   if (S.linkInvite) { history.replaceState(null, '', location.pathname); S.sayGood = true; S.fresh = true; S.say = '초대 링크로 왔습니다 — 아래 «새 수업 코드 넣기»의 [들어가기]를 누르면 지금 계정으로 참여합니다'; }
+  // 결제를 마치고 돌아왔으면(그로블 «이동 페이지» = /account.html?paid=1) 웹훅이 닿을 때까지 잠깐 이용권을 다시 본다
+  if (PAGE === 'account' && q.has('paid')) { history.replaceState(null, '', location.pathname); S.paidPoll = true; }
 }
 
 async function load() {
@@ -73,6 +75,7 @@ async function load() {
   S.edition = (m.ok && m.edition) || 'school';
   S.orgs = {};
   if (S.me && PAGE === 'account') S.myKeys = (await edu('me.key.list')).credentials || [];
+  if (S.me && PAGE === 'account' && S.edition === 'open') await loadPass();
   if (S.me && S.me.platformAdmin && PAGE === 'account') { const v = await edu('me.sub.view'); S.sub = v.ok ? v : null; }
   if (S.me && PAGE === 'manage') {
     // 관리할 수 있는 기관 — 플랫폼 관리자는 전부, 기관 관리자는 제 기관(서버가 골라 준다)
@@ -83,6 +86,66 @@ async function load() {
     }
   }
   render();
+}
+
+// ---------------------------------------------------------------- 이용권(자유 가입판) — 내 상태 · 기한 · [결제하기]만(금액 · 매출은 운영 화면에만)
+
+async function loadPass() {
+  const r = await edu('me.pass');
+  S.pass = r.ok ? r.pass : null;
+}
+// 결제창(새 탭)에서 돌아오면 이용권을 다시 본다 — 웹훅이 먼저 닿아 있으면 곧바로 바뀐 상태가 보인다
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible' || PAGE !== 'account' || S.edition !== 'open' || !S.payWait) return;
+  const was = !!(S.pass && S.pass.active);
+  await loadPass();
+  if (!was && S.pass && S.pass.active) { S.payWait = 0; done('이용권이 반영되었습니다'); } else render();
+});
+// ?paid=1 로 돌아왔을 때 — 3초마다 1분까지
+async function pollPaid() {
+  S.paidPoll = false;
+  if (!S.pass || S.pass.active) return;
+  S.say = '결제를 확인하는 중…'; S.sayGood = true; render();
+  for (let i = 0; i < 20 && S.pass && !S.pass.active; i++) { await new Promise((r) => setTimeout(r, 3000)); await loadPass(); }
+  if (S.pass && S.pass.active) done('이용권이 반영되었습니다');
+  else tell('결제 소식이 아직 닿지 않았습니다 — 잠시 뒤 새로 고침해 주세요(오래 걸리면 운영자에게 문의)');
+}
+
+const kday = (t) => (t ? new Date(t).toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' }) : '');
+function passLine(v) {
+  if (v.operator) return { good: true, text: '운영자 — 이용권 없이 씁니다' };
+  if (v.free) return { good: true, text: '무료 이용(운영자가 준 계정)' };
+  if (v.status === 'active') {
+    if (v.provider === 'groble') return { good: true, text: '이용 중' + (v.nextBillingDate ? ' — 다음 결제일 ' + v.nextBillingDate : '') };
+    return { good: true, text: (v.provider === 'trial' ? '무료 체험 — ' : '이용 중 — ') + kday(v.paidUntil) + '까지' };
+  }
+  if (v.status === 'cancel_pending') return { good: true, text: '해지 예정 — ' + kday(v.serviceEndsAt) + '까지 쓰고 그 뒤 끝납니다' };
+  if (v.status === 'past_due') return { good: false, text: '결제가 실패했어요 — 카드를 확인해 주세요(그로블). ' + kday(v.paidUntil) + '까지는 그대로 씁니다' + (v.finalFailure ? ' · 마지막 재시도도 실패했습니다' : '') };
+  if (v.status === 'ended') return { good: v.active, text: v.active ? '해지됨 — ' + kday(v.paidUntil) + '까지 씁니다' : '이용권이 끝났습니다' };
+  return { good: false, text: '이용권이 없습니다' };
+}
+function passBox() {
+  const v = S.pass;
+  if (S.edition !== 'open' || !v) return null;
+  if (S.paidPoll) setTimeout(pollPaid, 0);
+  const line = passLine(v);
+  // 이미 그로블 정기결제로 쓰는 중이면 [결제하기]를 세우지 않는다(두 번 결제하지 않게). 결제 실패는 카드를 고치면 그로블이 다시 시도한다.
+  const canPay = !v.operator && !v.free && !(v.status === 'active' && v.provider === 'groble') && !(v.status === 'past_due' && !v.finalFailure);
+  const pay = async (plan) => {
+    // 새 탭은 누른 그 순간에 연다(기다린 뒤에 열면 팝업 막기에 걸린다) — 링크를 받으면 그 탭을 결제창으로
+    const w = window.open('about:blank', '_blank');
+    const r = await edu('me.pass.checkout', { planId: plan.id });
+    if (!r.ok) { if (w) w.close(); return tell(r.error); }
+    S.payWait = Date.now();
+    if (w) { w.opener = null; w.location.href = r.url; } else location.href = r.url;
+    done('결제창을 열었습니다 — 결제를 마치고 이 화면으로 돌아오면 이용권이 보입니다');
+  };
+  return section('이용권',
+    h('div', { class: 'notice' + (line.good ? ' good' : ''), text: line.text }),
+    canPay && v.plans.length ? h('div', { class: 'line', style: 'margin-top:10px' },
+      v.plans.map((p) => h('button', { class: 'btn-red', text: (v.status === 'cancel_pending' ? '다시 결제하기 — ' : '결제하기 — ') + p.name, onclick: () => pay(p) }))) : null,
+    canPay && !v.plans.length ? h('div', { class: 'when', style: 'margin-top:8px', text: '아직 결제를 열지 않았습니다 — 운영자에게 문의해 주세요' }) : null,
+    v.operator ? null : h('div', { class: 'when', style: 'margin-top:8px', text: '새 AI 작업은 이용권이 있을 때만 됩니다. 편집 · 열람 · 내보내기는 늘 됩니다. 해지 · 카드 바꾸기는 그로블에서 합니다.' }));
 }
 
 // ---------------------------------------------------------------- 조각
@@ -1144,7 +1207,7 @@ function paint() {
   }
   if (PAGE === 'account') {
     $('root').replaceChildren(h('div', { class: 'body' }, head('내 계정'), notice,
-      S.loggedIn ? [S.edition === 'open' ? null : joinBox(), myKeyBox(), subBox(), passwordBox(), themeBox()] : h('div', { class: 'when', text: '로그인이 필요합니다' })));
+      S.loggedIn ? [S.edition === 'open' ? passBox() : joinBox(), myKeyBox(), subBox(), passwordBox(), themeBox()] : h('div', { class: 'when', text: '로그인이 필요합니다' })));
     return;
   }
   $('root').replaceChildren(h('div', { class: 'body' }, head('내 수업'), notice,

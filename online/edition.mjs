@@ -22,8 +22,11 @@ export const SCHOOL_ONLY_OPS = new Set([
 // 두 판 모두에 있지만 기관을 가리키면(orgId) 자유 가입판에서는 없는 문 — 운영자 전체 · 내 것은 그대로
 export const ORG_SCOPED_OPS = new Set(['audit.list', 'usage.summary', 'workflow.view', 'workflow.save']);
 
+// 자유 가입판에만 있는 문 — 내 이용권(me.pass …) · 고객 · 결제 관리(billing.* — 운영자)
+export const isOpenOnlyOp = (op) => /^(me\.pass(\.|$)|billing\.)/.test(String(op || ''));
+
 // 이 판에 이 문이 있는가 — 없으면 서버가 «그런 문이 없습니다»(404)로 답한다(있는지도 흘리지 않는다)
 export function eduOpAllowed(edition, op, body = {}) {
   if (edition === 'open') return !SCHOOL_ONLY_OPS.has(op) && !(ORG_SCOPED_OPS.has(op) && body && body.orgId);
-  return true;
+  return !isOpenOnlyOp(op);
 }

@@ -126,6 +126,7 @@
 | `GET /login` | 로그인 화면(`web/login.html`). 로그인한 사람이 오면 `/` 로 |
 | `POST /api/auth/login` `{ loginId, password }` | 성공 → `se_session` 쿠키(HttpOnly · SameSite=Lax · 바깥에 열면 Secure). 실패 → 401 `{ code: 'unauthenticated' }` 한 가지 문구, 거듭되면 429 `rate_limited` |
 | `POST /api/auth/logout` | 세션 폐기 + 쿠키 지움 |
+| `POST /api/billing/groble` | **자유 가입판에만** — 그로블 정기결제 웹훅(OPEN_EDITION §4-4). 서명(`X-Groble-Signature` · `-Previous`, ±5분)이 문을 지킨다 — 출입 열쇠 · 호스트 이름 · 로그인 · Origin 과 무관. 200 받음(같은 `X-Groble-Idempotency-Key` 는 그대로 200) · 401 서명 · 429 거듭 틀림 · 503 시크릿 없음 · DB 안 됨(다시 보내 달라). 410 은 돌려주지 않는다 |
 | `POST /api/auth/signup` `{ loginId, displayName, password }` | **자유 가입판(`SE_EDITION=open`)에만.** 계정을 만들고 곧바로 쿠키. 409 같은 아이디 · 422 꼴 · 429 고삐(같은 곳에서 15분에 시도 20 · 1시간에 계정 5) · 403 `setup_needed`(처음 설정 전). 교육기관판에는 이 길이 없다(로그인 전 401 · 뒤 404) |
 | `GET /api/me` | `{ me: { loginId, displayName } }` |
 | `POST /api` `{ op, pid, … }` | **개인판과 같은 문 표**(`tools/ops.mjs`) · 같은 응답 꼴. 다른 점: pid 가 필요한 문은 «이 사람의 프로젝트»가 아니면 **404**(남의 것 · 지운 것 · 이상한 id 모두 같은 답) · `auth.write` 403 · AI 작업을 여는 문(`doc.update` `thread.send` `thread.edit` `thread.doc`)은 **영속 큐에 넣고 곧바로 `{ ok, jobId }`**(같은 대상에 도는 작업이 있으면 «이미 도는 중») · `job.pause/resume/answer/remove` 는 큐의 손잡이 · `project.create` 는 개인판처럼 에이전트 준비 작업을 곧바로 세운다 · `project.prepare` 는 끊긴 준비를 다시 |
@@ -164,6 +165,7 @@
 | `member.create` `{orgId, role, loginId, displayName?, classId?, password?}` | **최상위 관리자만** | 기관 관리자 · 강사 · 학생 계정을 직접 만든다(학생은 수업 · 자리 상한). 비밀번호는 운영자가 정한다(기술 지원용) — 비우면 서버가 지어 응답에 `password`. 봉한 사본을 두어 `org.members` 가 **최상위 관리자에게만** `knownPassword` 로 다시 보인다(본인이 바꾸면 지운다). 기관 관리자 · 강사는 초대 코드로 사람을 부른다(2026-10-05 사용자 결정) |
 | `member.reset_password` `{orgId, userId}` | 기관 관리자(그 기관 — 기관 관리자는 최상위만) · 강사(맡은 수업의 학생만) | 비밀번호를 바꾸지 않고 **재설정 코드**(7일 · 한 번)를 준다 → `{resetCode, days}`. 쓰기 전까지 `org.members` · `class.progress` 에 다시 보인다(봉한 사본). 관리자는 남의 비밀번호를 모른다 |
 | (링크) `/login?invite=코드` · `/login?reset=코드&id=아이디` | 누구나 | 코드를 손으로 옮기지 않게 — 관리 화면의 [링크 복사] · [보내기](휴대폰 공유 창). 초대 링크는 코드가 채워진 «계정 만들기»(이미 로그인했으면 «내 계정 → 새 수업 코드 넣기»로), 재설정 링크는 아이디 · 코드가 채워진 «비밀번호를 잊었어요». 열면 주소창에서 코드를 지운다. 재설정 링크는 1:1로만(2026-10-05) |
+| `me.pass` · `me.pass.checkout` `{planId}` | 로그인한 사람(**자유 가입판에만** — 교육기관판은 404) | 내 이용권 `{active, status: active\|past_due\|cancel_pending\|ended\|none, provider, paidUntil, nextBillingDate, serviceEndsAt, finalFailure, plans:[{id,name}]}`(금액 없음) · [결제하기] → `{url}`(결제창 + 새 참조값) |
 | `password.reset` `{loginId, code, password}` | **로그인 없이** | 로그인 화면 «비밀번호를 잊었어요» — 재설정 코드(또는 운영자는 Secrets 의 `SE2_RECOVERY_CODE`)로 새 비밀번호를 정하고 곧바로 들어간다. 틀리면 초대 코드와 같은 맞히기 고삐 |
 
 새 작품은 작업실(홈)의 «+» 한 곳에서 만든다(2026-10-05): 창 맨 위 «어디에 만들까요?» — `/api/state` 의 `me.places`(열려 있고 기관 이용 기간 안인 내 수업)

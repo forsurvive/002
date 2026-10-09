@@ -21,6 +21,8 @@ async function suite({ pool, ok: ok0, eq: eq0, edition }) {
   if (edition === 'open') await createUser(pool, { loginId: 'web-op' + sfx, password: 'long-enough-op', isPlatformAdmin: true });
   await createUser(pool, { loginId: A, password: 'long-enough-a', displayName: '가' });
   await createUser(pool, { loginId: B, password: 'long-enough-b', displayName: '나' });
+  // 자유 가입판의 새 AI 작업은 이용권이 있어야 선다 — 가에게 무료 이용을 준다(이용권 자체는 test.billing.mjs 가 본다)
+  if (edition === 'open') await pool.query('INSERT INTO billing_customers (user_id, free) SELECT id, true FROM users WHERE login_id = $1', [A]);
 
   const srv = createOnlineServer({ pool, plan: onlinePlan({ SE2_PORT: '0', SE_EDITION: edition }), denyFrames: true });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));

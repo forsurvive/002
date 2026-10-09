@@ -9,6 +9,8 @@
 // 모르는 것 · 지운 것 · 남의 것은 모두 «없음»으로 같게 답한다(존재 여부를 흘리지 않는다).
 // 자유 가입판(edition 'open')에는 강사 · 기관 관리자 열람이 없다 — 주인만 읽는다(docs/OPEN_EDITION.md §4).
 
+import { passActive } from './billing/service.mjs';
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isUuid = (v) => UUID.test(String(v || ''));
 
@@ -65,11 +67,12 @@ export function createTenancy(pool, { edition = 'school' } = {}) {
       return NONE;
     },
 
-    // AI 작업을 지금 받아도 되는가 — 등록할 때와 worker 가 돌리기 직전에 두 번 본다(그 사이 라이선스가 끝날 수 있다)
+    // AI 작업을 지금 받아도 되는가 — 등록할 때와 worker 가 돌리기 직전에 두 번 본다(그 사이 라이선스 · 이용권이 끝날 수 있다)
+    // 자유 가입판의 개인 작품은 주인의 이용권(월 이용료)이 살아 있을 때만 — 편집 · 열람 · 내보내기는 이것과 상관없다(docs/OPEN_EDITION.md §4-4)
     async aiAllowed(pid) {
-      const p = (await pool.query('SELECT organization_id FROM projects WHERE id = $1 AND deleted_at IS NULL', [pid])).rows[0];
+      const p = (await pool.query('SELECT organization_id, owner_user_id FROM projects WHERE id = $1 AND deleted_at IS NULL', [pid])).rows[0];
       if (!p) return { ok: false, reason: 'missing' };
-      if (!p.organization_id) return { ok: true };
+      if (!p.organization_id) return edition === 'open' && !(await passActive(pool, p.owner_user_id)) ? { ok: false, reason: 'subscription_inactive' } : { ok: true };
       return licenseOf(p.organization_id);
     },
 
@@ -102,4 +105,5 @@ export const SAY = {
   class_ended: '수업 기간이 끝났습니다',
   missing: '찾을 수 없습니다',
   read_only: '읽기만 할 수 있습니다',
+  subscription_inactive: '이용권이 없어 새 AI 작업을 할 수 없습니다 — «내 계정 → 이용권»에서 결제해 주세요(편집 · 열람 · 내보내기는 늘 됩니다)',
 };

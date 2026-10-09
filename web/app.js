@@ -395,6 +395,9 @@ function projectList() {
     // 새 작품 «+» — 화면 한가운데(좁은 창에서도 잘리지 않게 줄을 따로 둔다)
     h('div', { class: 'new-row' }, h('button', { class: 'plus big', text: '+', title: '새 작품', onclick: newProjectOpen })),
     S.homeSay ? h('div', { class: 'new-row' }, h('div', { class: 'notice', text: S.homeSay })) : null,
+    // 자유 가입판 — 이용권이 없으면 새 AI 작업이 서지 않는다는 것만 한 줄로(편집 · 열람 · 내보내기는 된다)
+    S.me && S.me.edition === 'open' && S.me.pass === false ? h('div', { class: 'new-row' },
+      h('a', { class: 'notice', href: '/account.html', text: '이용권이 없어 새 AI 작업은 멈춰 있습니다 — 내 계정 → 이용권' })) : null,
     h('div', { class: 'cards' }, S.projects.map((p) => h('div', {
       class: 'card', onclick: () => { S.pid = p.id; S.tab = '작업실'; S.project = null; pull(true); },
     },

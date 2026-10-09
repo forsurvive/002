@@ -18,6 +18,7 @@ import { importProject } from './import.mjs';
 import { loadAggregate } from './store.mjs';
 import { createJobQueue } from './jobs.mjs';
 import { eduOpAllowed } from './edition.mjs';
+import { billingOps } from './billing/ops.mjs';
 
 const ok = (extra = {}) => ({ status: 200, body: { ok: true, ...extra } });
 const no = (status, error, code) => ({ status, body: { ok: false, error, ...(code ? { code } : {}) } });
@@ -46,7 +47,7 @@ export function resetInviteThrottle() { tries.clear(); }
 const CLASS_TZ = 'Asia/Seoul';
 const LIC_COLS = 'id, plan, status, starts_at, ends_at, seat_limit, allowed_providers, allowed_model_tiers';
 
-export function createEdu({ pool, credentials = null, wfs = null, keyTester = null, codeKeys = null, recoveryCode = '', subscription = null, edition = 'school' }) {
+export function createEdu({ pool, credentials = null, wfs = null, keyTester = null, codeKeys = null, recoveryCode = '', subscription = null, edition = 'school', billing = null }) {
   // 초대 코드 봉하기 — 마스터 키가 있을 때만(없으면 지금처럼 만들 때 한 번만 보인다). 붙임 정보로 그 기관 · 그 초대에만 열린다.
   const codeMeta = (orgId, id) => ({ ownerType: 'invite', ownerId: orgId, provider: 'code', id });
   const sealCode = (code, orgId, id) => { try { return codeKeys && codeKeys.current ? seal(code, codeKeys, codeMeta(orgId, id)) : null; } catch { return null; } };
@@ -681,6 +682,9 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       return ok({ credentials: await credentials.list('organization', b.orgId) });
     },
   };
+
+  // 이용권 · 고객 · 결제 관리(자유 가입판) — online/billing/ops.mjs
+  if (billing) Object.assign(OPS, billingOps({ billing }));
 
   // 키를 넣으면 — 그 키로 돌 작품 가운데 «자료 분석»이 끝내 실패로 남은 것을 다시 건다(키가 없어 멈췄던 것이 저절로 이어진다).
   // 작품마다 가장 최근의 준비 작업만 본다. 이미 도는 것은 큐가 막는다(대상당 활성 하나).
