@@ -7,6 +7,7 @@ try { if (localStorage.getItem('se-theme') === 'light') document.documentElement
 //   school.html  «내 수업»  — 들어가 있는 수업 · 내 수업 작품(열기 · 개인 작품으로 복사) · 수업 현황 · 학생 초대 코드(강사) · 새 수업 코드 넣기
 //   account.html «내 계정»  — 새 수업 코드 넣기 · 내 AI 키 · 내 비밀번호 바꾸기(누구나)
 //   manage.html «관리»  — 운영자(플랫폼 관리자)와 기관 관리자만: 기관 · 이용 기간 · 수업 · 초대 · 사용자(비밀번호 재설정 · 내보내기) · 기관 키 · 사용량
+// 자유 가입판(S.edition 'open')에는 기관 · 수업 · 초대가 없다 — 그 조각을 그리지 않는다(서버 문도 404, online/edition.mjs).
 // 모든 판정은 서버(online/edu.mjs · tenancy)가 한다. 이 화면은 서버가 허락한 것을 보여 줄 뿐이다.
 // 학생에게 비용 · 횟수 · 키를 보이지 않는다. 초대 코드는 만든 그 자리에서 한 번만 보인다.
 
@@ -69,12 +70,13 @@ async function load() {
   const m = await edu('me.memberships');
   S.loggedIn = m.ok === true;
   S.me = m.ok ? m : null;
+  S.edition = (m.ok && m.edition) || 'school';
   S.orgs = {};
   if (S.me && PAGE === 'account') S.myKeys = (await edu('me.key.list')).credentials || [];
   if (S.me && S.me.platformAdmin && PAGE === 'account') { const v = await edu('me.sub.view'); S.sub = v.ok ? v : null; }
   if (S.me && PAGE === 'manage') {
     // 관리할 수 있는 기관 — 플랫폼 관리자는 전부, 기관 관리자는 제 기관(서버가 골라 준다)
-    const list = (await edu('org.list')).organizations || [];
+    const list = S.edition === 'open' ? [] : (await edu('org.list')).organizations || [];
     for (const o of list) {
       const [lic, cls, keys] = await Promise.all([edu('license.read', { orgId: o.id }), edu('class.list', { orgId: o.id }), edu('org.key.list', { orgId: o.id })]);
       S.orgs[o.id] = { org: o, lic, classes: cls.classes || [], keys: keys.credentials || [] };
@@ -934,8 +936,8 @@ function opsView() {
   return h('div', null,
     tabRow([['현황', '현황'], ['감사 기록', '감사 기록'], ['단계', '단계 · 강의 카드(전체)'], ['계정', '계정 멈추기']], t, (k) => { S.opsTab = k; S.say = ''; if (k === '현황') S.ops = null; render(); }),
     t === '현황' ? h('div', null,
-      h('div', { class: 'lab', text: '기관' }),
-      orgList.length ? orgList.map(({ org }) => {
+      S.edition === 'open' ? null : h('div', { class: 'lab', text: '기관' }),
+      S.edition === 'open' ? null : orgList.length ? orgList.map(({ org }) => {
         const live = liveOf(org.id); const keyed = keyedOf(S.orgs[org.id].keys);
         return h('div', { class: 'row', onclick: () => { S.sel = org.id; render(); } },
           h('div', { class: 'name', text: org.name }),
@@ -1007,7 +1009,7 @@ function manageView() {
   const ids = Object.keys(S.orgs);
   const admin = !!S.me.platformAdmin;
   if (!S.sel || (S.sel !== 'ops' && S.sel !== 'new' && !S.orgs[S.sel])) S.sel = admin ? 'ops' : ids[0];
-  const pills = [...(admin ? [['ops', '운영']] : []), ...ids.map((id) => [id, S.orgs[id].org.name]), ...(admin ? [['new', '+ 새 기관']] : [])];
+  const pills = [...(admin ? [['ops', '운영']] : []), ...ids.map((id) => [id, S.orgs[id].org.name]), ...(admin && S.edition !== 'open' ? [['new', '+ 새 기관']] : [])];
   return h('div', null,
     pills.length > 1 ? h('div', { class: 'line', style: 'margin-bottom:16px;flex-wrap:wrap' },
       pills.map(([k, name]) => h('button', { class: S.sel === k ? 'nav-btn on' : 'nav-btn', style: S.sel === k ? 'background:var(--blue);color:var(--on-color)' : '', text: name, onclick: () => { S.sel = k; S.say = ''; render(); } }))) : null,
@@ -1074,7 +1076,7 @@ function paint() {
   }
   if (PAGE === 'account') {
     $('root').replaceChildren(h('div', { class: 'body' }, head('내 계정'), notice,
-      S.loggedIn ? [joinBox(), myKeyBox(), subBox(), passwordBox(), themeBox()] : h('div', { class: 'when', text: '로그인이 필요합니다' })));
+      S.loggedIn ? [S.edition === 'open' ? null : joinBox(), myKeyBox(), subBox(), passwordBox(), themeBox()] : h('div', { class: 'when', text: '로그인이 필요합니다' })));
     return;
   }
   $('root').replaceChildren(h('div', { class: 'body' }, head('내 수업'), notice,

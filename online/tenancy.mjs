@@ -7,13 +7,14 @@
 //                  기관 관리자 — 기관 설정 admin_can_read_projects 가 켜져 있을 때만 읽기(기본 꺼짐 — 결정 전 보수적 기본, §7)
 //                  플랫폼 관리자 — 작품 열람 없음(운영 필요 최소 — 필요하면 감사 로그를 남기는 별도 길로)
 // 모르는 것 · 지운 것 · 남의 것은 모두 «없음»으로 같게 답한다(존재 여부를 흘리지 않는다).
+// 자유 가입판(edition 'open')에는 강사 · 기관 관리자 열람이 없다 — 주인만 읽는다(docs/OPEN_EDITION.md §4).
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isUuid = (v) => UUID.test(String(v || ''));
 
 const NONE = Object.freeze({ read: false, write: false, ai: false, role: '' });
 
-export function createTenancy(pool) {
+export function createTenancy(pool, { edition = 'school' } = {}) {
   // 기관이 지금 AI 작업을 받을 수 있는가 — 기관이 살아 있고, 기간 안의 active 라이선스가 있다
   async function licenseOf(orgId) {
     const { rows } = await pool.query(
@@ -51,7 +52,7 @@ export function createTenancy(pool) {
         const member = await isOrgRole(user.id, p.organization_id, ['student', 'instructor', 'organization_admin']);
         return { read: true, write: member, ai: member, role: 'owner', project: p };
       }
-      if (!p.organization_id) return NONE;
+      if (!p.organization_id || edition === 'open') return NONE;
       if (p.class_id) {
         const inst = (await pool.query(
           `SELECT 1 FROM class_members WHERE class_id = $1 AND user_id = $2 AND role = 'instructor'`, [p.class_id, user.id])).rowCount > 0;

@@ -35,7 +35,8 @@ function h(tag, attrs, ...kids) {
 
 // 첫 화면 — 계정이 있으면 아이디 · 비밀번호, 처음이면 초대 코드 → (맞으면) 그 자리에서 계정 만들기.
 // 시험 운영(출입 열쇠)이면 열쇠 칸이 맨 위에 하나 더 붙고, 어느 단추든 열쇠부터 넘긴다.
-const S = { gate: false, invite: null, say: '' };
+// 자유 가입판(S.edition 'open')에는 초대 코드가 없다.
+const S = { gate: false, invite: null, say: '', edition: 'school' };
 const $ = (id) => document.getElementById(id);
 const v = (id) => ($(id) ? $(id).value.trim() : '');
 const post = async (url, body) => {
@@ -53,6 +54,7 @@ async function passGate() {
   S.gate = false;
   if ($('gt-box')) $('gt-box').remove();
   const st = await fetch('/api/setup').then((r) => r.json()).catch(() => ({}));
+  if (st.edition) S.edition = st.edition === 'open' ? 'open' : 'school';
   if (st.needed) { draw(setupForm(st.ai, st.code)); return false; }
   return true;
 }
@@ -153,14 +155,14 @@ function mainForms() {
       h('div', { class: 'line', style: 'margin-top:14px' }, h('button', { class: 'btn-red', type: 'submit', text: '로그인' }),
         h('button', { class: 'btn-text', type: 'button', text: S.forgot ? '닫기' : '비밀번호를 잊었어요', onclick: () => { S.forgot = !S.forgot; draw(mainForms()); } }))),
     S.forgot ? h('form', { onsubmit: resetPw, style: 'margin-top:14px;padding:14px;border-radius:12px;background:var(--group)' },
-      h('div', { class: 'when', text: '재설정 코드는 학생은 선생님(또는 기관 관리자)에게, 강사는 기관 관리자에게, 기관 관리자는 운영자에게 받습니다.' }),
+      h('div', { class: 'when', text: S.edition === 'open' ? '재설정 코드는 운영자에게 문의해 받습니다.' : '재설정 코드는 학생은 선생님(또는 기관 관리자)에게, 강사는 기관 관리자에게, 기관 관리자는 운영자에게 받습니다.' }),
       field('아이디', 'rs-id', 'text', { autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
       field('재설정 코드', 'rs-code', 'text', { autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', placeholder: 'ABCD-EFGH-JKLM' }),
       field('새 비밀번호(10자 이상)', 'rs-pw', 'password', { autocomplete: 'new-password' }),
       field('새 비밀번호 한 번 더', 'rs-pw2', 'password', { autocomplete: 'new-password' }),
       h('div', { class: 'line', style: 'margin-top:14px' }, h('button', { class: 'btn-red', type: 'submit', text: '새 비밀번호로 들어가기' }))) : null,
     sayLine(),
-    h('div', { style: 'margin-top:18px;padding-top:18px;border-top:1px solid var(--line-soft)' },
+    S.edition === 'open' ? null : h('div', { style: 'margin-top:18px;padding-top:18px;border-top:1px solid var(--line-soft)' },
       h('div', { class: 'lab', text: '처음 오셨나요? 초대 링크를 받았으면 그 링크를 누르면 됩니다 — 코드만 받았으면 여기에' }),
       inv && S.invite.have ? h('form', { onsubmit: joinWithAccount },
         h('div', { class: 'top-name', style: 'font-size:19px;margin-top:6px', text: '내 계정으로 참여' }),
@@ -243,6 +245,7 @@ function draw(form) {
 (async () => {
   const st = await fetch('/api/setup').then((r) => r.json()).catch(() => ({}));
   S.gate = st.code === 'gate';
+  S.edition = st.edition === 'open' ? 'open' : 'school';
   // 링크로 왔으면(초대 링크 · 재설정 링크) 코드를 채워 둔다 — 주소창에서는 지운다(뒤에 남는 화면 · 스크린샷에 코드가 덜 보이게)
   const q = new URLSearchParams(location.search);
   const linkInvite = q.get('invite') || ''; const linkReset = q.get('reset') || ''; const linkId = q.get('id') || '';

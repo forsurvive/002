@@ -5,7 +5,8 @@ import { createOnlineServer, onlinePlan } from './server.mjs';
 import { createUser, resetThrottle } from './auth.mjs';
 
 export async function run({ pool, ok, eq }) {
-  await suite({ pool, ok, eq, edition: 'school' });
+  // 같은 시험이 두 판에서 각각 돈다 — 편집기 문 · 격리 · 문지기는 판과 상관없이 같다(docs/OPEN_EDITION.md §4-1)
+  for (const edition of ['school', 'open']) await suite({ pool, ok, eq, edition });
 }
 
 // 같은 시험을 판마다 돌린다 — 같은 DB 라서 사람 이름은 판마다 따로 짓고, 시험 이름 앞에 판을 단다(school 은 그대로)

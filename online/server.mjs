@@ -28,6 +28,7 @@ import { AGENT_SLOTS } from '../tools/prompts.mjs';
 import { createJobQueue } from './jobs.mjs';
 import { createTenancy, SAY } from './tenancy.mjs';
 import { createEdu } from './edu.mjs';
+import { editionOf } from './edition.mjs';
 import { createWorkflowSource } from './workflow.mjs';
 import { createWorker } from './worker.mjs';
 import { createChangeHub } from './events.mjs';
@@ -74,6 +75,9 @@ export function onlinePlan(env = process.env) {
   const rec = setupNorm(env.SE2_RECOVERY_CODE);
   plan.recoveryCode = rec.length >= 12 ? rec : '';
   if (env.SE2_RECOVERY_CODE && !plan.recoveryCode) plan.notes.push('SE2_RECOVERY_CODE is too short (12+ letters/digits) - ignored');
+  // 판 — school(교육기관판, 기본) · open(자유 가입판). 모르는 값은 school 로(docs/OPEN_EDITION.md §4-1)
+  plan.edition = editionOf(env);
+  if (env.SE_EDITION && String(env.SE_EDITION).trim().toLowerCase() !== plan.edition) plan.notes.push('SE_EDITION is not school or open - using school');
   return plan;
 }
 
@@ -170,9 +174,10 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
  */
 export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null, keyTester = null, subscription = null, hub = null, codeKeys = keysFromEnv(process.env) } = {}) {
   const store = createProjectStore(pool);
-  const tenancy = createTenancy(pool);
+  const edition = plan.edition || 'school';
+  const tenancy = createTenancy(pool, { edition });
   const wfs = createWorkflowSource(pool);
-  const edu = createEdu({ pool, credentials, wfs, keyTester, subscription, codeKeys, recoveryCode: plan.recoveryCode || '' });
+  const edu = createEdu({ pool, credentials, wfs, keyTester, subscription, codeKeys, recoveryCode: plan.recoveryCode || '', edition });
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
 
   // 화면은 제 자리의 파일만 부른다 — 스크립트는 외부 파일만, 꾸밈은 style 속성을 쓰므로 인라인 꾸밈만 허락
@@ -320,7 +325,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const empty = (await pool.query('SELECT count(*)::int AS n FROM users')).rows[0].n === 0;
         // 바깥에 열었으면(플랫폼 앞단을 거치면 소켓 주소가 루프백일 수 있다) 출입 열쇠만 믿는다
         const trusted = !!plan.gate || (!plan.exposed && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || ''));
-        if (req.method === 'GET') return json(res, 200, ok({ needed: empty && (trusted || !!setupCode), code: empty && !trusted && !!setupCode, ai: !!credentials }));
+        if (req.method === 'GET') return json(res, 200, ok({ needed: empty && (trusted || !!setupCode), code: empty && !trusted && !!setupCode, ai: !!credentials, edition }));
         if (req.method !== 'POST') return json(res, 405, bad('POST 만 받습니다'));
         if (!empty) return json(res, 409, bad('이미 설정을 마쳤습니다 — 로그인해 주세요'));
         if (!trusted) {
@@ -357,6 +362,10 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       // 화면이 어느 단추를 세울지 — 관리(운영자 · 기관 관리자) · 내 수업. 단추는 편의일 뿐, 판정은 edu · tenancy 가 문마다 다시 한다.
       const withRoles = async () => {
         if (!me) return me;
+        // 자유 가입판 — 기관 · 수업이 없다. 관리 단추는 운영자에게만(운영 화면), 내 수업 · 수업 자리는 없다.
+        if (edition === 'open') {
+          return { ...me, edition, manage: !!user.isPlatformAdmin, platformAdmin: !!user.isPlatformAdmin, classes: 0, member: false, places: [], roles: user.isPlatformAdmin ? ['platform_admin'] : [] };
+        }
         const r = (await pool.query(
           `SELECT bool_or(role = 'organization_admin') AS org_admin, count(*)::int AS n FROM organization_members WHERE user_id = $1 AND status = 'active'`, [user.id])).rows[0];
         const classes = (await pool.query('SELECT count(*)::int AS n FROM class_members WHERE user_id = $1', [user.id])).rows[0].n;
@@ -373,12 +382,12 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
           `SELECT role FROM organization_members WHERE user_id = $1 AND status = 'active'
             UNION SELECT role FROM class_members WHERE user_id = $1`, [user.id])).rows.map((x) => x.role));
         const roles = [...(user.isPlatformAdmin ? ['platform_admin'] : []), ...['organization_admin', 'instructor', 'student'].filter((x) => held.has(x))];
-        return { ...me, manage: !!(user.isPlatformAdmin || r.org_admin), platformAdmin: !!user.isPlatformAdmin, classes, member: r.n > 0, places, roles };
+        return { ...me, edition, manage: !!(user.isPlatformAdmin || r.org_admin), platformAdmin: !!user.isPlatformAdmin, classes, member: r.n > 0, places, roles };
       };
 
       if (req.method === 'GET' && (url.pathname === '/login' || url.pathname === '/login.html')) {
-        // 이미 들어와 있는 사람이 초대 링크를 열면 — 지금 계정으로 참여하는 자리(내 계정 «새 수업 코드 넣기»)로 코드를 들고 간다
-        const inv = url.searchParams.get('invite');
+        // 이미 들어와 있는 사람이 초대 링크를 열면 — 지금 계정으로 참여하는 자리(내 계정 «새 수업 코드 넣기»)로 코드를 들고 간다(자유 가입판에는 초대가 없다)
+        const inv = edition === 'open' ? '' : url.searchParams.get('invite');
         if (user) return send(res, 302, '', 'text/plain; charset=utf-8', { location: inv ? '/account.html?invite=' + encodeURIComponent(inv) : '/' });
         return staticFile(res, 'login.html');
       }
@@ -402,6 +411,8 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
           return send(res, 302, '', 'text/plain; charset=utf-8', { location: '/login' });
         }
       }
+      // 자유 가입판에는 «내 수업» 화면이 없다 — 첫 화면으로
+      if (edition === 'open' && req.method === 'GET' && url.pathname === '/school.html') return send(res, 302, '', 'text/plain; charset=utf-8', { location: '/' });
 
       if (req.method === 'GET' && url.pathname === '/api/me') return json(res, 200, ok({ me: await withRoles() }));
       // 내 비밀번호 바꾸기 — 지금 비밀번호를 알아야 한다. 바꾸면 다른 세션은 모두 끊기고, 이 브라우저는 새로 들어온다.
@@ -420,6 +431,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         // 수업 안에 만들기 — 그 수업의 멤버이고 라이선스가 유효할 때만(아니면 개인 프로젝트로 새지 않게 거절한다)
         let place = null;
         if (op === 'project.create' && body.classId) {
+          if (edition === 'open') return json(res, 404, bad(SAY.missing, 'missing'));   // 자유 가입판에는 수업이 없다
           place = await tenancy.canCreateInClass(user, body.classId);
           if (!place.ok) return json(res, place.reason === 'missing' ? 404 : 403, bad(SAY[place.reason] || NOT_FOUND, place.reason));
         }
@@ -553,7 +565,7 @@ export async function main(env = process.env) {
   const store = createProjectStore(pool);
   const call = createOnlineCall({ pool, store, generator: ai.generator, ...(ai.aliasTiers ? { aliasTiers: ai.aliasTiers } : {}) });
   // 같은 프로세스에서 worker 를 함께 돌린다(파일럿 — VM 하나). SE_WORKER=0 이면 웹만(worker 를 따로 띄울 때)
-  const tenancyW = createTenancy(pool);
+  const tenancyW = createTenancy(pool, { edition: plan.edition });
   const wfsW = createWorkflowSource(pool);
   const worker = env.SE_WORKER === '0' ? null : createWorker({ queue, store, call, allowed: (row) => tenancyW.aiAllowed(row.project_id), workflow: (pid) => wfsW.templateFor(pid) }, { log: (m) => console.log('  [worker] ' + m) });
   if (worker) await worker.start();
@@ -563,6 +575,7 @@ export async function main(env = process.env) {
   const srv = createOnlineServer({ pool, plan, queue, worker, hub, credentials: ai.credentials, keyTester: ai.keyTester, subscription: ai.subscription, trustProxy: env.SE_TRUST_PROXY === '1', denyFrames: env.NODE_ENV === 'production' });
   await new Promise((resolve) => srv.listen(plan.port, plan.host, resolve));
   console.log('  Story Engine (online) : listening on ' + plan.host + ':' + plan.port);
+  console.log('  Edition      : ' + plan.edition + (plan.edition === 'open' ? ' (open sign-up)' : ' (schools)'));
   console.log('  Host names   : ' + plan.allowedHosts.join(', '));
   for (const n of plan.notes) console.log('  [NOTE] ' + n);
   const users = (await pool.query('SELECT count(*)::int AS n FROM users')).rows[0].n;

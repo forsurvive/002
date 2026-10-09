@@ -88,6 +88,9 @@
 
 1. **판 스위치** — `online/edition.mjs`(`SE_EDITION`, 기본 `school` = 지금 그대로). 서버가 `/api/state` 의 `me.edition` 으로 화면에 알리고, edu 문 표에서 `open` 이 쓰지 않는 문을 404 로.
    시험: 같은 시험이 두 판에서 각각 돈다(뺀 문은 open 에서 404, 남긴 기능은 그대로).
+   → **만듦(2026-10-09)**: 모르는 값은 `school`(닫힌 쪽). open 에서 404 — 기관 · 이용 기간 · 수업 · 초대(`invite.*` · `login.available`) · 기관 키 · 수업 현황 · 기관 사람(`member.*`) · `project.copy_personal`,
+   그리고 `audit.list` · `usage.summary` · `workflow.view/save` 에 `orgId` 를 실은 것. 수업에 만들기(`project.create classId`) 404 · 강사 · 기관 관리자 열람 없음(주인만) · `/school.html` → 첫 화면.
+   `me.edition` 은 `/api/me` · `/api/state` · `me.memberships` · `GET /api/setup`(로그인 전 화면)에. 시험: `online/test.edition.mjs` + `test.server.mjs` 가 두 판에서 각각.
 2. **자유 가입** — 로그인 화면에 «가입하기»(아이디 · 이름 · 비밀번호, IP 마다 가입 고삐). `school` 에서는 지금처럼 닫혀 있다(시험이 지키는 규칙 «가입 문이 없다»는 school 에서 그대로).
 3. **키 등록 안내** — «내 계정 → 내 AI 키»를 회사별 3단계(발급 페이지 바로가기 · 붙여 넣기 · 자동 연결 확인)로. Gemini 는 무료 키 안내.
 4. **이용권(월 5,000원 · 그로블 정기결제)** — 새 AI 작업은 이용권이 «유효»할 때만(`subscription_inactive`). 편집 · 열람 · 내보내기는 늘 된다. AI 비용(본인 키)과 이용료를 섞어 기록하지 않는다(원칙 7).

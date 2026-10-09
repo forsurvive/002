@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { importProject } from './import.mjs';
 import { loadAggregate } from './store.mjs';
 import { createJobQueue } from './jobs.mjs';
+import { eduOpAllowed } from './edition.mjs';
 
 const ok = (extra = {}) => ({ status: 200, body: { ok: true, ...extra } });
 const no = (status, error, code) => ({ status, body: { ok: false, error, ...(code ? { code } : {}) } });
@@ -45,7 +46,7 @@ export function resetInviteThrottle() { tries.clear(); }
 const CLASS_TZ = 'Asia/Seoul';
 const LIC_COLS = 'id, plan, status, starts_at, ends_at, seat_limit, allowed_providers, allowed_model_tiers';
 
-export function createEdu({ pool, credentials = null, wfs = null, keyTester = null, codeKeys = null, recoveryCode = '', subscription = null }) {
+export function createEdu({ pool, credentials = null, wfs = null, keyTester = null, codeKeys = null, recoveryCode = '', subscription = null, edition = 'school' }) {
   // 초대 코드 봉하기 — 마스터 키가 있을 때만(없으면 지금처럼 만들 때 한 번만 보인다). 붙임 정보로 그 기관 · 그 초대에만 열린다.
   const codeMeta = (orgId, id) => ({ ownerType: 'invite', ownerId: orgId, provider: 'code', id });
   const sealCode = (code, orgId, id) => { try { return codeKeys && codeKeys.current ? seal(code, codeKeys, codeMeta(orgId, id)) : null; } catch { return null; } };
@@ -101,7 +102,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     return { start, end };
   };
 
-  const tenancy = createTenancy(pool);
+  const tenancy = createTenancy(pool, { edition });
   const TIER_NAME = { high_reasoning: 'High Reasoning', balanced: 'Balanced', fast: 'Fast' };
   const ROLE_NAME = { material: '자료', final: '확정본', target: '대상', reference: '참조', extra: '덧붙임', talk: '논의', agent: '에이전트' };
 
@@ -145,7 +146,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
           WHERE p.owner_user_id = $1 AND p.class_id IS NOT NULL AND p.deleted_at IS NULL ORDER BY p.updated_at DESC`, [user.id])).rows;
       for (const c of classes) c.works = works.filter((w) => w.class_id === c.id).map((w) => ({ id: w.id, name: w.name, canCopy: w.can_copy }));
       const mine = await one('SELECT settings FROM users WHERE id = $1', [user.id]);
-      return ok({ loginId: user.loginId, displayName: user.displayName, platformAdmin: !!user.isPlatformAdmin, organizations: orgs, classes, aiProvider: (mine && mine.settings && mine.settings.ai_provider) || '',
+      return ok({ loginId: user.loginId, displayName: user.displayName, platformAdmin: !!user.isPlatformAdmin, edition, organizations: orgs, classes, aiProvider: (mine && mine.settings && mine.settings.ai_provider) || '',
         ...(user.isPlatformAdmin ? { aiBilling: (mine && mine.settings && mine.settings.ai_billing) || '' } : {}) });
     },
 
@@ -847,6 +848,8 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     OP_NAMES: [...Object.keys(OPS), 'invite.accept', 'invite.check', 'login.available'],
     async handle(user, body, ip = '') {
       const op = String((body && body.op) || '');
+      // 이 판에 없는 문은 모르는 문과 같게(자유 가입판의 기관 · 수업 · 초대 — online/edition.mjs)
+      if (!eduOpAllowed(edition, op, body || {})) return no(404, '그런 문이 없습니다: ' + op);
       if (op === 'password.reset') return resetWithCode(body, ip);
       if (op === 'invite.accept') return acceptInvite(user, body, ip);
       if (op === 'invite.check') return checkInvite(user, body, ip);

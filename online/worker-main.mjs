@@ -9,6 +9,7 @@ import { createJobQueue } from './jobs.mjs';
 import { createProjectStore } from './store.mjs';
 import { createOnlineCall } from './call.mjs';
 import { createTenancy } from './tenancy.mjs';
+import { editionOf } from './edition.mjs';
 import { createWorkflowSource } from './workflow.mjs';
 import { createWorker } from './worker.mjs';
 import { guardConsole } from './log.mjs';
@@ -22,7 +23,7 @@ export async function startWorker(env = process.env, { log = (m) => console.log(
   const queue = createJobQueue(pool);
   const store = createProjectStore(pool);
   const call = createOnlineCall({ pool, store, generator: ai.generator, ...(ai.aliasTiers ? { aliasTiers: ai.aliasTiers } : {}) });
-  const tenancy = createTenancy(pool);
+  const tenancy = createTenancy(pool, { edition: editionOf(env) });
   const wfs = createWorkflowSource(pool);
   const worker = createWorker(
     { queue, store, call, allowed: (row) => tenancy.aiAllowed(row.project_id), workflow: (pid) => wfs.templateFor(pid) },
