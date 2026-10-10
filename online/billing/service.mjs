@@ -12,7 +12,7 @@
 
 import * as groble from './groble.mjs';
 
-export const DEFAULT_RULES = { trialDays: 0, graceDays: 10 };
+export const DEFAULT_RULES = { trialDays: 0, graceDays: 10, refundDays: 7, refundNoUse: true };
 const STEP = { paid: 1, failed: 2, cancel_requested: 3, terminated: 4 };
 const STATUS_STEP = { active: 1, past_due: 2, cancel_pending: 3, ended: 4 };
 const DAY = 86400000;
@@ -29,11 +29,65 @@ const noNul = (v) => (typeof v === 'string' ? v.replace(/\u0000/g, '') : Array.i
 const rawText = (raw) => (Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw == null ? '' : raw)).replace(/\u0000/g, '').slice(0, 20000);
 export const normEmail = (e) => { const s = String(e || '').trim().toLowerCase(); return /^[^\s@]+@[^\s@]+$/.test(s) ? s.slice(0, 200) : ''; };
 
-// 이용 규칙(운영 화면 «이용 규칙») — 가입 직후 무료 체험 일수 · 결제 실패 · 해지 뒤 여유 일수
+// 이용 규칙(운영 화면 «이용 규칙») — 가입 직후 무료 체험 일수 · 결제 실패 · 해지 뒤 여유 일수 · 환불 기간 · «AI 작업을 안 했을 때만»
 export async function rulesOf(db) {
   const v = ((await db.query(`SELECT value FROM app_settings WHERE key = 'billing.rules'`)).rows[0] || {}).value || {};
   const n = (x, d, max) => (Number.isInteger(x) && x >= 0 && x <= max ? x : d);
-  return { trialDays: n(v.trialDays, DEFAULT_RULES.trialDays, 90), graceDays: n(v.graceDays, DEFAULT_RULES.graceDays, 60) };
+  return { trialDays: n(v.trialDays, DEFAULT_RULES.trialDays, 90), graceDays: n(v.graceDays, DEFAULT_RULES.graceDays, 60),
+    refundDays: n(v.refundDays, DEFAULT_RULES.refundDays, 30), refundNoUse: typeof v.refundNoUse === 'boolean' ? v.refundNoUse : DEFAULT_RULES.refundNoUse };
+}
+
+// ---------------------------------------------------------------- 7일 환불(docs/OPEN_EDITION.md §4-8)
+// 돈을 돌려주는 것 · 정기결제를 끊는 것은 그로블 판매 관리에서 한다(판매자 API 가 없다). 여기는 판정 · 기록 · 즉시 멈춤 · «둘 다 됐나».
+
+// 결제 뒤 이 사람이 한 AI 작업 수 — 그 사람이 시킨 생성 기록 가운데 끝까지 마쳤거나 출력이 나온 것
+export async function aiRunsSince(db, userId, since) {
+  return (await db.query(`SELECT count(*)::int AS n FROM generation_runs WHERE requested_by = $1 AND started_at >= $2 AND (status = 'succeeded' OR output_tokens > 0)`,
+    [userId, since])).rows[0].n;
+}
+/**
+ * 결제 하나의 환불 판정(at 때 기준). 기한 = 결제한 날(한국 날짜) + 환불 기간의 그날 끝 — 결제한 날은 세지 않는다.
+ * 돌려주는 값: { ok, reason: ok | off | window_passed | ai_used, deadline, aiRuns, refundDays, noUse }
+ */
+export async function judgeRefund(db, userId, paidAt, { at = new Date(), rules = null } = {}) {
+  const r = rules || await rulesOf(db);
+  const deadline = dayEndPlus(kstDay(paidAt), r.refundDays);
+  const aiRuns = await aiRunsSince(db, userId, paidAt);
+  const reason = !r.refundDays ? 'off' : new Date(at).getTime() >= deadline.getTime() ? 'window_passed' : r.refundNoUse && aiRuns > 0 ? 'ai_used' : 'ok';
+  return { ok: reason === 'ok', reason, deadline, aiRuns, refundDays: r.refundDays, noUse: r.refundNoUse };
+}
+// 판정을 한 줄로 — 결제 기록 · 운영 화면에 남는다(기한은 그날까지로 보인다)
+export const verdictText = (j, paidAt) => '결제 ' + kstDay(paidAt) + ' · 기한 ' + kstDay(j.deadline.getTime() - 1) + '까지 · 결제 뒤 AI 작업 ' + j.aiRuns + '회 · '
+  + (j.ok ? '규정 안' : '규정 밖(' + ({ off: '환불 기간 0일', window_passed: '기간 지남', ai_used: 'AI 작업을 함' }[j.reason] || j.reason) + ')');
+
+// 이번 회차 결제 — 그 사람의 그로블 정기결제에서 마지막으로 반영한 결제(subscriptionId 를 주면 그 정기결제에서)
+async function lastPayment(db, userId, subscriptionId = null) {
+  return (await db.query(
+    `SELECT e.merchant_uid, coalesce(e.occurred_at, e.received_at) AS paid_at, e.amount, e.subscription_id FROM billing_events e JOIN subscriptions s ON s.id = e.subscription_id
+      WHERE e.user_id = $1 AND s.provider = 'groble' AND e.type = 'subscription_payment.completed' AND e.result = 'applied' AND ($2::uuid IS NULL OR e.subscription_id = $2)
+      ORDER BY coalesce(e.occurred_at, e.received_at) DESC, e.id DESC LIMIT 1`, [userId, subscriptionId])).rows[0] || null;
+}
+
+/**
+ * 내 환불 판정 — «내 계정 → 이용권»과 [환불 요청]이 쓴다. 돌려주는 값:
+ *   { eligible, reason: ok | off | no_payment | window_passed | ai_used | requested | refunded, payment, deadline, aiRuns, request }
+ */
+export async function refundCheck(db, userId, { at = new Date() } = {}) {
+  const rules = await rulesOf(db);
+  const pay = await lastPayment(db, userId);
+  const base = { eligible: false, payment: null, deadline: null, aiRuns: 0, refundDays: rules.refundDays, noUse: rules.refundNoUse, request: null };
+  if (!rules.refundDays) return { ...base, reason: 'off' };
+  if (!pay) return { ...base, reason: 'no_payment' };
+  const j = await judgeRefund(db, userId, pay.paid_at, { at, rules });
+  const req = (await db.query(`SELECT id, source, status, created_at, refunded_at, cancelled_at FROM refund_requests
+    WHERE user_id = $1 AND paid_at = $2 AND status <> 'withdrawn' ORDER BY created_at DESC LIMIT 1`, [userId, pay.paid_at])).rows[0] || null;
+  const refunded = !!pay.merchant_uid && (await db.query(`SELECT 1 FROM billing_events WHERE merchant_uid = $1 AND type = 'subscription_payment.refunded' LIMIT 1`, [pay.merchant_uid])).rowCount > 0;
+  const reason = refunded || (req && req.refunded_at) ? 'refunded' : req ? 'requested' : j.reason;
+  return {
+    ...base, eligible: reason === 'ok', reason, deadline: j.deadline, aiRuns: j.aiRuns,
+    payment: { paidAt: pay.paid_at, merchantUid: pay.merchant_uid, amount: pay.amount, subscriptionId: pay.subscription_id },
+    request: req ? { id: req.id, source: req.source, status: req.status, createdAt: req.created_at, refundedAt: req.refunded_at, cancelledAt: req.cancelled_at } : null,
+  };
 }
 
 // 이용권이 살아 있는가 — 운영자 · 무료 이용 · 기한이 남은 줄. 새 AI 작업 앞(tenancy.aiAllowed)과 worker 가 돌리기 직전에 부른다.
@@ -157,14 +211,23 @@ export function createBilling({ pool, adapter = groble, secrets = () => [], log 
   async function reflect(c, ev, { force = false, userId: chosen = null } = {}) {
     if (!ev.ok) return { result: 'unreadable', note: '읽지 못한 꼴(JSON 이 아니거나 모양이 다르다)', review: true };
     if (ev.kind === 'unknown') return { result: 'unreadable', note: '모르는 종류: ' + ev.type.slice(0, 60), review: true };
+    // 구매자가 그로블에서 취소(환불) 요청 — 우리가 받은 정기결제의 결제 건이면 그때의 판정을 붙여 운영자에게(승인 · 반려는 그로블에서)
+    if (ev.kind === 'cancel_request' && ev.merchantUid) {
+      const pay = (await c.query(`SELECT user_id, subscription_id, coalesce(occurred_at, received_at) AS paid_at FROM billing_events
+        WHERE merchant_uid = $1 AND type = 'subscription_payment.completed' AND user_id IS NOT NULL ORDER BY id DESC LIMIT 1`, [ev.merchantUid])).rows[0];
+      if (pay) {
+        const j = await judgeRefund(c, pay.user_id, pay.paid_at, { at: ev.occurredAt || new Date() });
+        return { result: 'recorded', note: '구매자가 그로블에서 취소(환불) 요청 — ' + verdictText(j, pay.paid_at) + ' → 승인 · 반려는 그로블에서', review: true, userId: pay.user_id, subId: pay.subscription_id };
+      }
+    }
     const who = chosen ? { userId: chosen } : await whose(c, ev);
-    if (ev.kind === 'one_time') {
+    if (ev.kind === 'one_time' || ev.kind === 'cancel_request') {
       const ours = !!ev.contentId && (await c.query(`SELECT 1 FROM billing_plans WHERE product_id <> '' AND product_id = $1`, [ev.contentId])).rowCount > 0;
       return { result: 'recorded', note: ours ? '결제 옵션의 상품인데 정기결제가 아니다 — 그로블 상품 설정을 확인' : '정기결제가 아닌 결제(기록만)', review: ours, userId: who ? who.userId : null };
     }
     if (!who) return { result: 'unlinked', note: '연결 안 된 결제 — 참조값 · 이메일로 사람을 찾지 못했다', review: true };
     const userId = who.userId;
-    if (ev.kind === 'refunded') return { result: 'recorded', note: '회차 환불 — 이용권은 그대로(끝낼지는 «해지 완료»가 정한다)', review: true, userId, subId: who.subId || null };
+    if (ev.kind === 'refunded') return refundedRound(c, ev, who);
     let plan = null;
     if (ev.kind === 'paid') {
       plan = await planFor(c, ev);
@@ -203,6 +266,14 @@ export function createBilling({ pool, adapter = groble, secrets = () => [], log 
         `SELECT 1 FROM subscriptions WHERE user_id = $1 AND provider = 'groble' AND ref <> $2 AND status IN ('active', 'past_due') AND paid_until > now() LIMIT 1`, [userId, ev.ref])).rowCount)) {
         review = true; note += ' · 이미 이용 중인 정기결제가 또 있다(겹친 결제인지 확인' + (sameRowLive ? ' — 참조값 없는 결제는 한 줄로 모인다' : '') + ')';
       }
+      // 이미 환불된 결제가 늦게 왔다(도착 순서는 보장되지 않는다) — 이용권을 늘리지 않는다
+      const refundedAt = ev.merchantUid ? ((await c.query(`SELECT coalesce(occurred_at, received_at) AS at FROM billing_events
+        WHERE merchant_uid = $1 AND type = 'subscription_payment.refunded' ORDER BY id LIMIT 1`, [ev.merchantUid])).rows[0] || {}).at : null;
+      if (refundedAt) { next.paid_until = row.paid_until || refundedAt; review = true; note += ' · 이미 환불된 결제가 늦게 왔다 — 이용권을 늘리지 않았다'; }
+      // 환불한 정기결제에서 다시 결제 — 그로블에서 정기결제를 끊지 않았다(돈을 냈으니 반영은 한다)
+      if (ev.billingReason === 'RENEWAL' && (await c.query(`SELECT 1 FROM refund_requests WHERE subscription_id = $1 AND status <> 'withdrawn' LIMIT 1`, [row.id])).rowCount) {
+        review = true; note += ' · 환불한 정기결제에서 다시 결제됐다 — 그로블에서 해지됐는지 확인';
+      }
     } else if (ev.kind === 'failed') {
       Object.assign(next, { status: 'past_due', final_failure: !!ev.isFinal });
       note = ev.isFinal ? '마지막 재시도도 실패 — 유예가 끝나면 해지된다' : '갱신 결제 실패 — 그로블이 다시 시도한다(이용은 그대로)';
@@ -214,14 +285,109 @@ export function createBilling({ pool, adapter = groble, secrets = () => [], log 
       Object.assign(next, { status: 'cancel_pending', service_ends_at: ends, paid_until: cap && row.paid_until && new Date(row.paid_until) > cap ? cap : row.paid_until });
       note = '해지 예고 — 이용 기간은 남는다' + (ends ? '(' + kstDay(ends) + '까지)' : '');
     } else if (ev.kind === 'terminated') {
-      Object.assign(next, { status: 'ended', paid_until: ev.terminatedAt || at });
+      // 기한을 늘리지는 않는다 — 환불 · [환불 요청] · [이용권 끝내기]가 앞당긴 기한을 «해지 완료»가 되살리지 않게
+      const end = ev.terminatedAt || at;
+      Object.assign(next, { status: 'ended', paid_until: row.paid_until && new Date(row.paid_until) < new Date(end) ? row.paid_until : end });
       note = '해지 완료 — 이용권 끝';
     }
     await c.query(
       `UPDATE subscriptions SET status = $2, paid_until = $3, next_billing_date = $4, service_ends_at = $5, final_failure = $6, plan_id = $7,
               last_paid_at = $8, last_amount = $9, occurred_at = $10, updated_at = now() WHERE id = $1`,
       [row.id, next.status, next.paid_until, next.next_billing_date || null, next.service_ends_at, next.final_failure, next.plan_id, next.last_paid_at, next.last_amount, at]);
+    // 해지가 왔다 — 이 정기결제의 환불 건에 «해지됨»을 적고, 환불도 됐으면 끝낸다
+    if (ev.kind === 'cancel_requested' || ev.kind === 'terminated') {
+      await c.query(`UPDATE refund_requests SET cancelled_at = coalesce(cancelled_at, $2) WHERE subscription_id = $1 AND status = 'open'`, [row.id, at]);
+      await closeRefunds(c, row.id);
+    }
     return { result: 'applied', note, review, userId, subId: row.id };
+  }
+
+  // 환불과 해지가 둘 다 확인된 환불 건은 끝낸다
+  const closeRefunds = (c, subId) => c.query(`UPDATE refund_requests SET status = 'done', resolved_at = coalesce(resolved_at, now())
+    WHERE subscription_id = $1 AND status = 'open' AND refunded_at IS NOT NULL AND cancelled_at IS NOT NULL`, [subId]);
+
+  /**
+   * 회차 환불 웹훅(subscription_payment.refunded). 이번 회차(그 정기결제에서 마지막으로 반영한 결제)면 이용권을 환불 때로 끝내고
+   * 환불 건에 «환불됨»을 적는다 — [환불 요청]이 없었으면 그로블에서 먼저 한 것으로 새 건을 만든다(그때의 판정과 함께).
+   * 해지(예고 · 완료)가 아직이면 그 건은 «해지 안 됨»으로 남는다(그로블에서 정기결제를 끊지 않으면 다음 결제일에 다시 청구된다).
+   * 지난 회차의 환불은 기록만. 규정 밖 환불은 «확인 필요».
+   */
+  async function refundedRound(c, ev, who) {
+    const userId = who.userId;
+    const at = ev.occurredAt || new Date();
+    const pay = ev.merchantUid ? (await c.query(`SELECT subscription_id, coalesce(occurred_at, received_at) AS paid_at, amount FROM billing_events
+      WHERE merchant_uid = $1 AND type = 'subscription_payment.completed' AND user_id = $2 AND subscription_id IS NOT NULL ORDER BY id DESC LIMIT 1`, [ev.merchantUid, userId])).rows[0] : null;
+    if (!pay) return { result: 'recorded', note: '회차 환불 — 받은 적 없는 결제 건(기록만)', review: true, userId, subId: who.subId || null };
+    const j = await judgeRefund(c, userId, pay.paid_at, { at });
+    const last = await lastPayment(c, userId, pay.subscription_id);
+    if (!last || last.merchant_uid !== ev.merchantUid) {
+      return { result: 'recorded', note: '지난 회차 환불 — 이용권은 그대로 · ' + verdictText(j, pay.paid_at), review: true, userId, subId: pay.subscription_id };
+    }
+    const row = (await c.query('SELECT id, status, paid_until, occurred_at FROM subscriptions WHERE id = $1 FOR UPDATE', [pay.subscription_id])).rows[0];
+    await c.query('UPDATE subscriptions SET paid_until = least(paid_until, $2), updated_at = now() WHERE id = $1', [row.id, at]);
+    const cancelledAt = ['cancel_pending', 'ended'].includes(row.status) ? row.occurred_at || at : null;
+    const mine = (await c.query(`UPDATE refund_requests SET refunded_at = coalesce(refunded_at, $3), cancelled_at = coalesce(cancelled_at, $4)
+      WHERE user_id = $1 AND paid_at = $2 AND status = 'open' RETURNING id`, [userId, pay.paid_at, at, cancelledAt])).rowCount;
+    if (!mine) {
+      await c.query(`INSERT INTO refund_requests (user_id, subscription_id, merchant_uid, amount, paid_at, deadline, ai_runs, in_policy, prev_paid_until, source, refunded_at, cancelled_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'groble', $10, $11)`, [userId, row.id, ev.merchantUid, ev.amount || pay.amount, pay.paid_at, j.deadline, j.aiRuns, j.ok, row.paid_until, at, cancelledAt]);
+    }
+    await closeRefunds(c, row.id);
+    const note = ['이번 회차 환불 — 이용권을 끝냈다', verdictText(j, pay.paid_at)];
+    if (!cancelledAt) note.push('그로블에서 정기결제 해지가 아직 — 끊지 않으면 다음 결제일에 다시 청구된다');
+    return { result: 'applied', note: note.join(' · '), review: !j.ok, userId, subId: row.id };
+  }
+
+  // ---------------------------------------------------------------- 환불 요청(사용자) · 되돌리기(운영자)
+
+  /**
+   * [환불 요청] — 서버가 다시 판정하고(화면을 믿지 않는다) 요청을 남긴 뒤 이용권을 바로 멈춘다(그 정기결제의 기한 = 지금).
+   * 요청한 뒤에 AI 를 쓰고 환불받는 일이 없게. 편집 · 열람 · 내보내기는 그대로. 돈과 정기결제는 운영자가 그로블에서.
+   * 돌려주는 값: { ok, requestId, check } 또는 { ok:false, code(판정의 reason), check }
+   */
+  async function requestRefund(user) {
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      // 그 사람의 정기결제 줄을 잠근다 — 두 번 누름 · 같은 때 온 웹훅과 차례로
+      await c.query(`SELECT id FROM subscriptions WHERE user_id = $1 AND provider = 'groble' ORDER BY id FOR UPDATE`, [user.id]);
+      const chk = await refundCheck(c, user.id);
+      if (!chk.eligible) { await c.query('ROLLBACK'); return { ok: false, code: chk.reason, check: chk }; }
+      const p = chk.payment;
+      const sub = (await c.query('SELECT paid_until, status, occurred_at FROM subscriptions WHERE id = $1', [p.subscriptionId])).rows[0];
+      const cancelledAt = sub && ['cancel_pending', 'ended'].includes(sub.status) ? sub.occurred_at || new Date() : null;   // 그로블에서 먼저 해지했다
+      const req = (await c.query(`INSERT INTO refund_requests (user_id, subscription_id, merchant_uid, amount, paid_at, deadline, ai_runs, prev_paid_until, cancelled_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`, [user.id, p.subscriptionId, p.merchantUid, p.amount, p.paidAt, chk.deadline, chk.aiRuns, sub ? sub.paid_until : null, cancelledAt])).rows[0];
+      await c.query('UPDATE subscriptions SET paid_until = least(paid_until, now()), updated_at = now() WHERE id = $1', [p.subscriptionId]);
+      await c.query('COMMIT');
+      return { ok: true, requestId: req.id, check: chk };
+    } catch (e) {
+      try { await c.query('ROLLBACK'); } catch { /* 끊겼다 */ }
+      throw e;
+    } finally {
+      c.release();
+    }
+  }
+
+  // [요청 되돌리기](운영자) — 환불 전에만. 멈춘 이용권을 되살린다(그 사이 늘어난 기한은 그대로). 돌려주는 값: { ok } 또는 { ok:false, code: missing | closed | refunded }
+  async function withdrawRefund(id, by) {
+    if (!UUID.test(String(id || ''))) return { ok: false, code: 'missing' };
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      const r = (await c.query('SELECT id, user_id, subscription_id, status, refunded_at, prev_paid_until FROM refund_requests WHERE id = $1 FOR UPDATE', [id])).rows[0];
+      const code = !r ? 'missing' : r.status !== 'open' ? 'closed' : r.refunded_at ? 'refunded' : '';
+      if (code) { await c.query('ROLLBACK'); return { ok: false, code }; }
+      if (r.subscription_id) await c.query('UPDATE subscriptions SET paid_until = greatest(paid_until, $2), updated_at = now() WHERE id = $1', [r.subscription_id, r.prev_paid_until]);
+      await c.query(`UPDATE refund_requests SET status = 'withdrawn', resolved_by = $2, resolved_at = now() WHERE id = $1`, [id, by]);
+      await c.query('COMMIT');
+      return { ok: true, userId: r.user_id };
+    } catch (e) {
+      try { await c.query('ROLLBACK'); } catch { /* 끊겼다 */ }
+      throw e;
+    } finally {
+      c.release();
+    }
   }
 
   // ---------------------------------------------------------------- 사용자
@@ -232,7 +398,13 @@ export function createBilling({ pool, adapter = groble, secrets = () => [], log 
       `SELECT provider, status, paid_until, next_billing_date::text AS next_billing_date, service_ends_at, final_failure FROM subscriptions WHERE user_id = $1`, [user.id])).rows;
     const free = !!((await pool.query('SELECT free FROM billing_customers WHERE user_id = $1', [user.id])).rows[0] || {}).free;
     const plans = (await pool.query('SELECT id, name FROM billing_plans WHERE enabled ORDER BY sort_order, created_at')).rows;
-    return { ...summarize(rows, { free, operator: !!user.isPlatformAdmin }), plans };
+    // 환불 — 할 수 있을 때 · 요청했을 때 · 환불됐을 때 · 기간 안인데 AI 작업을 했을 때만 보인다(기간이 지나면 말하지 않는다)
+    const rc = await refundCheck(pool, user.id);
+    const refund = ['ok', 'requested', 'refunded', 'ai_used'].includes(rc.reason) ? {
+      eligible: rc.eligible, reason: rc.reason, paidOn: kstDay(rc.payment.paidAt), until: kstDay(rc.deadline.getTime() - 1), aiRuns: rc.aiRuns, noUse: rc.noUse, days: rc.refundDays,
+      request: rc.request ? { status: rc.request.status, createdAt: rc.request.createdAt, refunded: !!rc.request.refundedAt, cancelled: !!rc.request.cancelledAt } : null,
+    } : null;
+    return { ...summarize(rows, { free, operator: !!user.isPlatformAdmin }), plans, refund };
   }
 
   // [결제하기] — 누를 때마다 새 참조값(정기결제 하나 = 참조값 하나) + 결제창 링크.
@@ -262,5 +434,5 @@ export function createBilling({ pool, adapter = groble, secrets = () => [], log 
   // 웹훅 시크릿이 서버에 있는가(값은 내주지 않는다)
   const secretState = () => { const s = secrets() || []; return { current: !!String(s[0] || '').trim(), previous: !!String(s[1] || '').trim() }; };
 
-  return { receive, reflect, myPass, checkout, grantTrial, health, secretState, adapter };
+  return { receive, reflect, myPass, checkout, grantTrial, requestRefund, withdrawRefund, health, secretState, adapter };
 }

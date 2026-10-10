@@ -1,5 +1,5 @@
 // 이용권 · 고객 · 결제 관리의 문(POST /api/edu { op }) — 자유 가입판에만(online/edition.mjs isOpenOnlyOp). createEdu 가 문 표에 더한다.
-//   me.pass · me.pass.checkout                 — 내 이용권 · [결제하기](누구나 — 제 것만, 금액 없음)
+//   me.pass · me.pass.checkout · me.pass.refund — 내 이용권 · [결제하기] · [환불 요청](누구나 — 제 것만, 금액 없음)
 //   billing.*                                  — 고객 · 결제 기록 · 결제 옵션 · 이용 규칙(최상위 운영자만 — 다른 사람에게는 403)
 // 손으로 바꾼 것은 모두 감사 기록(누가 · 언제 · 무엇을 · 왜). 메모 · 개인정보는 감사 기록에 싣지 않는다.
 
@@ -28,6 +28,19 @@ export function billingOps({ pool, billing, log = async () => {} }) {
       const r = await billing.checkout(user, b.planId);
       if (r.ok) return ok({ url: r.url });
       return r.code === 'bad_link' ? no(422, '결제 링크가 맞지 않습니다 — 운영자에게 알려 주세요', 'bad_link') : no(404, '그 결제 옵션이 없습니다', 'missing');
+    },
+    // [환불 요청] — 서버가 다시 판정한다(§4-8). 받으면 이용권이 바로 멈추고, 운영자가 그로블에서 환불 · 정기결제 해지를 함께 한다.
+    async 'me.pass.refund'(user, b, ip) {
+      const r = await billing.requestRefund(user);
+      if (!r.ok) {
+        const SAY = { off: '지금은 환불 요청을 받지 않습니다', no_payment: '환불할 결제가 없습니다', window_passed: '환불 기간(결제 후 ' + r.check.refundDays + '일)이 지났습니다',
+          ai_used: '이번 결제 뒤 AI 작업을 해서 환불 대상이 아닙니다', requested: '이미 환불을 요청했습니다 — 운영자가 처리하고 있습니다', refunded: '이미 환불된 결제입니다' };
+        return no(422, SAY[r.code] || '환불할 수 없습니다', r.code);
+      }
+      const k = r.check;
+      await log(user, null, 'billing.refund_request', 'user', user.id,
+        { paidAt: k.payment.paidAt, until: k.deadline, aiRuns: k.aiRuns, merchantUid: k.payment.merchantUid }, ip);
+      return ok({ pass: await billing.myPass(user) });
     },
 
     // ---------------- 고객(운영자)
@@ -96,6 +109,14 @@ export function billingOps({ pool, billing, log = async () => {} }) {
       if (!user.isPlatformAdmin) return FORBIDDEN;
       if (!(await admin.ignore(b.eventId, user.id))) return NOT_FOUND;
       await log(user, null, 'billing.ignore', 'billing_event', String(b.eventId), { reason: why(b) }, ip);
+      return ok();
+    },
+    // [요청 되돌리기] — 환불 전에만, 멈춘 이용권을 되살린다(왜 · 감사 기록)
+    async 'billing.refund.withdraw'(user, b, ip) {
+      if (!user.isPlatformAdmin) return FORBIDDEN;
+      const r = await billing.withdrawRefund(b.requestId, user.id);
+      if (!r.ok) return r.code === 'missing' ? NOT_FOUND : no(409, r.code === 'refunded' ? '이미 환불된 건은 되돌릴 수 없습니다' : '끝난 건은 되돌릴 수 없습니다', 'conflict');
+      await log(user, null, 'billing.refund_withdraw', 'refund_request', String(b.requestId), { reason: why(b) }, ip);
       return ok();
     },
     async 'billing.health'(user) {

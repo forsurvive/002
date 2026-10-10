@@ -11,7 +11,8 @@ export const REF_RE = /^[A-Za-z0-9\-_.:=~]{1,128}$/;
 export const WINDOW_MS = 5 * 60 * 1000;   // timestamp 허용 폭 ±5분
 
 // 그로블 사건 종류 → 정규화한 갈래
-//   paid · failed · cancel_requested · terminated · refunded(정기결제) · one_time(단건 결제 · 취소 · 환불) · unknown
+//   paid · failed · cancel_requested · terminated · refunded(정기결제) · cancel_request(구매자의 취소 요청 — 정기결제 건이면 환불 판정을 붙인다)
+//   · one_time(단건 결제 · 환불) · unknown
 const KINDS = {
   'subscription_payment.completed': 'paid',          // 최초(INITIAL) · 매 갱신(RENEWAL)
   'subscription_payment.failed': 'failed',            // 갱신 실패(기본 3회 · 1일 간격 재시도 → 유예 7일)
@@ -19,7 +20,7 @@ const KINDS = {
   'subscription.terminated': 'terminated',            // 해지 완료 — 막는 것은 이것뿐
   'subscription_payment.refunded': 'refunded',        // 회차 환불 — 해지가 아니다
   'payment.completed': 'one_time',
-  'payment.cancel_requested': 'one_time',
+  'payment.cancel_requested': 'cancel_request',       // 구매자가 구매 후 7일 안에 낸 취소 요청 — 승인 · 반려는 판매자가 그로블에서
   'payment.refunded': 'one_time',
 };
 

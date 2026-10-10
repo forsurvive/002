@@ -32,6 +32,17 @@ function eventView(r) {
 }
 const EVENT_COLS = `e.id, e.received_at, e.occurred_at, e.type, e.result, e.note, e.review, e.amount, e.ref, e.merchant_uid, e.raw, e.user_id, e.resolved_at, u.login_id`;
 
+// 환불 건 한 줄 → 화면 — 그때의 판정(결제 때 · 기한 · AI 작업 수 · 규정 안)과 할 일 둘(그로블 환불 · 그로블 해지)의 확인
+function refundView(r) {
+  return {
+    id: r.id, user: { userId: r.user_id, loginId: r.login_id || '', name: r.display_name || '' }, source: r.source, status: r.status,
+    merchantUid: r.merchant_uid, amount: r.amount, paidAt: r.paid_at, until: kstDay(new Date(r.deadline).getTime() - 1), aiRuns: r.ai_runs, inPolicy: r.in_policy,
+    createdAt: r.created_at, refundedAt: r.refunded_at, cancelledAt: r.cancelled_at, resolvedAt: r.resolved_at,
+  };
+}
+const REFUND_COLS = `r.id, r.user_id, u.login_id, u.display_name, r.source, r.status, r.merchant_uid, r.amount, r.paid_at, r.deadline, r.ai_runs, r.in_policy,
+  r.created_at, r.refunded_at, r.cancelled_at, r.resolved_at`;
+
 export function createBillingAdmin({ pool, billing }) {
   const one = async (sql, args) => (await pool.query(sql, args)).rows[0] || null;
 
@@ -68,12 +79,14 @@ export function createBillingAdmin({ pool, billing }) {
         `SELECT s.provider, s.ref, s.status, s.paid_until, s.next_billing_date::text AS next_billing_date, s.service_ends_at, s.final_failure, s.last_paid_at, s.last_amount, s.created_at, p.name AS plan_name
            FROM subscriptions s LEFT JOIN billing_plans p ON p.id = s.plan_id WHERE s.user_id = $1 ORDER BY s.created_at DESC`, [userId])).rows;
       const events = (await pool.query(`SELECT ${EVENT_COLS} FROM billing_events e LEFT JOIN users u ON u.id = e.user_id WHERE e.user_id = $1 ORDER BY e.received_at DESC, e.id DESC LIMIT 50`, [userId])).rows;
+      const refunds = (await pool.query(`SELECT ${REFUND_COLS} FROM refund_requests r JOIN users u ON u.id = r.user_id WHERE r.user_id = $1 ORDER BY r.created_at DESC LIMIT 20`, [userId])).rows;
       return {
         user: { userId: u.id, loginId: u.login_id, name: u.display_name, createdAt: u.created_at, lastLoginAt: u.last_login_at, accountStatus: u.status, operator: u.is_platform_admin, free: u.free, memo: u.memo },
         pass: summarize(subs, { free: u.free, operator: u.is_platform_admin }),
         subscriptions: subs.map((s) => ({ provider: s.provider, ref: shortRef(s.ref), status: s.status, paidUntil: s.paid_until, nextBillingDate: s.next_billing_date || '', serviceEndsAt: s.service_ends_at,
           finalFailure: s.final_failure, lastPaidAt: s.last_paid_at, lastAmount: s.last_amount, plan: s.plan_name || '', createdAt: s.created_at })),
         events: events.map(eventView),
+        refunds: refunds.map(refundView),
       };
     },
 
@@ -106,7 +119,10 @@ export function createBillingAdmin({ pool, billing }) {
       const recent = (await pool.query(`SELECT ${EVENT_COLS} FROM billing_events e LEFT JOIN users u ON u.id = e.user_id ORDER BY e.received_at DESC, e.id DESC LIMIT $1`, [n])).rows;
       const month = await one(`SELECT count(*)::int AS n, coalesce(sum(amount), 0)::bigint AS total FROM billing_events
         WHERE result = 'applied' AND type = 'subscription_payment.completed' AND received_at >= (date_trunc('month', now() AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul')`, []);
-      return { review: review.map(eventView), recent: recent.map(eventView), month: { count: month.n, total: Number(month.total) } };
+      // 환불 건 — 끝나지 않은 것이 먼저(할 일 둘 가운데 무엇이 남았나), 그 아래 최근 것
+      const refunds = (await pool.query(`SELECT ${REFUND_COLS} FROM refund_requests r JOIN users u ON u.id = r.user_id
+        ORDER BY (r.status = 'open') DESC, r.created_at DESC LIMIT 100`)).rows;
+      return { review: review.map(eventView), recent: recent.map(eventView), refunds: refunds.map(refundView), month: { count: month.n, total: Number(month.total) } };
     },
     async event(id) {
       const r = await one(`SELECT e.*, u.login_id FROM billing_events e LEFT JOIN users u ON u.id = e.user_id WHERE e.id = $1`, [Number(id) || 0]);
@@ -155,7 +171,11 @@ export function createBillingAdmin({ pool, billing }) {
       const overdue = await one(`SELECT count(*)::int AS n FROM subscriptions WHERE provider = 'groble' AND status IN ('active', 'past_due')
         AND next_billing_date < ($1::date - 1) AND paid_until > now()`, [kstDay(Date.now())]);
       const review = await one('SELECT count(*)::int AS n FROM billing_events WHERE review', []);
-      return { secret: billing.secretState(), lastReceivedAt: last.at, overdue: overdue.n, review: review.n, ...billing.health, path: '/api/billing/groble' };
+      // 환불 건 — 끝나지 않은 것 · 환불은 됐는데 그로블 정기결제가 아직 살아 있는 것(다음 결제일에 다시 청구된다)
+      const refunds = await one(`SELECT count(*)::int AS open, count(*) FILTER (WHERE refunded_at IS NOT NULL AND cancelled_at IS NULL)::int AS uncancelled
+        FROM refund_requests WHERE status = 'open'`, []);
+      return { secret: billing.secretState(), lastReceivedAt: last.at, overdue: overdue.n, review: review.n, refundsOpen: refunds.open, refundsUncancelled: refunds.uncancelled,
+        ...billing.health, path: '/api/billing/groble' };
     },
 
     // ---------------------------------------------------------------- 결제 옵션 · 이용 규칙
@@ -197,13 +217,19 @@ export function createBillingAdmin({ pool, billing }) {
       return { ok: true, plan: { id: plan.id } };
     },
     async rules() { return { ...(await rulesOf(pool)), blocks: 'ai' }; },
+    // 이용 규칙 저장 — 보내지 않은 값은 지금 값 그대로(환불 칸이 없던 화면이 보내도 환불 규칙이 지워지지 않게)
     async rulesSave(b, by) {
-      const trialDays = Number(b.trialDays); const graceDays = Number(b.graceDays);
+      const cur = await rulesOf(pool);
+      const pick = (k) => (b[k] == null || b[k] === '' ? cur[k] : Number(b[k]));
+      const trialDays = pick('trialDays'); const graceDays = pick('graceDays'); const refundDays = pick('refundDays');
+      const refundNoUse = typeof b.refundNoUse === 'boolean' ? b.refundNoUse : cur.refundNoUse;
       if (!Number.isInteger(trialDays) || trialDays < 0 || trialDays > 90) return { ok: false, error: '무료 체험은 0~90일입니다' };
       if (!Number.isInteger(graceDays) || graceDays < 0 || graceDays > 60) return { ok: false, error: '여유는 0~60일입니다' };
+      if (!Number.isInteger(refundDays) || refundDays < 0 || refundDays > 30) return { ok: false, error: '환불 기간은 0~30일입니다(0 이면 환불 요청을 받지 않는다)' };
+      const rules = { trialDays, graceDays, refundDays, refundNoUse };
       await pool.query(`INSERT INTO app_settings (key, value, updated_by) VALUES ('billing.rules', $1, $2)
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`, [{ trialDays, graceDays }, by]);
-      return { ok: true, rules: { trialDays, graceDays, blocks: 'ai' } };
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`, [rules, by]);
+      return { ok: true, rules: { ...rules, blocks: 'ai' } };
     },
   };
 }
