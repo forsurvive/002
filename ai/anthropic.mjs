@@ -1,7 +1,9 @@
 // AnthropicProvider — Claude Messages API 를 fetch 로 부른다(SDK 없음). 설계: docs/AI_PROVIDER.md §3.
 //
 // · 긴 출력은 스트리밍(SSE)으로 받는다 — 2~5분 넘는 호출이 중간 장비의 유휴 타임아웃에 끊기지 않게.
-//   받은 글은 모았다가 끝에 한 번 돌려준다(부분 결과로 문서를 쓰지 않는다).
+//   받은 글은 모았다가 끝에 한 번 돌려준다. 도중에 끊기면(시간 초과 · 연결 끊김 · 스트림 중간 오류 · 끝맺음 없이 닫힘 · 문맥 초과)
+//   받은 글이 있으면 버리지 않고 «잘림»(finishReason 'length')으로 돌려준다 — Core 가 끊긴 자리부터 이어 쓴다(core/generation/continue.mjs).
+//   사람이 세운 것만은 그대로 stopped.
 // · 시스템 프롬프트(호출마다 같은 덩이)에 캐시 지점을 둔다.
 // · model id 는 받은 그대로 쓴다 — 고르는 것은 카탈로그(설정)의 일이다. 여기에 박지 않는다.
 // · 키는 헤더에만 실린다. 오류 문구 · 결과 · 로그에 싣지 않는다.
@@ -46,6 +48,13 @@ export function createAnthropicProvider({ baseUrl = 'https://api.anthropic.com',
       const onAbort = () => ctl.abort();
       if (signal) signal.addEventListener('abort', onAbort, { once: true });
 
+      // 받은 것 — 도중에 끊겨도 돌려줄 수 있게 바깥에 둔다
+      let text = '';
+      let usage = {};
+      let stop = '';
+      let messageId = '';
+      let requestId = '';
+      const cut = (why) => done(success({ providerRequestId: requestId || messageId, usage: usageOf(usage), text, finishReason: 'length', cut: why }));
       const body = {
         model,
         max_tokens: Number(maxOutputTokens) || DEFAULT_MAX_OUTPUT,
@@ -66,7 +75,7 @@ export function createAnthropicProvider({ baseUrl = 'https://api.anthropic.com',
           body: JSON.stringify(body),
           signal: ctl.signal,
         });
-        const requestId = (res.headers && res.headers.get && res.headers.get('request-id')) || '';
+        requestId = (res.headers && res.headers.get && res.headers.get('request-id')) || '';
         if (!res.ok) {
           let err = {};
           try { err = ((await res.json()) || {}).error || {}; } catch { /* 본문이 JSON 이 아님 */ }
@@ -76,10 +85,6 @@ export function createAnthropicProvider({ baseUrl = 'https://api.anthropic.com',
           return done(failure(reason, SAY[reason], { providerRequestId: requestId, retryAfterMs: retryAfterOf(res), detail: explain && err.message ? head + ': ' + plainMessage(err.message) : head }));
         }
 
-        let text = '';
-        let usage = {};
-        let stop = '';
-        let messageId = '';
         for await (const ev of sseEvents(res.body)) {
           if (ev.type === 'message_start' && ev.message) { messageId = ev.message.id || ''; usage = { ...(ev.message.usage || {}) }; }
           else if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') {
@@ -91,16 +96,20 @@ export function createAnthropicProvider({ baseUrl = 'https://api.anthropic.com',
           } else if (ev.type === 'error') {
             const e = ev.error || {};
             const reason = reasonOf(0, e.type, e.message);
+            if (text.trim() && reason !== 'safety') return cut('error');   // 받은 글이 있으면 잘림으로 — 끊긴 자리부터 잇는다
             return done(failure(reason, SAY[reason], { providerRequestId: requestId || messageId, usage: usageOf(usage) }));
           }
         }
         const meta = { providerRequestId: requestId || messageId, usage: usageOf(usage) };
         if (stop === 'refusal') return done(failure('safety', SAY.safety, meta));
         if (!text.trim()) return done(failure('empty', SAY.empty, meta));
-        return done(success({ ...meta, text, finishReason: stop === 'max_tokens' ? 'length' : 'stop' }));
+        // 다 썼다(end_turn · stop_sequence)가 아니면 잘림 — 출력 상한(max_tokens) · 문맥 초과(model_context_window_exceeded) · 끝맺음 없이 닫힌 스트림
+        const whole = stop === 'end_turn' || stop === 'stop_sequence';
+        return done(success({ ...meta, text, finishReason: whole ? 'stop' : 'length', ...(whole || stop === 'max_tokens' ? {} : { cut: stop || 'closed' }) }));
       } catch (e) {
+        if (signal && signal.aborted && !timedOut) return done(failure('stopped', SAY.stopped));
+        if (text.trim()) return cut(timedOut ? 'timeout' : 'network');   // 받은 글은 버리지 않는다
         if (timedOut) return done(failure('timeout', SAY.timeout));
-        if (signal && signal.aborted) return done(failure('stopped', SAY.stopped));
         return done(failure('other', SAY.other, { detail: netDetail(e) }));   // 연결 끊김 등 — 원문은 싣지 않는다
       } finally {
         clearTimeout(timer);

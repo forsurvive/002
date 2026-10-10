@@ -1,5 +1,5 @@
 // 모델 카탈로그 — 화면의 «High Reasoning / Balanced / Fast» 를 실제 provider model id 로 바꾸는 자리.
-// 실제 id · 가격 · 출력 상한은 **설정 데이터**(config/models.json 또는 이후 DB 의 model_catalog)에만 있다 — 코드에 박지 않는다.
+// 실제 id · 가격 · 문맥 · 출력 상한은 **설정 데이터**(config/models.json 또는 이후 DB 의 model_catalog)에만 있다 — 코드에 박지 않는다.
 // 모델이 바뀌면 운영자가 설정만 고친다(명세 부록 E · Z 시나리오 5). I/O 없음 — 읽어 온 표를 받는다.
 
 export const PROVIDERS = { anthropic: 'Claude', openai: 'GPT', google: 'Gemini' };
@@ -11,12 +11,13 @@ const clean = (e) => ({
   modelId: String(e.modelId || '').trim(),
   displayName: String(e.displayName || ''),
   maxOutputTokens: Math.max(0, Number(e.maxOutputTokens) || 0),
+  contextTokens: Math.max(0, Number(e.contextTokens) || 0),   // 문맥(입력 + 출력의 창). 0 = 모름 — 사전 검사 없이 회사의 답으로 나눠 읽는다
   price: e.price && typeof e.price === 'object' ? { ...e.price } : null,
   active: e.active !== false,
 });
 
 /**
- * entries = [{ provider, tier, modelId, displayName?, maxOutputTokens?, price?{inputPerMTok,outputPerMTok,cacheReadPerMTok,cacheWritePerMTok}, active? }]
+ * entries = [{ provider, tier, modelId, displayName?, maxOutputTokens?, contextTokens?, price?{inputPerMTok,outputPerMTok,cacheReadPerMTok,cacheWritePerMTok}, active? }]
  * 틀린 줄은 버리지 않고 problems 에 적는다(운영자가 고치도록). 쓸 수 있는 것은 (provider, tier) 당 활성 하나.
  */
 export function createCatalog(entries = []) {

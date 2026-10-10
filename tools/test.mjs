@@ -2470,6 +2470,12 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
       else if (mode === 'model') err(404, 'not_found_error', 'model: nope');
       else if (mode === 'slow') { setTimeout(() => { try { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(okStream()); } catch {} }, 3000); }
       else if (mode === 'cut') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write(sse([{ type: 'message_start', message: { id: 'm', usage: {} } }])); res.destroy(); }
+      // 긴 글(EBOOK_EDITION §5-1) — 받은 글이 있는 채로 끊기는 갈래들
+      else if (mode === 'cutText') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write(sse([{ type: 'message_start', message: { id: 'm_cut', usage: { input_tokens: 5 } } }, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '받은 앞부분' } }])); setTimeout(() => res.destroy(), 30); }
+      else if (mode === 'noStop') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(sse([{ type: 'message_start', message: { id: 'm', usage: {} } }, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '끝맺음 없이' } }])); }
+      else if (mode === 'ctxStop') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(okStream('model_context_window_exceeded')); }
+      else if (mode === 'errText') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(sse([{ type: 'message_start', message: { id: 'm', usage: {} } }, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '중간까지' } }, { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }])); }
+      else if (mode === 'slowText') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write(sse([{ type: 'message_start', message: { id: 'm', usage: {} } }, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '느린 앞부분' } }])); }
     });
   });
   await new Promise((r) => fakeApi.listen(0, '127.0.0.1', r));
@@ -2508,6 +2514,20 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   mode = 'slow'; eq('시간을 넘기면 timeout', (await ask({ timeoutMs: 1000 })).reason, 'timeout');
   const stopper = new AbortController(); setTimeout(() => stopper.abort(), 100);
   eq('사람이 세우면 stopped', (await ask({ signal: stopper.signal })).reason, 'stopped');
+  // 받은 글은 버리지 않는다 — 잘림(length)으로 돌려주면 Core 가 끊긴 자리부터 잇는다(core/generation/continue.mjs)
+  mode = 'cutText'; ar = await ask();
+  ok('**글을 받다가 연결이 끊기면 받은 글을 잘림으로 돌려준다(실패로 버리지 않는다)**', ar.ok && ar.text === '받은 앞부분' && ar.finishReason === 'length' && ar.cut === 'network', JSON.stringify(ar).slice(0, 200));
+  mode = 'noStop'; ar = await ask();
+  ok('끝맺음 없이 닫힌 스트림은 다 쓴 것이 아니라 잘림', ar.ok && ar.text === '끝맺음 없이' && ar.finishReason === 'length');
+  mode = 'ctxStop'; ar = await ask();
+  ok('문맥 초과(model_context_window_exceeded)로 멈춰도 잘림', ar.ok && ar.finishReason === 'length' && ar.cut === 'model_context_window_exceeded');
+  mode = 'errText'; ar = await ask();
+  ok('스트림 중간 오류도 받은 글이 있으면 잘림', ar.ok && ar.text === '중간까지' && ar.finishReason === 'length' && ar.cut === 'error');
+  mode = 'slowText'; ar = await ask({ timeoutMs: 1000 });
+  ok('**시간을 넘겨도 받은 글이 있으면 잘림(시간 초과로 버리지 않는다)**', ar.ok && ar.text === '느린 앞부분' && ar.finishReason === 'length' && ar.cut === 'timeout', JSON.stringify(ar).slice(0, 200));
+  const stopper2 = new AbortController(); setTimeout(() => stopper2.abort(), 200);
+  eq('받은 글이 있어도 사람이 세우면 stopped(사람의 뜻이 먼저)', (await ask({ signal: stopper2.signal })).reason, 'stopped');
+  mode = 'auth'; ar = await ask();
   eq('키가 없으면 부르지 않는다', (await anth.generate({ model: 'm', userPrompt: 'x' })).reason, 'auth');
   eq('빈 프롬프트는 부르지 않는다', (await ask({ userPrompt: '  ' })).reason, 'empty');
   ok('갈래 표', reasonOf(403) === 'auth' && reasonOf(413) === 'invalid' && reasonOf(503) === 'overloaded' && reasonOf(402) === 'credit');
@@ -2542,6 +2562,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     else if (om === 'ctx') json(res, 400, { error: { message: 'too long', type: 'invalid_request_error', code: 'context_length_exceeded' } });
     else if (om === 'model') json(res, 404, { error: { message: 'no model', type: 'invalid_request_error', code: 'model_not_found' } });
     else if (om === 'down') json(res, 503, { error: { message: 'down', type: 'server_error', code: null } });
+    else if (om === 'closed') sseData(res, [{ type: 'response.output_text.delta', delta: '끝 이벤트 없이' }]);
+    else if (om === 'cutText') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write('event: response.output_text.delta\ndata: ' + JSON.stringify({ type: 'response.output_text.delta', delta: '받은 앞부분' }) + '\n\n'); setTimeout(() => res.destroy(), 30); }
   });
   const oa = createOpenAIProvider({ baseUrl: 'http://127.0.0.1:' + oSrv.address().port });
   const oAsk = (x = {}) => oa.generate({ model: 'gpt-test', systemPrompt: '체계', userPrompt: '써라', credential: { apiKey: FAKE_KEY }, ...x });
@@ -2559,6 +2581,12 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   om = 'ctx'; eq('OpenAI: 입력이 너무 길면 invalid', (await oAsk()).reason, 'invalid');
   om = 'model'; eq('OpenAI: 없는 모델은 model', (await oAsk()).reason, 'model');
   om = 'down'; eq('OpenAI: 서버 장애는 overloaded', (await oAsk()).reason, 'overloaded');
+  om = 'closed'; let ocut = await oAsk();
+  ok('OpenAI: 끝 이벤트 없이 닫히면 잘림', ocut.ok && ocut.text === '끝 이벤트 없이' && ocut.finishReason === 'length');
+  om = 'cutText'; ocut = await oAsk();
+  ok('**OpenAI: 글을 받다가 끊기면 받은 글을 잘림으로**', ocut.ok && ocut.text === '받은 앞부분' && ocut.finishReason === 'length' && ocut.cut === 'network', JSON.stringify(ocut).slice(0, 160));
+  om = 'rate'; orr = await oAsk();
+  oSrv.closeAllConnections && oSrv.closeAllConnections();
   oSrv.close();
 
   // Gemini
@@ -2578,6 +2606,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     else if (gm === 'model') json(res, 404, { error: { code: 404, message: 'not found', status: 'NOT_FOUND' } });
     else if (gm === 'down') json(res, 503, { error: { code: 503, message: 'overloaded', status: 'UNAVAILABLE' } });
     else if (gm === 'slow') setTimeout(() => { try { sseData(res, []); } catch {} }, 3000);
+    else if (gm === 'closed') sseData(res, [{ candidates: [{ content: { parts: [{ text: '끝맺음 없이' }] } }] }]);
+    else if (gm === 'cutText') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write('data: ' + JSON.stringify({ candidates: [{ content: { parts: [{ text: '받은 앞부분' }] } }] }) + '\n\n'); setTimeout(() => res.destroy(), 30); }
   });
   const ge = createGeminiProvider({ baseUrl: 'http://127.0.0.1:' + gSrv.address().port });
   const gAsk = (x = {}) => ge.generate({ model: 'gemini-test', systemPrompt: '체계', userPrompt: '써라', credential: { apiKey: FAKE_KEY }, ...x });
@@ -2597,6 +2627,11 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   gm = 'slow'; eq('Gemini: 시간을 넘기면 timeout', (await gAsk({ timeoutMs: 1000 })).reason, 'timeout');
   const gStop = new AbortController(); setTimeout(() => gStop.abort(), 100);
   eq('Gemini: 사람이 세우면 stopped', (await gAsk({ signal: gStop.signal })).reason, 'stopped');
+  gm = 'closed'; let gcut = await gAsk();
+  ok('Gemini: 끝맺음(finishReason) 없이 닫히면 잘림', gcut.ok && gcut.text === '끝맺음 없이' && gcut.finishReason === 'length');
+  gm = 'cutText'; gcut = await gAsk();
+  ok('**Gemini: 글을 받다가 끊기면 받은 글을 잘림으로**', gcut.ok && gcut.text === '받은 앞부분' && gcut.finishReason === 'length' && gcut.cut === 'network', JSON.stringify(gcut).slice(0, 160));
+  gm = 'badkey'; gr = await gAsk();
   gSrv.closeAllConnections && gSrv.closeAllConnections();
   gSrv.close();
   // 세 어댑터는 같은 계약 — 같은 입력에 같은 모양
@@ -2615,6 +2650,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     { provider: 'google', tier: 'balanced', modelId: 'gem-old', active: false },
   ]);
   ok('카탈로그가 찾아 준다', C1.resolve('anthropic', 'balanced').modelId === 'claude-test-b' && C1.resolve('google', 'balanced') === null);
+  ok('문맥 크기(contextTokens)를 남긴다 — 적지 않으면 0(모름)', cat.createCatalog([{ provider: 'anthropic', tier: 'fast', modelId: 'c-f', contextTokens: 200000, maxOutputTokens: 64000 }]).resolve('anthropic', 'fast').contextTokens === 200000
+    && C1.resolve('anthropic', 'balanced').contextTokens === 0);
   ok('틀린 줄은 문제로 적는다(겹침 · 모르는 provider)', C1.problems.length === 2, C1.problems.join(' / '));
   ok('**화면에 내보내는 선택지에는 model id 가 없다**', C1.choices().every((c) => !JSON.stringify(c).includes('test-')) && C1.choices().length === 2);
   ok('허락된 것만 보인다', C1.choices({ providers: ['openai'] }).length === 1);

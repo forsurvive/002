@@ -5,6 +5,7 @@
 // · store:false — 학생 원고를 OpenAI 쪽에 보관하지 않는다.
 // · temperature 는 받았을 때만 싣는다(추론 모델은 받지 않는다).
 // · model id 는 받은 그대로(카탈로그의 일). 키는 헤더에만.
+// · 도중에 끊기면(시간 초과 · 연결 끊김 · 끝 이벤트 없이 닫힘) 받은 글이 있으면 «잘림»으로 돌려준다 — Core 가 이어 쓴다(anthropic.mjs 와 같다).
 
 import { success, failure, usageOf } from './provider.mjs';
 import { sseEvents, deadline, retryAfterOf, headerOf, SAY } from './http.mjs';
@@ -39,6 +40,9 @@ export function createOpenAIProvider({ baseUrl = 'https://api.openai.com', fetch
       if (!credential || !credential.apiKey) return done(failure('auth', SAY.auth));
       if (signal && signal.aborted) return done(failure('stopped', SAY.stopped));
       const dl = deadline(signal, timeoutMs);
+      let text = '';
+      let requestId = '';
+      const cut = (why) => done(success({ providerRequestId: requestId, text, finishReason: 'length', cut: why }));
       const body = {
         model,
         ...(String(systemPrompt).trim() ? { instructions: String(systemPrompt) } : {}),
@@ -55,14 +59,13 @@ export function createOpenAIProvider({ baseUrl = 'https://api.openai.com', fetch
           body: JSON.stringify(body),
           signal: dl.signal,
         });
-        const requestId = headerOf(res, 'x-request-id');
+        requestId = headerOf(res, 'x-request-id');
         if (!res.ok) {
           let err = {};
           try { err = ((await res.json()) || {}).error || {}; } catch { /* JSON 이 아님 */ }
           const reason = reasonOf(res.status, err.code || err.type, err.message);
           return done(failure(reason, SAY[reason], { providerRequestId: requestId, retryAfterMs: retryAfterOf(res) }));
         }
-        let text = '';
         let final = null;
         for await (const ev of sseEvents(res.body)) {
           if (ev.type === 'response.output_text.delta') {
@@ -75,6 +78,7 @@ export function createOpenAIProvider({ baseUrl = 'https://api.openai.com', fetch
             return done(failure(reason === 'other' ? 'overloaded' : reason, SAY[reason === 'other' ? 'overloaded' : reason], { providerRequestId: requestId || (ev.response && ev.response.id) || '' }));
           } else if (ev.type === 'error') {
             const reason = reasonOf(0, ev.code, ev.message);
+            if (text.trim()) return cut('error');   // 받은 글이 있으면 잘림으로 — 끊긴 자리부터 잇는다
             return done(failure(reason, SAY[reason], { providerRequestId: requestId }));
           }
         }
@@ -84,10 +88,12 @@ export function createOpenAIProvider({ baseUrl = 'https://api.openai.com', fetch
         const why = resp.incomplete_details && resp.incomplete_details.reason;
         if (why === 'content_filter') return done(failure('safety', SAY.safety, meta));
         if (!text.trim()) return done(failure('empty', SAY.empty, meta));
-        return done(success({ ...meta, text, finishReason: why === 'max_output_tokens' ? 'length' : 'stop' }));
+        // 끝 이벤트(completed · incomplete) 없이 닫힌 스트림도 잘림이다
+        return done(success({ ...meta, text, finishReason: why === 'max_output_tokens' || !final ? 'length' : 'stop', ...(final ? {} : { cut: 'closed' }) }));
       } catch {
+        if (signal && signal.aborted && !dl.state.timedOut) return done(failure('stopped', SAY.stopped));
+        if (text.trim()) return cut(dl.state.timedOut ? 'timeout' : 'network');   // 받은 글은 버리지 않는다
         if (dl.state.timedOut) return done(failure('timeout', SAY.timeout));
-        if (signal && signal.aborted) return done(failure('stopped', SAY.stopped));
         return done(failure('other', SAY.other));
       } finally {
         dl.done();

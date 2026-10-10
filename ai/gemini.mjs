@@ -4,6 +4,7 @@
 //   { systemInstruction: { parts:[{text}] }, contents:[{ role:'user', parts:[{text}] }], generationConfig:{ maxOutputTokens, temperature? } }
 //   candidates[].content.parts[].text(thought:true 는 생각 — 본문이 아니다) · finishReason · promptFeedback.blockReason · usageMetadata
 // · model id 는 받은 그대로(카탈로그의 일). 키는 x-goog-api-key 헤더에만(주소에 싣지 않는다 — 로그에 남지 않게).
+// · 도중에 끊기면(시간 초과 · 연결 끊김 · 끝맺음 없이 닫힘) 받은 글이 있으면 «잘림»으로 돌려준다 — Core 가 이어 쓴다(anthropic.mjs 와 같다).
 
 import { success, failure, usageOf } from './provider.mjs';
 import { sseEvents, deadline, retryAfterOf, headerOf, SAY } from './http.mjs';
@@ -34,6 +35,8 @@ export function createGeminiProvider({ baseUrl = 'https://generativelanguage.goo
       if (!credential || !credential.apiKey) return done(failure('auth', SAY.auth));
       if (signal && signal.aborted) return done(failure('stopped', SAY.stopped));
       const dl = deadline(signal, timeoutMs);
+      let text = ''; let usage = {}; let responseId = '';
+      const cut = (why) => done(success({ providerRequestId: responseId, usage: usageOf(usage), text, finishReason: 'length', cut: why }));
       const body = {
         ...(String(systemPrompt).trim() ? { systemInstruction: { parts: [{ text: String(systemPrompt) }] } } : {}),
         contents: [{ role: 'user', parts: [{ text: String(userPrompt) }] }],
@@ -56,10 +59,11 @@ export function createGeminiProvider({ baseUrl = 'https://generativelanguage.goo
           const reason = reasonOf(res.status, err.status, err.message);
           return done(failure(reason, SAY[reason], { providerRequestId: headerOf(res, 'x-request-id'), retryAfterMs: retryAfterOf(res) }));
         }
-        let text = ''; let finish = ''; let usage = {}; let responseId = ''; let blocked = '';
+        let finish = ''; let blocked = '';
         for await (const chunk of sseEvents(res.body)) {
           if (chunk.error) {
             const reason = reasonOf(0, chunk.error.status, chunk.error.message);
+            if (text.trim()) return cut('error');   // 받은 글이 있으면 잘림으로 — 끊긴 자리부터 잇는다
             return done(failure(reason, SAY[reason], { providerRequestId: responseId }));
           }
           if (chunk.responseId) responseId = chunk.responseId;
@@ -74,10 +78,12 @@ export function createGeminiProvider({ baseUrl = 'https://generativelanguage.goo
         const meta = { providerRequestId: responseId, usage: usageOf(usage) };
         if (blocked || SAFETY_STOPS.has(finish)) return done(failure('safety', SAY.safety, meta));
         if (!text.trim()) return done(failure('empty', SAY.empty, meta));
-        return done(success({ ...meta, text, finishReason: finish === 'MAX_TOKENS' ? 'length' : 'stop' }));
+        // 끝맺음(finishReason)이 오지 않은 채 닫힌 스트림도 잘림이다
+        return done(success({ ...meta, text, finishReason: finish === 'MAX_TOKENS' || !finish ? 'length' : 'stop', ...(finish ? {} : { cut: 'closed' }) }));
       } catch {
+        if (signal && signal.aborted && !dl.state.timedOut) return done(failure('stopped', SAY.stopped));
+        if (text.trim()) return cut(dl.state.timedOut ? 'timeout' : 'network');   // 받은 글은 버리지 않는다
         if (dl.state.timedOut) return done(failure('timeout', SAY.timeout));
-        if (signal && signal.aborted) return done(failure('stopped', SAY.stopped));
         return done(failure('other', SAY.other));
       } finally {
         dl.done();
