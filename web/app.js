@@ -41,6 +41,8 @@ const brandMark = (style) => h('div', { class: 'brand', style, text: STUDIO });
 const isBook = () => !!(S.me && S.me.purpose === 'ebook');
 const appName = () => (S.me && S.me.appName) || '스토리 엔진';
 const W = (s) => (isBook() ? String(s).replace(/작품/g, '책') : s);
+// 토씨 — 받침이 있으면 a(을 · 이), 없으면 b(를 · 가). 데이터에서 온 낱말(걸음 이름)에 붙일 때
+const josa = (w, a, b) => { const t = String(w || ''); const c = t.charCodeAt(t.length - 1); return t + (c >= 0xac00 && c <= 0xd7a3 && (c - 0xac00) % 28 ? a : b); };
 
 // 처음 쓰는 사람을 위한 작업 순서 — 설정 탭에 접어 둔다.
 const GUIDE = [
@@ -397,7 +399,8 @@ function projectList() {
         h('button', { class: 'nav-out', text: isLight() ? '어둡게' : '밝게', onclick: toggleTheme }),
         // 다른 PC · 개인판에서 내려받은 작품 파일 열기 — «+»(새 작품)와 헷갈리지 않게 위쪽 단추 줄에
         h('button', { class: 'btn-line', text: W('작품 파일 가져오기'), onclick: importProjectFile }),
-        h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: () => startTour() }))),
+        // 튜토리얼은 소설 작업을 보여 준다 — 전자책 오토(전자책 집필만 하는 앱)에는 세우지 않는다
+        isBook() ? null : h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: () => startTour() }))),
     // 새 작품 «+» — 화면 한가운데(좁은 창에서도 잘리지 않게 줄을 따로 둔다)
     h('div', { class: 'new-row' }, h('button', { class: 'plus big', text: '+', title: W('새 작품'), onclick: newProjectOpen })),
     S.homeSay ? h('div', { class: 'new-row' }, h('div', { class: 'notice', text: S.homeSay })) : null,
@@ -601,6 +604,8 @@ function stagePanel(close) {
         (st.card.look || []).length ? [h('div', { class: 'lab', text: '결과를 읽을 때 볼 점' }), st.card.look.map((x) => h('div', { text: '· ' + x }))] : null,
         st.card.ask ? [h('div', { class: 'lab', text: '생각해 볼 질문' }), h('div', { text: st.card.ask })] : null) : null,
       st.prevPending && status === 'not_started' ? h('div', { class: 'notice', text: '앞 단계가 아직 승인 전입니다 — 그래도 시작할 수 있습니다' }) : null,
+      // 앞 걸음의 판단으로만 켜지는 걸음(서문) — 꺼져 있어도 사람이 생성할 수는 있다(완전 수동)
+      st.when && st.when.state !== true ? h('div', { class: 'when', text: st.when.state === false ? '자료 분석이 ' + josa(st.when.label, '을', '를') + ' 필요 없다고 봤습니다 — 그래도 쓰려면 생성하세요' : '자료 분석이 아직 ' + josa(st.when.label, '이', '가') + ' 필요한지 판단하지 않았습니다' }) : null,
       cur && cur.upstreamChanged ? h('div', { class: 'notice', text: '⚠ 승인한 뒤 앞 단계 문서가 바뀌었습니다 — 다시 보거나 다시 생성해 보세요(자동으로 바뀌지 않습니다)' }) : null,
       per && !S.open.episode ? h('div', null, h('div', { class: 'lab', text: '몇 ' + ew }), textbox('st-ep', '예: 1')) : null,
       per && (st.episodes || []).length ? h('div', { class: 'line' }, st.episodes.map((e) => h('button', {

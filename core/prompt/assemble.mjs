@@ -126,11 +126,13 @@ export function specBlock(project, { capNote = true } = {}) {
   const sp = project.spec || {};
   const len = s(sp.length).trim();
   const out = s(sp.outline).trim();
+  // 전자책(단계 템플릿 ebook)에는 회차가 없다 — 분량이 비면 «책의 설계»가 자료를 보고 정한다(소설의 «상한 24화»를 싣지 않는다)
+  const book = !!(project.workflow && project.workflow.template === 'ebook');
   return neutralize([
     '이름: ' + s(project.name),
     '개요: ' + (out || '정해지지 않음'),
     '형식: ' + s(sp.form),
-    '분량: ' + (len || (capNote ? '정해지지 않음. 상한 24화.' : '정해지지 않음')),
+    '분량: ' + (len || (book ? '정해지지 않음. 책의 설계에서 자료를 보고 정한다.' : capNote ? '정해지지 않음. 상한 24화.' : '정해지지 않음')),
   ].join('\n'));
 }
 

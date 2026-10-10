@@ -2184,6 +2184,42 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('**전권 검토는 손댄 장을 모두 추천한다(차례대로)**', rv.includes(c1.docId) && rv.includes(c2.docId) && rv.indexOf(c1.docId) < rv.indexOf(c2.docId) && rv.includes(toc.docId));
   eq('장 할 일의 {n} 을 채운다', wf.stageTask(wf.stageOf(eb, 'chapters'), 4).startsWith('목차의 4장 카드를 따라 4장 본문'), true);
   ok('회차 단계가 아닌 단계(목차)의 추천은 지금처럼 장을 걸지 않는다', !wf.recommendRefs(bp, eb, 'toc').includes(c1.docId));
+
+  // 서문은 자료 분석이 필요하다고 판단한 경우에만(2026-10-10 — 켬/끔 스위치는 두지 않는다)
+  const studyStage = wf.stageOf(eb, 'study'); const prefStage = wf.stageOf(eb, 'preface');
+  ok('**자료 분석이 서문이 필요한지 판단한다(저절로 도는 분석도 이 할 일을 쓴다 — prep)**', studyStage.prep === true && /서문: 필요/.test(studyStage.task) && /서문: 필요 없음/.test(studyStage.task));
+  ok('서문 걸음은 자료 분석의 판단으로만 켜진다(when)', prefStage.when && prefStage.when.stage === 'study' && prefStage.when.label === '서문' && !prefStage.optional);
+  ok('판단 줄 읽기 — 꾸밈표가 붙어도 · 고쳐 쓴 판단(마지막)이 앞선다 · 없으면 판단 전',
+    JSON.stringify(['정리\n서문: 필요 — 저자의 경험', '**서문: 필요 없음** — 본문으로 충분', '«서문»: 불필요', '서문: 필요\n…\n서문: 필요 없음', '서문은 나중에', '- 서문 : 필요하지 않다'].map((x) => wf.judged(x, '서문')))
+      === JSON.stringify([true, false, false, false, null, false]));
+  const pv = () => wf.view(bp, eb).find((x) => x.key === 'preface');
+  ok('**자료 분석 전에는 서문 걸음이 꺼져 있다(판단 전)**', pv().off === true && pv().when.state === null);
+  const studyDoc = model.docCreate(bp, { title: '자료 분석', body: '사례 정리\n서문: 필요 없음 — 본문으로 충분' });
+  ok('«필요 없음»이면 꺼진 채', pv().off === true && pv().when.state === false);
+  model.docWrite(bp, studyDoc.id, { body: '사례 정리\n서문: 필요 — 저자의 현장 경험을 따로 밝혀야 한다' });
+  ok('**«필요»이면 켜진다**', pv().off === false && pv().when.state === true);
+  model.docWrite(bp, studyDoc.id, { body: '사례 정리' });
+  ok('꺼진 서문은 앞 단계 승인 대기에 세지 않는다', wf.view(bp, eb).find((x) => x.key === 'finish').prevPending === wf.view(bp, eb).filter((x) => x.key !== 'preface' && x.key !== 'finish' && x.output !== 'perEpisode').some((x) => !['approved', 'skipped'].includes(x.status)));
+  ok('**꺼져 있어도 사람이 열어 생성할 수는 있다(완전 수동)**', wf.startStage(bp, eb, 'preface').ok === true);
+  ok('when 은 앞의 한 걸음을 가리켜야 한다', !wf.validateTemplate({ ...eb, stages: eb.stages.map((x) => (x.key === 'preface' ? { ...x, when: { stage: 'finish', label: '서문' } } : x)) }).ok
+    && !wf.validateTemplate({ ...eb, stages: eb.stages.map((x) => (x.key === 'preface' ? { ...x, when: { stage: 'study' } } : x)) }).ok);
+  // 전자책의 규격 구획에는 소설의 «상한 24화»가 없다
+  const asm = await import('../core/prompt/assemble.mjs');
+  ok('**전자책의 분량이 비면 «책의 설계에서 정한다» — 소설의 «상한 24화»를 싣지 않는다**', asm.specBlock({ name: '책', spec: { form: '실용서' }, workflow: { template: 'ebook' } }).includes('분량: 정해지지 않음. 책의 설계에서 자료를 보고 정한다.')
+    && !asm.specBlock({ name: '책', spec: { form: '실용서' }, workflow: { template: 'ebook' } }).includes('24화') && asm.specBlock({ name: '소설', spec: { form: '장편' } }).includes('상한 24화'));
+  // 저절로 도는 자료 분석이 템플릿의 할 일(prep)을 싣는다 — 템플릿이 없거나 prep 이 없으면(이야기 만들기) 지금 그대로
+  const agentsC = await import('../core/generation/agents.mjs');
+  const sp = store.blankProject('p_prep_task', '분석 시험');
+  model.materialAdd(sp, '노트', '현장 사례');
+  const spStore = { get: () => sp, update: (pid, fn) => { fn(sp); return { ok: true }; } };
+  const seenS = [];
+  const callS = async (a) => { seenS.push(a); return { ok: true, text: '분석\n서문: 필요 — 까닭' }; };
+  await agentsC.runStudy({ store: spStore, call: callS, workflow: async () => eb, retryDelays: [0] }, sp.id, { step() {}, addDoc() {} });
+  ok('**전자책의 저절로 도는 자료 분석은 «서문이 필요한지»까지 판단하는 할 일을 싣는다**', seenS[0] && /서문: 필요/.test(seenS[0].taskExtra) && seenS[0].stageKey === 'study');
+  sp.docs = sp.docs.filter((d) => d.title !== '자료 분석');
+  seenS.length = 0;
+  await agentsC.runStudy({ store: spStore, call: callS, workflow: async () => tpl, retryDelays: [0] }, sp.id, { step() {}, addDoc() {} });
+  ok('이야기 만들기(prep 없음)는 지금 그대로 — 할 일을 덧붙이지 않는다', seenS[0] && !seenS[0].taskExtra && !seenS[0].stageKey);
 }
 
 // ---------------------------------------------------------------- 용도(전자책 오토)의 이름 · 말 — 화면 (docs/EBOOK_EDITION.md T-E04)
@@ -2206,6 +2242,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('단계 화면의 회차 말은 템플릿이 정한다(전자책 — 장)', app.includes("const ew = w.episodeWord || '화';") && app.includes("text: '몇 ' + ew") && app.includes('st.episodes.length + ew') && !app.includes("'화 ' + (STAGE_MARK"));
   ok('끌 단계가 없는 템플릿(전자책)에는 «본문 단계» 스위치가 서지 않는다', app.includes('w.stages.some((x) => x.optional) ? ['));
   ok('전자책의 분량 안내는 «책의 설계»가 정한다고', app.includes("'분량은 비워 두면 «책의 설계»에서 AI 가 자료를 보고 정합니다'") && app.includes("'분량은 비워 두면 회차 수를 스스로 정합니다'"));
+  ok('**전자책 오토(전자책 집필만 하는 앱)에는 소설 튜토리얼을 세우지 않는다**', app.includes("isBook() ? null : h('button', { class: 'btn-line', text: '튜토리얼 보기'"));
+  ok('서문이 꺼진 까닭을 단계 창에 한 줄로(자료 분석의 판단)', app.includes('st.when && st.when.state !== true') && app.includes("josa(st.when.label, '을', '를')"));
   // 긴 글(EBOOK_EDITION §5-1) — 저장이 거절돼도(너무 큼 · 연결) 쓴 글을 잃지 않는다
   ok('**문서 저장이 거절되면 쓴 글을 칸에 되살리고 까닭을 보인다**', app.includes('Object.assign(S.typed, kept);') && app.includes("'저장하지 못했습니다 — '") && /try \{ r = await api\('doc\.write', body\); \} catch/.test(app));
   ok('파일로 문서를 만들지 못하면 말없이 지나가지 않는다', app.includes("'파일로 문서를 만들지 못했습니다 — '"));

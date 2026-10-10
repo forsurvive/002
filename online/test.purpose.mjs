@@ -81,6 +81,19 @@ export async function run({ pool, ok, eq }) {
     ok('작품의 작업실은 지금처럼(16단계 · 화)', ns.workflow.stages.length === 16 && ns.workflow.episodeWord === '화');
     eq('**장을 고르지 않고 장 집필을 시작하면 «몇 장인지»를 묻는다**', (await book.post('/api', { op: 'stage.start', pid: bookPid, key: 'chapters' })).error, '몇 장인지 골라 주세요');
     eq('책의 템플릿을 고르면 전자책(관리 화면이 아닌 작품 쪽)', (await createWorkflowSource(pool, { defaultKey: 'ebook' }).templateFor(bookPid)).key, 'ebook');
+    // 전자책 집필만 하는 앱(2026-10-10) — 책은 처음부터 «전자책»(소설/비소설 판정 호출 없이 전자책 에이전트를 짓는다)
+    const kindOf = async (pid) => (await pool.query(`SELECT agent_kind FROM projects WHERE id = $1`, [pid])).rows[0].agent_kind;
+    eq('**전자책 오토의 책은 글 종류가 처음부터 «전자책»**', await kindOf(bookPid), '전자책');
+    ok('지금 앱의 작품은 지금처럼(글 종류는 준비 작업이 판정한다 — 비어 있다)', !(await kindOf(novelPid)));
+    // 다른 앱(스토리 엔진)의 작품 파일을 전자책 오토로 들여오면 책으로 연다
+    const bundle = await (await fetch(novel.base + '/api/download?pid=' + novelPid + '&kind=project&id=', { headers: { cookie: (await (async () => {
+      const r = await fetch(novel.base + '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loginId: 'pu-writer', password: 'long-enough-pu-writer' }) });
+      return (r.headers.get('set-cookie') || '').split(';')[0];
+    })()) } })).json();
+    const imp = await book.post('/api', { op: 'project.import', bundle });
+    ok('**전자책 오토로 들여온 작품은 전자책 템플릿 · 전자책 글 종류로 열린다**', imp.ok && await tplOf(imp.pid) === 'ebook' && await kindOf(imp.pid) === '전자책', JSON.stringify(imp));
+    const imp2 = await novel.post('/api', { op: 'project.import', bundle });
+    eq('지금 앱으로 들여오면 지금처럼(템플릿을 적지 않는다)', await tplOf(imp2.pid), null);
     ok('전자책 오토의 관리 화면은 전자책 단계를 고친다', (await createWorkflowSource(pool, { defaultKey: 'ebook' }).editorView()).stages.length === 8);
   } finally {
     for (const s of servers) await new Promise((r) => s.close(r));

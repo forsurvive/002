@@ -16,6 +16,8 @@ const arr = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
 // 실행기가 아는 이름만 받는다. 모르는 것이 오면 지금 값을 지킨다.
 // 글이 아닌 것(바이너리 — NUL 글자)은 자료 · 문서로 받지 않는다(명세 §63 — 업로드는 txt · md 먼저). 화면도 먼저 거른다.
 const NOT_TEXT = '글이 아닌 파일은 넣을 수 없습니다 — txt · md 파일을 넣어 주세요';
+// 전자책 오토가 만든 · 들여온 책의 글 종류 — 에이전트 준비가 소설/비소설을 가리지 않고 이 종류로 짓는다(docs/EBOOK_EDITION.md ④)
+export const BOOK_KIND = '전자책';
 const binary = (s) => String(s || '').includes('\u0000');
 const pickModel = (v, fallback) => (MODELS.includes(String(v || '')) ? String(v || '') : fallback);
 
@@ -44,7 +46,12 @@ export function createOps(d) {
       if (!d.importProject) return bad('여기서는 작품을 가져올 수 없습니다');
       const r = readBundle(b.bundle);
       if (r.error) return bad(r.error);
-      const out = await d.importProject(r.project);
+      // 전자책 오토(전자책 집필만 하는 앱)로 들여오면 템플릿이 적혀 있지 않은 작품도 책으로 연다(전자책 단계 · 전자책 에이전트)
+      const tpl = d.templateKey && d.templateKey !== 'story_creation' ? String(d.templateKey) : '';
+      const src = tpl && !(r.project.workflow && r.project.workflow.template)
+        ? { ...r.project, workflow: { ...(r.project.workflow || {}), template: tpl }, ...(tpl === 'ebook' && !(r.project.agents && r.project.agents.__kind) ? { agents: { ...(r.project.agents || {}), __kind: BOOK_KIND } } : {}) }
+        : r.project;
+      const out = await d.importProject(src);
       return out && out.pid ? ok({ pid: out.pid, checked: out.checked !== false }) : bad((out && out.error) || '가져오지 못했습니다');
     },
 
@@ -67,6 +74,8 @@ export function createOps(d) {
       if (books.length || tpl) {
         await state.update(p.id, (pr) => {
           if (tpl) pr.workflow = { ...(pr.workflow || {}), template: tpl };
+          // 전자책 오토의 책은 처음부터 «전자책» — 소설/비소설을 가리는 호출 없이 전자책을 쓰는 에이전트를 짓는다(전자책 집필만 하는 앱)
+          if (tpl === 'ebook') pr.agents = { ...(pr.agents || {}), __kind: BOOK_KIND };
           if (!books.length) return;
           const cat = model.categoryCreate(pr, BOOK_CATEGORY);
           for (const bk of books) model.docCreate(pr, { title: bk.title, src: bk.src, categoryId: cat.id });

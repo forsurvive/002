@@ -65,13 +65,15 @@ export function createWorker({ queue, store, call, prepare = null, allowed = nul
     const jobStore = { get: (pid) => store.get(pid), update: (pid, fn) => store.update(pid, fn, { userId, runId: lastRun }) };
     const seen = (r) => { if (r && r.ok && r.runId) lastRun = r.runId; return r; };
     const traced = Object.assign(async (args, c) => seen(await call(args, c)), call, call.raw ? { raw: async (args, c) => seen(await call.raw(args, c)) } : {});
+    // 단계 생성 — 그 프로젝트에 쓸 템플릿(운영자 · 기관이 고쳐 쓴 것까지)
+    const wfOf = workflow || (async () => baseTemplate());
     const deps = {
       store: jobStore,
       call: traced,
-      // 에이전트 준비 · 자료 분석 — Core 의 본체에 온라인 저장 · 부르기(call.raw 는 판정 · 짓기용)를 넣는다
-      prepare: prepare || ((pid, c, request) => prepareThenStudy({ store: jobStore, call: traced, raw: traced.raw, prompts: PROMPTS }, pid, c, request)),
-      // 단계 생성 — 그 프로젝트에 쓸 템플릿(운영자 · 기관이 고쳐 쓴 것까지)
-      workflow: workflow || (async () => baseTemplate()),
+      // 에이전트 준비 · 자료 분석 — Core 의 본체에 온라인 저장 · 부르기(call.raw 는 판정 · 짓기용)를 넣는다.
+      // 템플릿도 넘긴다 — 저절로 도는 자료 분석이 그 템플릿의 할 일(prep)을 쓴다(전자책: 서문이 필요한지까지)
+      prepare: prepare || ((pid, c, request) => prepareThenStudy({ store: jobStore, call: traced, raw: traced.raw, prompts: PROMPTS, workflow: wfOf }, pid, c, request)),
+      workflow: wfOf,
     };
     const ctx = {
       pid: row.project_id, jobId: row.id, userId, threadId: params.threadId || '', signal: controller.signal,

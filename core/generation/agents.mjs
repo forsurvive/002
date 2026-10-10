@@ -215,9 +215,13 @@ export async function runStudy(deps, pid, ctx, request = '') {
   if (ctx) ctx.step(STUDY_TITLE);
 
   const delays = deps.retryDelays || RETRY_MS;
+  // 단계 템플릿이 «저절로 도는 자료 분석»의 할 일을 정했으면(prep — 전자책: 서문이 필요한지까지 판단) 그것을 함께 싣는다. 없으면 지금 그대로.
+  const t = deps.workflow ? await deps.workflow(pid) : null;
+  const prep = t && (t.stages || []).find((s) => s.prep);
+  const stageArgs = prep ? { taskExtra: String(prep.task || ''), stageKey: prep.key, stageTier: String(prep.tier || '') } : {};
   // 자료가 한 번에 실리지 않으면(invalid — «입력이 너무 깁니다») 자르지 않고 나눠 읽어 모은다(reading.mjs, 2026-10-08 사용자 지시)
   const readCall = readingInParts(continuing(call), store);   // 길이 한도에 닿아 끊기면 이어 쓴다(continue.mjs)
-  const r = await persist(() => readCall({ pid, code: 'S02', materials: true, allFinals: true, request, signal: ctx && ctx.signal }, ctx), ctx, delays);
+  const r = await persist(() => readCall({ pid, code: 'S02', materials: true, allFinals: true, request, ...stageArgs, signal: ctx && ctx.signal }, ctx), ctx, delays);
   if (!r.ok) return PASSING.has(r.reason || 'other') || r.reason === 'invalid' ? r : stopped(r);
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
 

@@ -39,7 +39,25 @@ export function validateTemplate(t) {
     }
   }
   for (const s of t.stages) if (s.position !== undefined && !positions.has(s.position)) problems.push(s.key + ': unknown position ' + s.position);
+  // when — 앞 걸음 문서의 판단(«라벨: 필요»)으로만 켜지는 걸음. 가리키는 걸음이 앞에 있어야 한다
+  for (const s of t.stages) {
+    if (s.when === undefined) continue;
+    const w = s.when || {};
+    const src = t.stages.find((x) => x.key === w.stage);
+    if (!src || !String(w.label || '').trim()) problems.push(s.key + ': when needs a stage and a label');
+    else if (!(src.n < s.n) || src.output === 'perEpisode') problems.push(s.key + ': when must point to an earlier single stage');
+  }
   return { ok: problems.length === 0, problems };
+}
+
+// 앞 걸음의 판단 — 그 문서에 «라벨: 필요» 줄이 있으면 true, «라벨: 필요 없음»이면 false, 아직 없으면 null(판단 전).
+// 꾸밈표(굵게 · 머리표 · 따옴표)가 붙어 와도 읽는다. 마지막에 적은 판단이 앞선다(고쳐 쓴 판단).
+export function judged(text, label) {
+  const lab = String(label || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('^[\\s>*#\\-·•«"\']*' + lab + '[\\s*»"\']*[:：]\\s*[*«"\']*\\s*(필요\\s*없|불필요|없음|필요하지\\s*않|필요)', 'gm');
+  let last = null;
+  for (const m of String(text || '').matchAll(re)) last = !/없|불필요|않/.test(m[1]);
+  return last;
 }
 
 export const stageOf = (t, key) => (t.stages || []).find((s) => s.key === key) || null;
@@ -49,6 +67,12 @@ const stateOf = (p, slot) => (p.stages && p.stages[slot]) || null;
 // 회차 단계의 손댄 회차들(차례대로)
 const episodesOf = (p, key) => Object.keys(p.stages || {}).filter((k) => k.startsWith(key + '#')).map(epOf).filter(Boolean).sort((a, b) => a - b);
 const livingDoc = (p, id) => (id ? model.findDoc(p, id) : null);
+// when 이 붙은 걸음의 판단 — 가리키는 걸음의 문서에서 읽는다(문서가 없으면 판단 전)
+export function whenState(p, t, s) {
+  if (!s || !s.when) return null;
+  const d = docOf(p, t, s.when.stage, 0);
+  return d ? judged(model.bodyOf(d), s.when.label) : null;
+}
 
 export function docTitle(stage, episode) {
   return String(stage.doc || stage.title).replace(/\{n\}/g, String(episode || ''));
@@ -113,9 +137,11 @@ function statusOf(p, t, s, episode) {
  */
 export function view(p, t, { bodyOn = true } = {}) {
   const order = t.stages;
+  // 꺼진 걸음 — 끌 수 있는 걸음(본문)을 껐거나, 앞 걸음의 판단으로만 켜지는 걸음(서문)인데 «필요»가 아닐 때
+  const offOf = (x) => (!!x.optional && !bodyOn) || (!!x.when && whenState(p, t, x) !== true);
   return order.map((s, i) => {
-    const off = !!s.optional && !bodyOn;
-    const prev = order.slice(0, i).filter((x) => !(x.optional && !bodyOn) && x.output !== 'final');
+    const off = offOf(s);
+    const prev = order.slice(0, i).filter((x) => !offOf(x) && x.output !== 'final');
     const prevPending = prev.some((x) => x.output !== 'perEpisode' && !['approved', 'skipped'].includes(statusOf(p, t, x, 0)));
     const one = (episode) => {
       const status = statusOf(p, t, s, episode);
@@ -126,7 +152,8 @@ export function view(p, t, { bodyOn = true } = {}) {
       return { status, docId: d ? d.id : '', docTitle: d ? d.title : (s.output === 'revision' ? '' : docTitle(s, episode)), upstreamChanged: changed,
         ...(status === 'approved' ? { approvedAt: st.approvedAt || 0, approvedBy: st.approvedBy || '' } : {}) };
     };
-    const base = { key: s.key, n: s.n, title: s.title, output: s.output, optional: !!s.optional, off, prevPending };
+    const base = { key: s.key, n: s.n, title: s.title, output: s.output, optional: !!s.optional, off, prevPending,
+      ...(s.when ? { when: { stage: s.when.stage, label: s.when.label, state: whenState(p, t, s) } } : {}) };
     if (s.output !== 'perEpisode') return { ...base, ...one(0), refs: recommendRefs(p, t, s.key, 0) };
     // 회차 단계 — 손댄 회차들을 모아 보인다(몇 화까지 갈지는 회차 계획 문서가 정하고, 사람이 회차를 골라 시작한다)
     const eps = episodesOf(p, s.key);
