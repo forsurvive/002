@@ -29,6 +29,7 @@ import { createJobQueue } from './jobs.mjs';
 import { createTenancy, SAY } from './tenancy.mjs';
 import { createEdu } from './edu.mjs';
 import { editionOf } from './edition.mjs';
+import { purposeOf, purposeName } from './purpose.mjs';
 import { createBilling, passActive } from './billing/service.mjs';
 import { googleConfig, freshStart, authorizeUrl, exchangeCode, readIdToken, loginIdFrom, STATE_MINUTES, CALLBACK_PATH } from './google.mjs';
 import { createWorkflowSource } from './workflow.mjs';
@@ -80,6 +81,9 @@ export function onlinePlan(env = process.env) {
   // 판 — school(교육기관판, 기본) · open(자유 가입판). 모르는 값은 school 로(docs/OPEN_EDITION.md §4-1)
   plan.edition = editionOf(env);
   if (env.SE_EDITION && String(env.SE_EDITION).trim().toLowerCase() !== plan.edition) plan.notes.push('SE_EDITION is not school or open - using school');
+  // 용도 — novel(기본) · ebook(전자책 오토). 모르는 값은 novel 로(docs/EBOOK_EDITION.md §8)
+  plan.purpose = purposeOf(env);
+  if (env.SE_PURPOSE && String(env.SE_PURPOSE).trim().toLowerCase() !== plan.purpose) plan.notes.push('SE_PURPOSE is not novel or ebook - using novel');
   return plan;
 }
 
@@ -178,6 +182,7 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
 export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null, keyTester = null, subscription = null, hub = null, codeKeys = keysFromEnv(process.env), billing, google } = {}) {
   const store = createProjectStore(pool);
   const edition = plan.edition || 'school';
+  const purpose = plan.purpose || 'novel';
   // 구글 로그인(자유 가입판만) — Secrets 에 GOOGLE_CLIENT_ID · GOOGLE_CLIENT_SECRET 이 둘 다 있을 때만 선다(docs/OPEN_EDITION.md §4-9)
   const gcfg = edition !== 'open' ? null : google !== undefined ? google : googleConfig(process.env);
   // 이용권(자유 가입판만) — 웹훅 시크릿은 Secrets 의 GROBLE_WEBHOOK_SECRET(교체 중이면 GROBLE_WEBHOOK_SECRET_PREVIOUS 도). 코드 · Git · 로그 · 응답에 두지 않는다.
@@ -188,7 +193,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       siteUrl: site ? 'https://' + site : '' }) : null;
   const tenancy = createTenancy(pool, { edition });
   const wfs = createWorkflowSource(pool);
-  const edu = createEdu({ pool, credentials, wfs, keyTester, subscription, codeKeys, recoveryCode: plan.recoveryCode || '', edition, billing: bill, google: !!gcfg });
+  const edu = createEdu({ pool, credentials, wfs, keyTester, subscription, codeKeys, recoveryCode: plan.recoveryCode || '', edition, billing: bill, google: !!gcfg, purpose });
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
 
   // 화면은 제 자리의 파일만 부른다 — 스크립트는 외부 파일만, 꾸밈은 style 속성을 쓰므로 인라인 꾸밈만 허락
@@ -428,7 +433,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const empty = (await pool.query('SELECT count(*)::int AS n FROM users')).rows[0].n === 0;
         // 바깥에 열었으면(플랫폼 앞단을 거치면 소켓 주소가 루프백일 수 있다) 출입 열쇠만 믿는다
         const trusted = !!plan.gate || (!plan.exposed && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || ''));
-        if (req.method === 'GET') return json(res, 200, ok({ needed: empty && (trusted || !!setupCode), code: empty && !trusted && !!setupCode, ai: !!credentials, edition, google: !!gcfg }));
+        if (req.method === 'GET') return json(res, 200, ok({ needed: empty && (trusted || !!setupCode), code: empty && !trusted && !!setupCode, ai: !!credentials, edition, google: !!gcfg, purpose, name: purposeName(purpose) }));
         if (req.method !== 'POST') return json(res, 405, bad('POST 만 받습니다'));
         if (!empty) return json(res, 409, bad('이미 설정을 마쳤습니다 — 로그인해 주세요'));
         if (!trusted) {
@@ -468,7 +473,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         // 자유 가입판 — 기관 · 수업이 없다. 관리 단추는 운영자에게만(운영 화면), 내 수업 · 수업 자리는 없다.
         if (edition === 'open') {
           // pass — 이용권이 살아 있는가(새 AI 작업이 되는가). 첫 화면이 «이용권 없음» 한 줄을 세울 근거(막는 것은 서버다)
-          return { ...me, edition, manage: !!user.isPlatformAdmin, platformAdmin: !!user.isPlatformAdmin, classes: 0, member: false, places: [], roles: user.isPlatformAdmin ? ['platform_admin'] : [], pass: await passActive(pool, user.id) };
+          return { ...me, edition, purpose, manage: !!user.isPlatformAdmin, platformAdmin: !!user.isPlatformAdmin, classes: 0, member: false, places: [], roles: user.isPlatformAdmin ? ['platform_admin'] : [], pass: await passActive(pool, user.id) };
         }
         const r = (await pool.query(
           `SELECT bool_or(role = 'organization_admin') AS org_admin, count(*)::int AS n FROM organization_members WHERE user_id = $1 AND status = 'active'`, [user.id])).rows[0];
@@ -486,7 +491,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
           `SELECT role FROM organization_members WHERE user_id = $1 AND status = 'active'
             UNION SELECT role FROM class_members WHERE user_id = $1`, [user.id])).rows.map((x) => x.role));
         const roles = [...(user.isPlatformAdmin ? ['platform_admin'] : []), ...['organization_admin', 'instructor', 'student'].filter((x) => held.has(x))];
-        return { ...me, edition, manage: !!(user.isPlatformAdmin || r.org_admin), platformAdmin: !!user.isPlatformAdmin, classes, member: r.n > 0, places, roles };
+        return { ...me, edition, purpose, manage: !!(user.isPlatformAdmin || r.org_admin), platformAdmin: !!user.isPlatformAdmin, classes, member: r.n > 0, places, roles };
       };
 
       // ---------------- 구글 로그인 — 시작. login: 로그인 전(이은 계정이면 들어가고, 처음이면 새 계정) · link: 로그인한 뒤 «내 계정»에서 잇기
@@ -752,6 +757,7 @@ export async function main(env = process.env) {
   await new Promise((resolve) => srv.listen(plan.port, plan.host, resolve));
   console.log('  Story Engine (online) : listening on ' + plan.host + ':' + plan.port);
   console.log('  Edition      : ' + plan.edition + (plan.edition === 'open' ? ' (open sign-up)' : ' (schools)'));
+  console.log('  Purpose      : ' + plan.purpose + (plan.purpose === 'ebook' ? ' (e-book auto)' : ' (story)'));
   console.log('  Host names   : ' + plan.allowedHosts.join(', '));
   for (const n of plan.notes) console.log('  [NOTE] ' + n);
   const users = (await pool.query('SELECT count(*)::int AS n FROM users')).rows[0].n;

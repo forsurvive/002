@@ -47,7 +47,7 @@ export function resetInviteThrottle() { tries.clear(); }
 const CLASS_TZ = 'Asia/Seoul';
 const LIC_COLS = 'id, plan, status, starts_at, ends_at, seat_limit, allowed_providers, allowed_model_tiers';
 
-export function createEdu({ pool, credentials = null, wfs = null, keyTester = null, codeKeys = null, recoveryCode = '', subscription = null, edition = 'school', billing = null, google = false }) {
+export function createEdu({ pool, credentials = null, wfs = null, keyTester = null, codeKeys = null, recoveryCode = '', subscription = null, edition = 'school', billing = null, google = false, purpose = 'novel' }) {
   // 초대 코드 봉하기 — 마스터 키가 있을 때만(없으면 지금처럼 만들 때 한 번만 보인다). 붙임 정보로 그 기관 · 그 초대에만 열린다.
   const codeMeta = (orgId, id) => ({ ownerType: 'invite', ownerId: orgId, provider: 'code', id });
   const sealCode = (code, orgId, id) => { try { return codeKeys && codeKeys.current ? seal(code, codeKeys, codeMeta(orgId, id)) : null; } catch { return null; } };
@@ -149,7 +149,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       const mine = await one('SELECT settings, password_hash = $2 AS no_password FROM users WHERE id = $1', [user.id, auth.NO_PASSWORD]);
       // 구글 로그인(자유 가입판) — 켜졌는가 · 이 계정에 이은 구글(이메일) · 비밀번호가 없는 계정인가(구글로 만든 계정)
       const g = edition === 'open' ? await one(`SELECT email, created_at FROM user_identities WHERE provider = 'google' AND user_id = $1`, [user.id]) : null;
-      return ok({ loginId: user.loginId, displayName: user.displayName, platformAdmin: !!user.isPlatformAdmin, edition, organizations: orgs, classes, aiProvider: (mine && mine.settings && mine.settings.ai_provider) || '',
+      return ok({ loginId: user.loginId, displayName: user.displayName, platformAdmin: !!user.isPlatformAdmin, edition, purpose, organizations: orgs, classes, aiProvider: (mine && mine.settings && mine.settings.ai_provider) || '',
         ...(user.isPlatformAdmin ? { aiBilling: (mine && mine.settings && mine.settings.ai_billing) || '' } : {}),
         ...(edition === 'open' ? { google: { on: !!google, linked: !!g, email: g ? g.email : '', since: g ? g.created_at : null }, noPassword: !!(mine && mine.no_password) } : {}) });
     },
