@@ -7,6 +7,7 @@
 //   · [이 계정에 연결]은 그 결제를 그 사람에게 반영하고(금액 검사 없이 — 운영자가 확인했다), 참조값(없으면 구매자 이메일)을 기억해 다음 소식부터 저절로 잇는다.
 
 import { summarize, rulesOf, normEmail, kstDay, STATUS_SQL } from './service.mjs';
+import { reasonSay, mailSay } from './notice.mjs';
 import { isUuid } from '../tenancy.mjs';
 import { NO_PASSWORD } from '../auth.mjs';
 
@@ -39,10 +40,24 @@ function refundView(r) {
     id: r.id, user: { userId: r.user_id, loginId: r.login_id || '', name: r.display_name || '' }, source: r.source, status: r.status,
     merchantUid: r.merchant_uid, amount: r.amount, paidAt: r.paid_at, until: kstDay(new Date(r.deadline).getTime() - 1), aiRuns: r.ai_runs, inPolicy: r.in_policy,
     createdAt: r.created_at, refundedAt: r.refunded_at, cancelledAt: r.cancelled_at, resolvedAt: r.resolved_at,
+    reason: r.reason || '', reasonSay: r.reason ? reasonSay(r.reason) : '', detail: r.detail || '', mailedAt: r.mailed_at, mailError: r.mail_error || '',
+    mailErrorSay: r.mail_error ? mailSay(r.mail_error) : '',
   };
 }
 const REFUND_COLS = `r.id, r.user_id, u.login_id, u.display_name, r.source, r.status, r.merchant_uid, r.amount, r.paid_at, r.deadline, r.ai_runs, r.in_policy,
-  r.created_at, r.refunded_at, r.cancelled_at, r.resolved_at`;
+  r.created_at, r.refunded_at, r.cancelled_at, r.resolved_at, r.reason, r.detail, r.mailed_at, r.mail_error`;
+
+// 구독 취소 한 줄 → 화면 — 이유 · 다음 결제일(이 날 전에 그로블에서 해지) · 그로블 해지 확인 · 취소 뒤 다시 결제됐나 · 알림 메일
+function cancelView(r) {
+  return {
+    id: r.id, user: { userId: r.user_id, loginId: r.login_id || '', name: r.display_name || '' }, status: r.status,
+    reason: r.reason, reasonSay: reasonSay(r.reason), detail: r.detail, nextBilling: r.next_billing || '',
+    createdAt: r.created_at, confirmedAt: r.confirmed_at, chargedAt: r.charged_at, mailedAt: r.mailed_at, mailError: r.mail_error || '', resolvedAt: r.resolved_at,
+    mailErrorSay: r.mail_error ? mailSay(r.mail_error) : '',
+  };
+}
+const CANCEL_COLS = `x.id, x.user_id, u.login_id, u.display_name, x.status, x.reason, x.detail, x.next_billing::text AS next_billing,
+  x.created_at, x.confirmed_at, x.charged_at, x.mailed_at, x.mail_error, x.resolved_at`;
 
 export function createBillingAdmin({ pool, billing }) {
   const one = async (sql, args) => (await pool.query(sql, args)).rows[0] || null;
@@ -84,6 +99,7 @@ export function createBillingAdmin({ pool, billing }) {
            FROM subscriptions s LEFT JOIN billing_plans p ON p.id = s.plan_id WHERE s.user_id = $1 ORDER BY s.created_at DESC`, [userId])).rows;
       const events = (await pool.query(`SELECT ${EVENT_COLS} FROM billing_events e LEFT JOIN users u ON u.id = e.user_id WHERE e.user_id = $1 ORDER BY e.received_at DESC, e.id DESC LIMIT 50`, [userId])).rows;
       const refunds = (await pool.query(`SELECT ${REFUND_COLS} FROM refund_requests r JOIN users u ON u.id = r.user_id WHERE r.user_id = $1 ORDER BY r.created_at DESC LIMIT 20`, [userId])).rows;
+      const cancels = (await pool.query(`SELECT ${CANCEL_COLS} FROM cancel_requests x JOIN users u ON u.id = x.user_id WHERE x.user_id = $1 ORDER BY x.created_at DESC LIMIT 20`, [userId])).rows;
       return {
         user: { userId: u.id, loginId: u.login_id, name: u.display_name, createdAt: u.created_at, lastLoginAt: u.last_login_at, accountStatus: u.status, operator: u.is_platform_admin, free: u.free, memo: u.memo,
           google: u.google ? { email: maskEmail(u.google_email) } : null, noPassword: !!u.no_password },
@@ -92,6 +108,7 @@ export function createBillingAdmin({ pool, billing }) {
           finalFailure: s.final_failure, lastPaidAt: s.last_paid_at, lastAmount: s.last_amount, plan: s.plan_name || '', createdAt: s.created_at })),
         events: events.map(eventView),
         refunds: refunds.map(refundView),
+        cancels: cancels.map(cancelView),
       };
     },
 
@@ -127,7 +144,10 @@ export function createBillingAdmin({ pool, billing }) {
       // 환불 건 — 끝나지 않은 것이 먼저(할 일 둘 가운데 무엇이 남았나), 그 아래 최근 것
       const refunds = (await pool.query(`SELECT ${REFUND_COLS} FROM refund_requests r JOIN users u ON u.id = r.user_id
         ORDER BY (r.status = 'open') DESC, r.created_at DESC LIMIT 100`)).rows;
-      return { review: review.map(eventView), recent: recent.map(eventView), refunds: refunds.map(refundView), month: { count: month.n, total: Number(month.total) } };
+      // 구독 취소 — 그로블 해지를 기다리는 것이 먼저(다음 결제일이 이른 차례), 그 아래 최근 것
+      const cancels = (await pool.query(`SELECT ${CANCEL_COLS} FROM cancel_requests x JOIN users u ON u.id = x.user_id
+        ORDER BY (x.status = 'open') DESC, x.next_billing NULLS LAST, x.created_at DESC LIMIT 100`)).rows;
+      return { review: review.map(eventView), recent: recent.map(eventView), refunds: refunds.map(refundView), cancels: cancels.map(cancelView), month: { count: month.n, total: Number(month.total) } };
     },
     async event(id) {
       const r = await one(`SELECT e.*, u.login_id FROM billing_events e LEFT JOIN users u ON u.id = e.user_id WHERE e.id = $1`, [Number(id) || 0]);
@@ -179,7 +199,14 @@ export function createBillingAdmin({ pool, billing }) {
       // 환불 건 — 끝나지 않은 것 · 환불은 됐는데 그로블 정기결제가 아직 살아 있는 것(다음 결제일에 다시 청구된다)
       const refunds = await one(`SELECT count(*)::int AS open, count(*) FILTER (WHERE refunded_at IS NOT NULL AND cancelled_at IS NULL)::int AS uncancelled
         FROM refund_requests WHERE status = 'open'`, []);
+      // 구독 취소 — 그로블 해지를 기다리는 것 · 다음 결제일이 지났는데도 해지 확인이 없는 것(다시 청구됐을 수 있다)
+      const cancels = await one(`SELECT count(*)::int AS open, count(*) FILTER (WHERE next_billing IS NOT NULL AND next_billing <= $1::date)::int AS late
+        FROM cancel_requests WHERE status = 'open'`, [kstDay(Date.now())]);
+      // 알림 메일 — 켜졌나(Secrets 의 키) · 받을 주소가 있나 · 보내지 못한 요청
+      const mailFailed = await one(`SELECT (SELECT count(*) FROM refund_requests WHERE mailed_at IS NULL AND mail_error <> '')
+        + (SELECT count(*) FROM cancel_requests WHERE mailed_at IS NULL AND mail_error <> '') AS n`, []);
       return { secret: billing.secretState(), lastReceivedAt: last.at, overdue: overdue.n, review: review.n, refundsOpen: refunds.open, refundsUncancelled: refunds.uncancelled,
+        cancelsOpen: cancels.open, cancelsLate: cancels.late, mail: { on: billing.mailOn(), to: !!(await rulesOf(pool)).notifyEmail, failed: Number(mailFailed.n) },
         ...billing.health, path: '/api/billing/groble' };
     },
 
@@ -221,20 +248,23 @@ export function createBillingAdmin({ pool, billing }) {
         [name, url, price, months, productId, b.enabled !== false, Number.isInteger(Number(b.sortOrder)) ? Number(b.sortOrder) : 0]);
       return { ok: true, plan: { id: plan.id } };
     },
-    async rules() { return { ...(await rulesOf(pool)), blocks: 'ai' }; },
+    async rules() { return { ...(await rulesOf(pool)), blocks: 'ai', mailOn: billing.mailOn() }; },
     // 이용 규칙 저장 — 보내지 않은 값은 지금 값 그대로(환불 칸이 없던 화면이 보내도 환불 규칙이 지워지지 않게)
     async rulesSave(b, by) {
       const cur = await rulesOf(pool);
       const pick = (k) => (b[k] == null || b[k] === '' ? cur[k] : Number(b[k]));
       const trialDays = pick('trialDays'); const graceDays = pick('graceDays'); const refundDays = pick('refundDays');
       const refundNoUse = typeof b.refundNoUse === 'boolean' ? b.refundNoUse : cur.refundNoUse;
+      // 알림 메일 — 보낸 값이 있으면 그 값(빈 글은 지운다), 없으면 지금 값
+      const notifyEmail = b.notifyEmail == null ? cur.notifyEmail : normEmail(b.notifyEmail);
+      if (b.notifyEmail != null && String(b.notifyEmail).trim() && !notifyEmail) return { ok: false, error: '알림 메일 주소가 맞지 않습니다' };
       if (!Number.isInteger(trialDays) || trialDays < 0 || trialDays > 90) return { ok: false, error: '무료 체험은 0~90일입니다' };
       if (!Number.isInteger(graceDays) || graceDays < 0 || graceDays > 60) return { ok: false, error: '여유는 0~60일입니다' };
       if (!Number.isInteger(refundDays) || refundDays < 0 || refundDays > 30) return { ok: false, error: '환불 기간은 0~30일입니다(0 이면 환불 요청을 받지 않는다)' };
-      const rules = { trialDays, graceDays, refundDays, refundNoUse };
+      const rules = { trialDays, graceDays, refundDays, refundNoUse, notifyEmail };
       await pool.query(`INSERT INTO app_settings (key, value, updated_by) VALUES ('billing.rules', $1, $2)
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`, [rules, by]);
-      return { ok: true, rules: { ...rules, blocks: 'ai' } };
+      return { ok: true, rules: { ...rules, blocks: 'ai', mailOn: billing.mailOn() } };
     },
   };
 }

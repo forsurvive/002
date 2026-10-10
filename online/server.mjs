@@ -39,7 +39,7 @@ import { importProject } from './import.mjs';
 import { guardConsole } from './log.mjs';
 import { keysFromEnv } from '../ai/credentials.mjs';
 import { buildAi } from './ai.mjs';
-import { resolveHosting, hostOf, originOk, gateOk } from '../tools/hosting.mjs';
+import { resolveHosting, hostOf, originOk, gateOk, LOCAL_NAMES } from '../tools/hosting.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(dirname(HERE), 'web');
@@ -181,8 +181,11 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
   // 구글 로그인(자유 가입판만) — Secrets 에 GOOGLE_CLIENT_ID · GOOGLE_CLIENT_SECRET 이 둘 다 있을 때만 선다(docs/OPEN_EDITION.md §4-9)
   const gcfg = edition !== 'open' ? null : google !== undefined ? google : googleConfig(process.env);
   // 이용권(자유 가입판만) — 웹훅 시크릿은 Secrets 의 GROBLE_WEBHOOK_SECRET(교체 중이면 GROBLE_WEBHOOK_SECRET_PREVIOUS 도). 코드 · Git · 로그 · 응답에 두지 않는다.
+  // 운영자 알림 메일(환불 요청 · 구독 취소)은 Secrets 의 RESEND_API_KEY 로(online/mail.mjs) — 메일에는 게시한 주소의 운영 화면을 싣는다.
+  const site = plan.exposed ? plan.allowedHosts.find((h) => !LOCAL_NAMES.includes(h)) : '';
   const bill = billing !== undefined ? billing : edition === 'open'
-    ? createBilling({ pool, secrets: () => [process.env.GROBLE_WEBHOOK_SECRET, process.env.GROBLE_WEBHOOK_SECRET_PREVIOUS], log: (m) => console.log('  [billing] ' + m) }) : null;
+    ? createBilling({ pool, secrets: () => [process.env.GROBLE_WEBHOOK_SECRET, process.env.GROBLE_WEBHOOK_SECRET_PREVIOUS], log: (m) => console.log('  [billing] ' + m),
+      siteUrl: site ? 'https://' + site : '' }) : null;
   const tenancy = createTenancy(pool, { edition });
   const wfs = createWorkflowSource(pool);
   const edu = createEdu({ pool, credentials, wfs, keyTester, subscription, codeKeys, recoveryCode: plan.recoveryCode || '', edition, billing: bill, google: !!gcfg });
