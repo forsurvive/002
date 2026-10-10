@@ -10,7 +10,7 @@
 // 요청/응답 모양은 공식 문서(Messages API)를 따랐다 — 바뀌면 이 파일과 시험만 고친다.
 
 import { success, failure, usageOf } from './provider.mjs';
-import { sseEvents, retryAfterOf, netDetail, SAY } from './http.mjs';
+import { sseEvents, retryAfterOf, netDetail, fitOf, SAY } from './http.mjs';
 
 export const ANTHROPIC_VERSION = '2023-06-01';
 // max_tokens 는 Messages API 가 반드시 받는다 — 카탈로그가 적은 그 모델의 최대치를 보낸다. 카탈로그에 없을 때만 이 값(지금 Claude 의 최대 출력)
@@ -83,7 +83,8 @@ export function createAnthropicProvider({ baseUrl = 'https://api.anthropic.com',
           const reason = reasonOf(res.status, err.type, err.message);
           // detail — 상태 번호와 오류 종류만(원문 문구는 싣지 않는다). 연결 시험에서 까닭을 가리는 데 쓴다.
           const head = ('HTTP ' + res.status + ' ' + String(err.type || '').replace(/[^A-Za-z_]/g, '')).trim();
-          return done(failure(reason, SAY[reason], { providerRequestId: requestId, retryAfterMs: retryAfterOf(res), detail: explain && err.message ? head + ': ' + plainMessage(err.message) : head }));
+          const fit = reason === 'invalid' ? fitOf(err.message) : null;   // «너무 길다»면 보낸 · 받을 수 있는 토큰 수(나눠 읽기가 쓴다)
+          return done(failure(reason, SAY[reason], { providerRequestId: requestId, retryAfterMs: retryAfterOf(res), detail: explain && err.message ? head + ': ' + plainMessage(err.message) : head, ...(fit ? { fit } : {}) }));
         }
 
         for await (const ev of sseEvents(res.body)) {

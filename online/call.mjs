@@ -106,7 +106,7 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
         Number(r.elapsedMs) || 0, u.inputTokens || 0, u.outputTokens || 0, u.cacheReadTokens || 0, u.cacheWriteTokens || 0, u.reasoningTokens || 0,
         r.costUsd == null ? null : r.costUsd, r.costSource || 'none', String(r.providerRequestId || ''), rt.provider || '', rt.tier || '', rt.modelId || '',
         rt.ownerType || '', rt.credentialId || null]);
-    if (!r.ok) return { ok: false, error: r.error, reason: r.reason, retryAfterMs: r.retryAfterMs || 0, runId: run };
+    if (!r.ok) return { ok: false, error: r.error, reason: r.reason, retryAfterMs: r.retryAfterMs || 0, runId: run, ...(r.fit ? { fit: r.fit } : {}) };
     if (!text.trim()) return { ok: false, error: '빈 응답', reason: 'empty', runId: run };
     return { ok: true, text, usage: r.usage, costUsd: r.costUsd, runId: run, finishReason: String(r.finishReason || 'stop') };
   }

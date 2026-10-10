@@ -45,6 +45,7 @@ export async function callOnce({
   materials = false, allFinals = false, talk = [], prev = '', next = '',
   signal = null, noCount = null, finalFirst = false, keepSeat = false,
   extraTargets = [], modelPick = '', digests = null, reading = null, targetPart = null, continueFrom = null,
+  extraDigests = null, talkCut = null, fixedDigests = null,
 }) {
   // **막히는 것은 새 호출뿐이다** — 읽기·내보내기·되짚기는 이 문을 지나지 않는다.
   const missing = promptsMissing();
@@ -56,11 +57,12 @@ export async function callOnce({
   const plan = planCall(project, {
     refIds, targetIds, agentIds, request, taskExtra, materials, allFinals, talk, prev, next,
     noCount, finalFirst, keepSeat, extraTargets, modelPick, digests, reading, targetPart, continueFrom,
+    extraDigests, talkCut, fixedDigests,
   }, { pr: promptFor(project, code), slotModel: slotModel(project, code) });
 
   const r = await callModel({ systemPrompt: plan.systemPrompt, prompt: plan.userPrompt, code, signal, model: plan.model });
   // 사유(reason)와 한도(limit)를 떨어뜨리지 않는다 — 작업이 이것으로 «멈출까 실패할까»를 가른다.
-  if (!r.ok) return { ok: false, error: r.error, reason: r.reason, limit: r.limit };
+  if (!r.ok) return { ok: false, error: r.error, reason: r.reason, limit: r.limit, ...(r.fit ? { fit: r.fit } : {}) };
   // 이어 쓴 조각은 다듬지 않는다(잇는 자리) · 길이 한도에 닿은 응답은 끝을 다듬지 않는다(core/generation/continue.mjs)
   const text = continueFrom ? cleanPart(r.text) : cleanResponse(r.text, { keepEnd: r.finishReason === 'length' });
   if (!text.trim()) return { ok: false, error: '빈 응답', reason: 'empty', limit: r.limit };

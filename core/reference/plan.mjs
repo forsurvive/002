@@ -34,6 +34,11 @@ export function materialItems(project) {
 /**
  * pr 은 그 자리의 프롬프트(작가 고침 > 지은 것 > 내장을 이미 고른 것), slotModel 은 그 자리에 정해 둔 모델(없으면 '').
  * continueFrom = { text, n } — 앞선 응답이 길이 한도에 닿아 끊겼을 때: 같은 것을 싣고 «이미 쓴 부분»을 더해 끊긴 자리부터 이어 쓰게 한다(core/generation/continue.mjs).
+ * 한 번에 실리지 않아 나눠 읽은 것(core/generation/reading.mjs) — 원문 자리에 «뽑아 옮긴 것»을 싣는다. 자르지 않는다.
+ *   digests      { [문서 id]: 글 }                       — 자료 · 참조 · 확정본 · (큰 대상이 여럿일 때) 대상
+ *   extraDigests { [extraTargets 의 차례]: 글 }           — 합평 모으기가 받는 여러 합평 같은 것
+ *   talkCut      { upto, text }                          — 논의의 앞선 대화(upto 마디까지)를 옮긴 것, 뒤 마디는 원문 그대로
+ *   fixedDigests { request, standard, projectRequest, outline } — 아주 긴 요청사항 · 집필 기준 · 작품 요청사항 · 개요(마지막 수단)
  * 돌려주는 값: { systemPrompt, userPrompt, model, modelSource, inputs }
  *   inputs = [{ role: 'material'|'final'|'target'|'reference'|'extra'|'talk', id, name, text }] — 실린 차례 그대로
  */
@@ -42,7 +47,26 @@ export function planCall(project, {
   materials = false, allFinals = false, talk = [], prev = '', next = '',
   noCount = null, finalFirst = false, keepSeat = false,
   extraTargets = [], modelPick = '', digests = null, reading = null, targetPart = null, continueFrom = null,
+  extraDigests = null, talkCut = null, fixedDigests = null,
 } = {}, { pr, slotModel = '' } = {}) {
+  // 아주 길어 나눠 읽은 요청사항 · 집필 기준 · 작품 요청사항 · 개요는 원문 자리에 옮긴 것을 싣는다
+  const fx = fixedDigests || {};
+  const note = (orig, dg) => digestNote(String(orig || '').length) + dg;
+  if (fx.request != null) request = note(request, fx.request);
+  if (fx.standard != null || fx.projectRequest != null || fx.outline != null) {
+    project = {
+      ...project,
+      ...(fx.standard != null ? { standard: note(project.standard, fx.standard) } : {}),
+      ...(fx.projectRequest != null ? { request: note(project.request, fx.projectRequest) } : {}),
+      ...(fx.outline != null ? { spec: { ...(project.spec || {}), outline: note((project.spec || {}).outline, fx.outline) } } : {}),
+    };
+  }
+  // 논의의 앞선 대화를 나눠 읽었으면 그 자리에 옮긴 것 한 덩이, 뒤 마디는 원문 그대로
+  if (talkCut && talkCut.upto > 0) {
+    const cutChars = talk.slice(0, talkCut.upto).reduce((n, m) => n + String(m.text || '').length, 0);
+    talk = [{ name: '앞선 대화(' + talkCut.upto + '마디)', text: digestNote(cutChars) + String(talkCut.text || '') }, ...talk.slice(talkCut.upto)];
+  }
+  if (extraDigests) extraTargets = extraTargets.map((x, i) => (extraDigests[i] != null ? { ...x, text: digestNote(String(x.text || '').length) + extraDigests[i] } : x));
   // 자료도 보통 문서다 — 참조로 걸면 참조로, 확정본이면 확정본으로 실린다.
   // 다만 에이전트 준비(materials)가 자료를 통째로 «■ 자료» 구획에 실을 때는 그 문서들을 다른 구획에 겹쳐 싣지 않는다.
   const mats = materials ? materialItems(project) : [];
@@ -103,7 +127,13 @@ export function planCall(project, {
   if (reading) {
     const later = [task0, targets.length ? '쓰거나 고칠 대상: ' + targets.map((d) => '«' + d.name + '»').join(' ') : ''].filter(Boolean).join('\n');
     const part = { id: reading.id || '', name: reading.name + ' — ' + reading.k + '/' + reading.n + ' 부분', text: String(reading.text || '') };
-    const smallTalk = talk.reduce((n, m) => n + String(m.text || '').length, 0) <= 20000 ? talk : [];
+    // 대화가 길면 뒤쪽 마디만(적어도 마지막 마디 — 지금 묻는 말은 늘 보인다). 앞쪽은 모아 쓸 때 통째로(또는 옮긴 것으로) 실린다.
+    const smallTalk = [];
+    for (let i = talk.length - 1, n = 0; i >= 0; i--) {
+      n += String(talk[i].text || '').length;
+      if (smallTalk.length && n > 20000) break;
+      smallTalk.unshift(talk[i]);
+    }
     return {
       systemPrompt: buildSystem({ prompt: pr, crew, withFinalRule: false, withNoCount: false }),
       userPrompt: buildUser({ project, reading: [part], talk: smallTalk, written, request, task: goOn(readTask({ ...reading, later })), noCount: false }),

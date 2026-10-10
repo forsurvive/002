@@ -10,7 +10,7 @@ export const localCliProvider = {
   async generate({ model, systemPrompt, userPrompt, signal = null, metadata = {} } = {}) {
     const r = await runClaudeCall({ systemPrompt, prompt: userPrompt, mockKey: (metadata && metadata.code) || '', signal, model });
     const common = { limit: r.limit || null, elapsedMs: r.elapsedMs || 0, authSource: r.authSource || '' };
-    if (!r.ok) return failure(r.reason, r.error, common);
+    if (!r.ok) return failure(r.reason, r.error, { ...common, ...(r.fit ? { fit: r.fit } : {}) });
     const u = r.usage || {};
     return success({
       ...common, text: r.text, usage: u, finishReason: r.finishReason || 'stop',   // 길이 한도에 닿았으면 length(tools/call.mjs) — Core 가 이어 쓴다

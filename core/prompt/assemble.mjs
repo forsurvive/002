@@ -26,7 +26,8 @@ const s = (v) => (v == null ? '' : String(v));
 
 // 조각 하나를 읽는 호출의 할 일 — 나중에 할 일(본래의 할 일)과 요청사항을 보며 이 조각에서 반영할 것을 뽑는다
 export function readTask({ name, k, n, role = 'reference', again = false, later = '' }) {
-  const what = role === 'final' ? '확정본(최우선 사실)' : role === 'material' ? '자료' : role === 'target' ? '대상 원고' : '참조 문서';
+  const what = role === 'final' ? '확정본(최우선 사실)' : role === 'material' ? '자료' : role === 'target' ? '대상 원고'
+    : role === 'talk' ? '대화' : role === 'instruction' ? '지시 글' : role === 'extra' ? '보고' : '참조 문서';
   return [
     again
       ? `지금은 긴 ${what} «${s(name)}»에서 이미 뽑아 옮긴 것이 너무 길어 다시 모으는 중이다. «나눠 읽는 부분»은 그 뽑아 옮긴 것의 ${k}/${n} 부분이다.`
@@ -35,6 +36,8 @@ export function readTask({ name, k, n, role = 'reference', again = false, later 
     '이름 · 설정 · 규칙 · 사건 · 관계 · 순서 · 수치 · 고유한 표현은 원문 그대로 옮긴다. 줄이느라 뜻을 바꾸거나 다른 것과 섞지 않는다.',
     '반영할지 망설여지면 옮긴다. 이 부분에 없는 것을 지어내지 않고, 평가나 제안을 붙이지 않는다. 뽑아 옮긴 것만 내놓는다.',
     role === 'final' ? '이 글은 확정본이다 — 사실은 하나도 빠짐없이 원문 그대로 옮긴다.' : null,
+    role === 'instruction' ? '이 글은 지켜야 할 지시다(요청사항 · 집필 기준 · 작품 요청사항 · 개요) — 지시 · 조건 · 금지 · 수치 · 이름은 하나도 빠뜨리지 말고 원문 그대로 옮기고, 함께 붙어 온 글(자료 · 예시)도 이번 일에 쓰일 것은 옮긴다.' : null,
+    role === 'talk' ? '이 글은 작가와 나눈 대화다 — 작가가 정한 것 · 바꾸라고 한 것 · 물은 것과 그 답의 요지를 하나도 빠뜨리지 말고 옮긴다.' : null,
     '',
     '나중에 할 일:',
     s(later).trim() || '(이 작품의 다음 글을 쓴다)',
@@ -70,6 +73,10 @@ export const writtenOf = (text, tail = 0) => {
   const t = s(text);
   return tail > 0 && t.length > tail ? '(이미 쓴 부분이 길어 끝쪽 ' + tail.toLocaleString('en-US') + '자만 싣는다 — 그 앞도 이미 쓴 것이다)\n…' + t.slice(-tail) : t;
 };
+
+// 긴 원고를 부분마다 본 보고(모순 검사 · 합평)를 마지막에 견준다 — 부분 사이에 걸친 것을 놓치지 않게. 부분 보고는 그대로 남고 이것이 더해진다.
+export const ACROSS_TASK = `«대상»은 한 번에 실리지 않는 긴 원고를 부분마다 본 보고들이다. 보고들을 서로 견주어 부분 사이에 걸친 어긋남 · 겹침 · 빠진 것만 찾아 적는다.
+부분 보고에 이미 있는 것은 되풀이하지 않는다. 부분 사이에 걸친 것이 없으면 «부분 사이에 걸친 것 없음» 한 줄만 쓴다.`;
 
 // 뽑아 옮긴 것을 원문 자리에 실을 때 붙이는 머리 — 읽는 쪽이 «원문 전체를 대신하는 것»임을 알게
 export const digestNote = (chars) => `(원문 ${Number(chars).toLocaleString('en-US')}자가 한 번에 실리지 않아, 나눠 읽으며 이번 일에 반영할 것을 빠짐없이 뽑아 옮긴 것이다)\n`;

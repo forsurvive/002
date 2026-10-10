@@ -11,20 +11,21 @@
 import * as model from '../domain/model.mjs';
 import { buildSystem, buildUser, cleanResponse } from '../prompt/assemble.mjs';
 import { materialItems } from '../reference/plan.mjs';
-import { readingInParts } from './reading.mjs';
+import { readingInParts, digestItems, PART_SIZES } from './reading.mjs';
 import { continuing } from './continue.mjs';
 
 export const CRAFT_MIN = 2000; // 기획서가 못 박은 하한. 위쪽 상한은 두지 않는다.
 export const STUDY_TITLE = '자료 분석';
 
-function ctl(prompts, code, extraTask, project, { materials = true, refs = [], request = '' } = {}) {
+// mats — 자료가 한 번에 실리지 않아 나눠 읽어 옮긴 목록(digestItems). 없으면 자료 원문 그대로.
+function ctl(prompts, code, extraTask, project, { materials = true, refs = [], request = '', mats = null } = {}) {
   const pr = prompts.promptFor(project, code);
   return {
     // 제어 호출에도 싣는다 — 작가의 말이 «모든 에이전트가 매 호출마다»이기 때문이다(사용자 지시).
     systemPrompt: buildSystem({ prompt: pr, withFinalRule: false, withNoCount: project.noCount !== false }),
     prompt: buildUser({
       project,
-      materials: materials ? materialItems(project) : [],
+      materials: materials ? mats || materialItems(project) : [],
       refs,
       request,
       task: [pr.task, extraTask].filter(Boolean).join('\n'),
@@ -106,7 +107,25 @@ export function agentsReady(project, slots) {
 export async function prepareAgents(deps, pid, ctx, request = '') {
   const { store, prompts } = deps;
   // 판정 · 짓기도 길이 한도에 닿아 끊기면 끊긴 자리부터 잇는다(continue.mjs — 지은 작법이 잘린 채 남지 않게)
-  const raw = continuing(deps.raw, { raw: true });
+  const raw0 = continuing(deps.raw, { raw: true });
+  // 자료가 한 번에 실리지 않으면(invalid) 자료만 나눠 읽어 옮긴 것으로 바꿔 다시 부른다 — 자르지 않는다(reading.mjs).
+  // 옮긴 목록은 한 번 지어 두고 판정 · 자리마다 함께 쓴다.
+  let mats = null;
+  const raw = async (input, c) => {
+    let r = await raw0(input, c);
+    if (r.ok || r.reason !== 'invalid' || !deps.call || !input.rebuild) return r;
+    for (const size of PART_SIZES) {
+      if (!mats || mats.size > size) {
+        const now = await store.get(pid);
+        const d = await digestItems(continuing(deps.call), { pid, code: input.code, request, signal: ctx && ctx.signal }, materialItems(now), ctx, size);
+        if (!d.ok) return d;
+        mats = { size, items: d.items };
+      }
+      r = await raw0({ ...input, ...input.rebuild(mats.items) }, c);
+      if (r.ok || r.reason !== 'invalid') return r;
+    }
+    return r;
+  };
   const project = await store.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
   if (ctx) ctx.step('글의 종류 가리기');
@@ -120,8 +139,10 @@ export async function prepareAgents(deps, pid, ctx, request = '') {
     let info = null;
     // 꼴이 어긋나면 다시 묻는다(세 번까지). 잠깐의 실패는 그 안에서 사이를 두고 다시 부른다.
     for (let attempt = 0; attempt < 3 && !info; attempt++) {
-      const c = ctl(prompts, 'F-KIND', attempt ? '첫 줄은 반드시 «분류: 종류» 한 줄로만 시작해야 한다. 예: 분류: 소설' : '', project, { request });
-      const r = await persist(() => raw({ ...c, code: 'F-KIND', signal: ctx && ctx.signal, model: prompts.slotModel(project, 'F-KIND') || project.model }, ctx), ctx, delays);
+      const extraK = attempt ? '첫 줄은 반드시 «분류: 종류» 한 줄로만 시작해야 한다. 예: 분류: 소설' : '';
+      const c = ctl(prompts, 'F-KIND', extraK, project, { request, mats: mats && mats.items });
+      const rebuild = (items) => ctl(prompts, 'F-KIND', extraK, project, { request, mats: items });
+      const r = await persist(() => raw({ ...c, rebuild, code: 'F-KIND', signal: ctx && ctx.signal, model: prompts.slotModel(project, 'F-KIND') || project.model }, ctx), ctx, delays);
       if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
       if (!r.ok) {
         if (!PASSING.has(r.reason || 'other')) return stopped(r);
@@ -159,8 +180,10 @@ export async function prepareAgents(deps, pid, ctx, request = '') {
     let made = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       const now = await store.get(pid);
-      const c = ctl(prompts, 'F-AGENT', extra + (attempt ? '\n앞서 받은 작법이 ' + CRAFT_MIN + '자에 못 미쳤다. 훨씬 더 길고 촘촘하게 다시 써라.' : ''), now, { request });
-      const r = await persist(() => raw({ ...c, code: 'F-AGENT', signal: ctx && ctx.signal, model: prompts.slotModel(now, 'F-AGENT') || now.model }, ctx), ctx, delays);
+      const extraA = extra + (attempt ? '\n앞서 받은 작법이 ' + CRAFT_MIN + '자에 못 미쳤다. 훨씬 더 길고 촘촘하게 다시 써라.' : '');
+      const c = ctl(prompts, 'F-AGENT', extraA, now, { request, mats: mats && mats.items });
+      const rebuild = (items) => ctl(prompts, 'F-AGENT', extraA, now, { request, mats: items });
+      const r = await persist(() => raw({ ...c, rebuild, code: 'F-AGENT', signal: ctx && ctx.signal, model: prompts.slotModel(now, 'F-AGENT') || now.model }, ctx), ctx, delays);
       if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
       if (!r.ok) {
         if (!PASSING.has(r.reason || 'other')) return stopped(r);

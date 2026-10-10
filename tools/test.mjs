@@ -2440,6 +2440,119 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     eq('부르기가 바뀌었으면(요청사항 등) 처음부터', firstCalls, 1);
     model.docDelete(mem, lw.id);
   }
+  // 나눠 읽기 넓히기(2026-10-10 «반영이 안되거나 참조되지 않은 내용이 절대로 있어서는 안돼» · «성능을 최대한»)
+  //   늘 통째로 먼저 — 회사가 받을 수 있는 크기를 알려 주면 원문을 최대한 남기고 넘치는 것만, 대화 · 지시 글 · 보고 · 에이전트 준비 자료까지
+  {
+    const plan = await import('../core/reference/plan.mjs');
+    const rd = await import('../core/generation/reading.mjs');
+    const agentsCore = await import('../core/generation/agents.mjs');
+    const PR = { task: '할 일', name: 'n', role: 'r', craft: '' };
+    const marked = (tag, parts, each = 50000) => Array.from({ length: parts }, (_, i) => '〈' + tag + i + '〉' + '가'.repeat(each)).join('\n\n');
+    const marks = (t) => (String(t).match(/〈[A-Z]\d+〉/g) || []).join('');
+    const all = (tag, n, t) => Array.from({ length: n }, (_, i) => '〈' + tag + i + '〉').every((m) => String(t).includes(m));
+    // 짧은 프롬프트의 거절은 길이 탓이 아니다
+    let n1 = 0;
+    const sd = model.docCreate(mem, { title: '짧은 글', body: '짧다' });
+    const r1 = await rd.readingInParts(async () => { n1 += 1; return { ok: false, reason: 'invalid', error: '설정이 틀렸습니다' }; }, memStore)({ pid: mem.id, code: 'F-UPDATE', targetIds: [sd.id] }, null);
+    ok('**짧은 프롬프트가 거절되면 나눠 읽지 않고 회사의 까닭 그대로(«너무 길다»로 바꾸지 않는다)**', !r1.ok && r1.error === '설정이 틀렸습니다' && n1 === 1);
+    // 회사가 토큰 수를 알려 주면 그 비율로 — 원문을 최대한 남기고 넘치는 것만
+    const A = model.docCreate(mem, { title: '긴 참조 갑', body: marked('A', 6) });
+    const B = model.docCreate(mem, { title: '긴 참조 을', body: marked('B', 4) });
+    const W = model.docCreate(mem, { title: '쓸 글', body: '' });
+    model.docWrite(mem, W.id, { refIds: [A.id, B.id], request: '모두 반영하라' });
+    const LIM = 420000; const reads2 = []; const finals2 = [];
+    const fake2 = async (a) => {
+      const p0 = plan.planCall(mem, a, { pr: PR });
+      const n = p0.systemPrompt.length + p0.userPrompt.length;
+      if (n > LIM) return { ok: false, reason: 'invalid', error: '깁니다', fit: { tokens: n, max: LIM } };
+      if (a.reading) { reads2.push(a.reading.id); return { ok: true, text: '뽑음' + marks(a.reading.text) }; }
+      finals2.push(p0.userPrompt); return { ok: true, text: '다 반영한 글' };
+    };
+    const g2 = await kinds.runKind({ store: memStore, call: fake2 }, 'update', { docId: W.id }, { pid: mem.id, step() {}, addDoc() {} });
+    const last2 = finals2[finals2.length - 1] || '';
+    ok('**받을 수 있는 크기를 알면 넘치는 만큼만 나눠 읽는다 — 짧은 쪽(을)은 원문 그대로**', g2.ok && reads2.length > 0 && reads2.every((id) => id === A.id) && last2.includes(B.body) && !last2.includes(A.body),
+      JSON.stringify([g2.ok, [...new Set(reads2)], last2.length]));
+    ok('나눠 읽은 쪽(갑)도 모든 조각이 모아 쓰는 프롬프트에 닿는다', all('A', 6, last2));
+    eq('회사가 알려 주는 숫자만 꺼낸다(Anthropic · OpenAI · Gemini 꼴)', JSON.stringify([
+      (await import('../ai/http.mjs')).fitOf('prompt is too long: 1234567 tokens > 1000000 maximum'),
+      (await import('../ai/http.mjs')).fitOf("This model's maximum context length is 128000 tokens. However, your messages resulted in 130,500 tokens."),
+      (await import('../ai/http.mjs')).fitOf('The input token count (1048577) exceeds the maximum number of tokens allowed (1048576).'),
+      (await import('../ai/http.mjs')).fitOf('invalid x-api-key'),
+    ]), JSON.stringify([{ tokens: 1234567, max: 1000000 }, { tokens: 130500, max: 128000 }, { tokens: 1048577, max: 1048576 }, null]));
+    // 긴 논의 — 뒤쪽 마디(지금 묻는 말)는 원문 그대로, 앞쪽 대화만 나눠 읽는다
+    const th = model.threadCreate(mem, { title: '긴 논의' });
+    for (let i = 0; i < 6; i++) model.threadAddMessage(mem, th.id, i % 2 ? 'assistant' : 'user', '〈T' + i + '〉' + '나'.repeat(80000));
+    model.threadAddMessage(mem, th.id, 'user', '마지막 물음〈Q0〉');
+    const talkReads = []; const talkFinals = [];
+    const fake3 = async (a) => {
+      const p0 = plan.planCall(mem, a, { pr: PR });
+      if (p0.userPrompt.length > 200000) return { ok: false, reason: 'invalid', error: '깁니다' };
+      if (a.reading) { talkReads.push(p0.userPrompt); return { ok: true, text: '옮김' + marks(a.reading.text) }; }
+      talkFinals.push(p0.userPrompt); return { ok: true, text: '답' };
+    };
+    const g3 = await kinds.runKind({ store: memStore, call: fake3 }, 'talk', { threadId: th.id, text: null }, { pid: mem.id, step() {}, addDoc() {} });
+    const last3 = talkFinals[talkFinals.length - 1] || '';
+    ok('**논의가 아주 길어도 답한다 — 앞선 대화는 나눠 읽어 옮기고, 마지막 물음은 원문 그대로**', g3.ok && last3.includes('앞선 대화(6마디)') && last3.includes('마지막 물음〈Q0〉') && all('T', 6, last3), JSON.stringify([g3, last3.length]));
+    ok('나눠 읽는 호출도 지금 묻는 말을 본다', talkReads.length > 0 && talkReads.every((x) => x.includes('마지막 물음〈Q0〉')));
+    // 아주 긴 요청사항(마지막 수단) — 지시 글로 나눠 읽고, 지시는 원문 그대로 옮긴다
+    const RQ = model.docCreate(mem, { title: '긴 요청의 글', body: '' });
+    model.docWrite(mem, RQ.id, { request: marked('R', 5, 60000) });
+    const finals4 = []; const reads4 = [];
+    const fake4 = async (a) => {
+      const p0 = plan.planCall(mem, a, { pr: PR });
+      if (p0.userPrompt.length > 150000) return { ok: false, reason: 'invalid', error: '깁니다' };
+      if (a.reading) { reads4.push(a.reading.role); return { ok: true, text: '지시' + marks(a.reading.text) }; }
+      finals4.push(p0.userPrompt); return { ok: true, text: '요청대로 쓴 글' };
+    };
+    const g4 = await kinds.runKind({ store: memStore, call: fake4 }, 'update', { docId: RQ.id }, { pid: mem.id, step() {}, addDoc() {} });
+    const last4 = finals4[finals4.length - 1] || '';
+    ok('**요청사항이 그것만으로 한 번에 실리지 않아도 실패하지 않는다 — 지시 글로 나눠 읽어 모든 조각을 반영한다**', g4.ok && model.findDoc(mem, RQ.id).body === '요청대로 쓴 글' && reads4.every((x) => x === 'instruction') && all('R', 5, last4) && /원문 300,\d{3}자가 한 번에 실리지 않아/.test(last4), JSON.stringify([g4, reads4.length]));
+    // 합평 모으기가 받는 큰 합평들(문서가 아닌 대상)
+    const finals5 = [];
+    const fake5 = async (a) => {
+      const p0 = plan.planCall(mem, a, { pr: PR });
+      if (p0.userPrompt.length > 250000) return { ok: false, reason: 'invalid', error: '깁니다' };
+      if (a.reading) return { ok: true, text: '옮김' + marks(a.reading.text) };
+      finals5.push(p0.userPrompt); return { ok: true, text: '모은 평' };
+    };
+    const g5 = await rd.readingInParts(fake5, memStore)({ pid: mem.id, code: 'F-MERGE', targetIds: [], extraTargets: [{ id: '', name: '갑의 합평', text: marked('X', 4) }, { id: '', name: '을의 합평', text: marked('Y', 4) }] }, null);
+    const last5 = finals5[finals5.length - 1] || '';
+    ok('**합평이 아주 많고 길어도 모은다 — 합평마다 나눠 읽어 모든 조각을 싣는다**', g5.ok && all('X', 4, last5) && all('Y', 4, last5) && last5.includes('갑의 합평') && last5.includes('을의 합평'));
+    // 긴 원고의 모순 검사 — 부분 보고는 그대로, 마지막에 부분 사이를 견준 것을 더한다
+    const M3 = model.docCreate(mem, { title: '긴 원고 셋', body: marked('M', 4) });
+    const C3 = model.docCreate(mem, { kind: 'check', title: '긴 검사 셋', body: '' });
+    model.docWrite(mem, C3.id, { targetIds: [M3.id] });
+    let acrossPrompt = '';
+    const fake6 = async (a) => {
+      const p0 = plan.planCall(mem, a, { pr: PR });
+      if (p0.userPrompt.length > 120000) return { ok: false, reason: 'invalid', error: '깁니다' };
+      if (a.targetPart) return { ok: true, text: '부분' + a.targetPart.k + '의 보고' + marks(a.targetPart.text) };
+      if ((a.extraTargets || []).length) { acrossPrompt = p0.userPrompt; return { ok: true, text: '셋째 부분과 첫째 부분이 어긋난다' }; }
+      return { ok: true, text: '통째' };
+    };
+    const g6 = await kinds.runKind({ store: memStore, call: fake6 }, 'update', { docId: C3.id }, { pid: mem.id, step() {}, addDoc() {} });
+    const body6 = model.findDoc(mem, C3.id).body;
+    ok('**긴 원고의 모순 검사 — 부분 보고는 그대로 두고, 마지막에 부분 사이를 견준 것을 더한다(부분 사이의 어긋남을 놓치지 않는다)**', g6.ok && /## 긴 원고 셋 — 1\/\d+ 부분/.test(body6)
+      && all('M', 4, body6) && body6.includes('## 부분 사이에 걸친 것') && body6.includes('셋째 부분과 첫째 부분이 어긋난다') && acrossPrompt.includes('부분1의 보고') && acrossPrompt.includes('부분 사이에 걸친 어긋남'), body6.slice(-300));
+    // 에이전트 준비 — 자료가 한 번에 실리지 않아도 판정 · 짓기를 한다(자료만 나눠 읽어 옮긴 것으로)
+    const P7 = store.blankProject('p_prep_long', '자료가 긴 작품');
+    P7.spec.form = '에세이';
+    model.materialAdd(P7, '긴 자료', marked('G', 6));
+    const st7 = { get: () => P7, update: (pid, fn) => { fn(P7); return { ok: true }; } };
+    const rawSeen7 = [];
+    const raw7 = async (x) => {
+      rawSeen7.push(x.prompt.length);
+      if (x.prompt.length > 200000) return { ok: false, reason: 'invalid', error: '깁니다' };
+      return x.code === 'F-KIND' ? { ok: true, text: '분류: 에세이' } : { ok: true, text: '이름: 집필자\n역할: 쓴다\n할 일: 쓴다\n작법:\n' + '작법 '.repeat(800) };
+    };
+    const reads7 = [];
+    const call7 = async (a) => { if (a.reading) { reads7.push(a.reading.text.length); return { ok: true, text: '옮긴 자료' + marks(a.reading.text) }; } return { ok: true, text: 'x' }; };
+    const prompts7 = { builtin: {}, slots: ['F-UPDATE'], duty: { 'F-UPDATE': '쓴다' }, promptFor: () => ({ name: 'n', role: 'r', task: '할 일', craft: '' }), slotModel: () => '' };
+    const g7 = await agentsCore.prepareAgents({ store: st7, raw: raw7, call: call7, prompts: prompts7, retryDelays: [0] }, P7.id, { step() {} });
+    ok('**에이전트 준비 — 자료가 한 번에 실리지 않으면 자료만 나눠 읽어 옮긴 것으로 판정 · 짓기를 한다(멈추지 않는다)**', g7.ok && P7.agents.__kind === '에세이' && !!(P7.agents['F-UPDATE'] && P7.agents['F-UPDATE'].craft)
+      && rawSeen7.some((n) => n > 200000) && rawSeen7.filter((n) => n <= 200000).length >= 2 && reads7.length > 0, JSON.stringify([g7, rawSeen7, reads7.length]));
+    for (const d of [sd, A, B, W, RQ, M3, C3]) model.docDelete(mem, d.id);
+  }
   // 이미 저장된 말에 답하기(온라인판 — 말을 작업 앞에 저장한다) — 말이 두 번 얹히지 않고 그 말 밑에 답이 붙는다
   const tAsk = model.threadCreate(mem, { title: '먼저 저장' });
   const pre = model.threadAddMessage(mem, tAsk.id, 'user', '미리 둔 물음');

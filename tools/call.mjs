@@ -28,6 +28,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveCliDetailed, childEnv } from './claude-cli.mjs';
 import * as auth from './auth.mjs';
+import { fitOf } from '../ai/http.mjs';
 
 const R = resolveCliDetailed();
 export const CLI = R.cli;
@@ -306,7 +307,10 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
     if (!finalResult) return said.trim() && capped(stderr) ? partial(null) : fail(String(stderr || '결과 없음').slice(0, 600), why(), limitInfo);
     if (finalResult.is_error) {
       if (said.trim() && (capped(finalResult.result) || capped(lastStop))) return partial(null);
-      return fail(String(finalResult.result || stderr || '').slice(0, 600), why(), limitInfo);
+      const f = fail(String(finalResult.result || stderr || '').slice(0, 600), why(), limitInfo);
+      // «너무 길다»면 보낸 · 받을 수 있는 토큰 수(숫자만) — 나눠 읽기가 원문을 최대한 남기는 데 쓴다
+      const fit = f.reason === 'invalid' ? fitOf(String(finalResult.result || '') + ' ' + stderr) : null;
+      return fit ? { ...f, fit } : f;
     }
 
     const u = finalResult.usage || {};

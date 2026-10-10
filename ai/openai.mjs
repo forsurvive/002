@@ -8,7 +8,7 @@
 // · 도중에 끊기면(시간 초과 · 연결 끊김 · 끝 이벤트 없이 닫힘) 받은 글이 있으면 «잘림»으로 돌려준다 — Core 가 이어 쓴다(anthropic.mjs 와 같다).
 
 import { success, failure, usageOf } from './provider.mjs';
-import { sseEvents, deadline, retryAfterOf, headerOf, SAY } from './http.mjs';
+import { sseEvents, deadline, retryAfterOf, headerOf, fitOf, SAY } from './http.mjs';
 
 // 출력 상한 — 카탈로그가 적은 값(그 모델의 최대치)만 보낸다. 0 이면 보내지 않는다(모델이 제 최대치까지 쓴다 — 우리가 줄이지 않는다).
 
@@ -64,7 +64,8 @@ export function createOpenAIProvider({ baseUrl = 'https://api.openai.com', fetch
           let err = {};
           try { err = ((await res.json()) || {}).error || {}; } catch { /* JSON 이 아님 */ }
           const reason = reasonOf(res.status, err.code || err.type, err.message);
-          return done(failure(reason, SAY[reason], { providerRequestId: requestId, retryAfterMs: retryAfterOf(res) }));
+          const fit = reason === 'invalid' ? fitOf(err.message) : null;   // «너무 길다»면 보낸 · 받을 수 있는 토큰 수(나눠 읽기가 쓴다)
+          return done(failure(reason, SAY[reason], { providerRequestId: requestId, retryAfterMs: retryAfterOf(res), ...(fit ? { fit } : {}) }));
         }
         let final = null;
         for await (const ev of sseEvents(res.body)) {
