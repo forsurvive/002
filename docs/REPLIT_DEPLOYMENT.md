@@ -82,6 +82,7 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
 `SE_EDITION`(`school` 기본 — 교육기관판 · `open` — 자유 가입판, docs/OPEN_EDITION.md. 모르는 값은 `school`) ·
 `GROBLE_WEBHOOK_SECRET` · `GROBLE_WEBHOOK_SECRET_PREVIOUS`(자유 가입판만 — 그로블 웹훅 서명 시크릿, 교체하는 24시간만 옛 값도 · §4-4) ·
 `GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET`(자유 가입판만 — 구글 로그인, 둘 다 있을 때만 단추가 선다 · §4-5) ·
+`RESEND_API_KEY`(자유 가입판만 — 환불 요청 · 구독 취소를 운영자에게 알리는 메일, §4-6) · `MAIL_FROM`(선택 — Resend 에서 도메인을 확인한 뒤의 보내는 주소) ·
 `SE_TRUST_PROXY=1`(플랫폼 앞단 뒤) · `SE_WORKER=0`(웹만 — worker 는 `npm run worker` 로 따로, `WORKER_POLL_MS` 기본 2000) · `SE_MIGRATE_ON_BOOT`(기본 켬) · `DB_POOL_MAX`(기본 5) · `WORKER_CONCURRENCY` · (플랫폼이 AI 를 대 줄 때만) `ANTHROPIC_API_KEY`·`OPENAI_API_KEY`·`GEMINI_API_KEY`.
 **기관/개인의 API 키는 환경 변수에 두지 않는다** — DB 에 암호화(명세 AH-7).
 
@@ -211,6 +212,16 @@ Secrets 에 두 값이 없으면 구글 단추가 서지 않을 뿐 나머지는
 
 지키는 것(시험이 본다): 이메일이 같다고 저절로 잇지 않는다 · 구글로 만든 계정은 비밀번호가 없다(비밀번호로도 들어가려면 운영자의 재설정 코드) · 시크릿은 화면 · 로그에 없다. SECURITY.md §5-2.
 작업 공간 미리보기(….replit.dev)에서 구글 로그인을 시험하려면 그 주소의 `/api/auth/google/callback` 도 3 에 하나 더 넣는다(미리보기 주소는 바뀔 수 있다 — 게시한 주소로 시험하는 편이 낫다).
+
+## 4-6. 운영자 알림 메일 켜기 — 환불 요청 · 구독 취소(자유 가입판, 2026-10-10 — docs/OPEN_EDITION.md §4-8)
+
+고객이 [환불 요청] · [구독 취소]를 누르면 운영자에게 메일이 간다. 메일이 꺼져 있어도 요청은 운영 → [결제 기록]에 남는다.
+
+1. **resend.com** 가입 — **알림을 받을 그 이메일로**(예: 운영자의 Gmail). 도메인을 확인하기 전에는 가입한 이메일로만 보낼 수 있다(운영자 자신에게 보내는 이 쓰임에는 그것으로 충분).
+2. Resend → **API Keys → Create API Key** → 권한 **Sending access** → 만들기 → 나온 키(`re_…`)를 **곧바로** Replit Secrets 의 `RESEND_API_KEY` 에 넣는다(채팅 · 문서 · 깃에 붙이지 않는다).
+3. **다시 게시**(Secrets 는 다시 게시해야 들어간다).
+4. 게시한 사이트 → 관리 → 운영 → [이용 규칙] 맨 아래 «알림 메일» — «보내는 길 켜짐»을 보고, **받을 메일 주소**(1 에서 가입한 이메일)를 넣고 [저장] → [시험 메일 보내기] → 받은편지함(없으면 스팸함) 확인.
+5. 안 오면 [시험 메일 보내기]가 까닭을 말한다 — «Resend 가 거절했습니다»면 받을 주소가 1 의 이메일과 같은지 본다.
 
 ## 5. PostgreSQL (Phase 3 계획)
 
