@@ -240,7 +240,7 @@ Fast = 지금 카탈로그는 Claude Haiku 4.5 입력 1 · 출력 5(새 Haiku 5.
 | 필요한 것 | 지금 있는 것 | 더할 것 |
 |---|---|---|
 | 용도 축 | 판 스위치 `online/edition.mjs`(`SE_EDITION`) | `online/purpose.mjs`(`SE_PURPOSE=novel\|ebook`, 모르는 값은 novel) · `/api/setup` · `me` 에 `purpose` · 화면 이름 «전자책 오토» · 말(작품 → 책 · 회차 → 장) |
-| 단계 템플릿 | `config/workflows/story_creation.json`(16단계) · `core/workflow/stages.mjs` · 온라인 층(`workflow_overrides.template_key`) — 개인판은 파일 하나 고정, **템플릿을 고르는 길이 없다** | `config/workflows/ebook.json`(걸음 · 카드 · tier · **positions**) · 프로젝트에 `template_key`(마이그레이션 020) · 기존 작품은 `story_creation` |
+| 단계 템플릿 | `config/workflows/story_creation.json`(16단계) · `core/workflow/stages.mjs` · 온라인 층(`workflow_overrides.template_key`) — 개인판은 파일 하나 고정, **템플릿을 고르는 길이 없다** | `config/workflows/ebook.json`(걸음 · 카드 · tier · **positions**) · 작품마다 `workflow.template`(이미 있는 jsonb 칸 — 마이그레이션 없음) · 적혀 있지 않은 작품(지금까지 전부)은 `story_creation` |
 | 포지션 | 자리 · 프롬프트 층 · crew(§4-1) | `positions` 데이터 · `tools/prompts.ebook.json` · 문 `position.set` · 생성 경로가 포지션의 사람을 쓰게(앉힌 사람이 대신 — 할 일 · 출력 꼴은 포지션의 것) |
 | 레일 | 작업 큐(일시정지 · 이어 하기 · 체크포인트 · 재시도 · **작업당 2시간 상한**) — **작업끼리 잇는 길은 없다**(한 작업이 안에서 여러 걸음을 돈다), 사람을 기다리는 상태는 키 문제(`credential`)에만 | 표 `rails`(마이그레이션 020 — 모드 · 상태(진행 · 승인 대기 · 멈춤 · 끝 · 실패) · 걸음 · 지점마다 회차 · 예산 · 설정) · **걸음마다 작업 하나** · 작업이 끝나면 다음을 넣는 길(worker 의 끝남 갈고리 → `online/rail.mjs`) · 다음 걸음 · 승인 지점 · 회차 · 예산 판단은 Core 의 순수 함수(`core/rail/*.mjs`) |
 | 판정(완전 자동) | 합평 패널(F-REVIEW → F-MERGE) 꼴 | 작업 종류 `judge` — 편집장 포지션 · 지점별 기준 · 구조화 출력 → 승인(`approvedBy: agent:…`) 또는 수정 요청(이번 요청사항으로 다시 생성) |
@@ -288,7 +288,7 @@ Fast = 지금 카탈로그는 Claude Haiku 4.5 입력 1 · 출력 5(새 Haiku 5.
 
 | | 마일스톤 | 끝났다고 말할 수 있는 순간 |
 |---|---|---|
-| **E0** | 용도 축 · 템플릿 고르기(`template_key`) · `ebook.json`(걸음 · 포지션) · 화면 말 · 이름 «전자책 오토» | `SE_PURPOSE=ebook` 앱에서 새 책을 만들면 전자책 걸음이 보이고, 소설판은 한 줄도 달라지지 않는다(시험) |
+| **E0** ✅ | 용도 축 · 템플릿 고르기(`workflow.template`) · `ebook.json`(걸음 · 포지션) · 화면 말 · 이름 «전자책 오토» | `SE_PURPOSE=ebook` 앱에서 새 책을 만들면 전자책 걸음이 보이고, 소설판은 한 줄도 달라지지 않는다(시험) |
 | **E1** | 어댑터 — **긴 글 견고성(§5-1)** · **Claude 모델 고르기(카탈로그 · 화면)** · effort · 책 맥락 캐시 · 구조화 출력 · **웹 조사** · 한국어 토큰 실측 · (§10-9) | 장 호출 두 번째부터 `cache_read` 가 입력의 대부분 · 웹 조사 문서에 출처가 붙는다 · §7 을 실측값으로 고친다 |
 | **E2** | **포지션** — 에이전트 탭(만들기 · 고치기 · 앉히기) · `position.set` · `prompts.ebook.json` · 포지션 준비(자동으로 짓기) | 사용자가 만든 에이전트를 집필자에 앉히면 그 사람의 작법 · 모델로 장이 써진다(생성 기록에 포지션 · 에이전트) |
 | **E3** | 설계(분량 · 구성 판단) · 목차 · 장 카드 · 기계 검사 · 도장 ① ②(사람) | 기획서에 분량 · 장 수 · 근거가 서고, 목차에 «근거 없는 장 n»이 0호출로 뜬다 |
@@ -322,8 +322,16 @@ Fast = 지금 카탈로그는 Claude Haiku 4.5 입력 1 · 출력 5(새 Haiku 5.
 | 티켓 | 내용 |
 |---|---|
 | T-E01 | `online/purpose.mjs` + `SE_PURPOSE`(기본 novel) · `/api/setup` · `me` 에 `purpose` · 시험(모르는 값은 novel · 소설판 화면 그대로) |
-| T-E02 | 템플릿 고르기 — `tools/workflow.mjs` 의 고정 경로 → 템플릿 키 · 프로젝트에 `template_key`(마이그레이션 020, 이미 있어도 넘어가게) · 기존 작품은 `story_creation` |
+| T-E02 | 템플릿 고르기 — `tools/workflow.mjs` 의 고정 경로 → 템플릿 키 · 작품의 `workflow.template`(이미 있는 jsonb — 마이그레이션을 두지 않아 Replit 게시의 스키마 비교에 닿지 않는다) · 적혀 있지 않은 작품은 `story_creation` |
 | T-E03 | `config/workflows/ebook.json`(걸음 · 카드 · task · tier · positions) · `validateTemplate` 를 positions 까지 · 시험 |
 | T-E04 | 화면 말 묶음(작품 → 책 · 회차 → 장) · 이름 «전자책 오토»(로그인 화면 · 탭 제목) — 전자책판에서만 · 시험 |
 
 티켓마다 커밋을 나누고, 되돌릴 때는 티켓 단위로 되돌린다.
+
+**E0 결과(2026-10-10)** — 네 티켓 모두 커밋 · 시험(개인판 · 온라인판).
+- `SE_PURPOSE=ebook` 앱에서 만든 책은 `workflow.template = 'ebook'` → 작업실 «단계» 탭에 «전자책 만들기» 8걸음(책 의뢰 · 자료 → 자료 분석 → 책의 설계 → 목차 · 장 카드 → 장 집필 → 전권 검토 · 개정 계획 → 서문 → 완성).
+  **완전 수동**은 이것으로 이미 끝까지 간다 — 걸음마다 사람이 [생성] · 검토 · 이번 요청사항 붙여 다시 생성(새 판) · [승인]. 레일(반자동 · 완전 자동)은 이 위에 E5 · E6 에서 얹는다.
+- 회차의 말은 템플릿이 정한다(`episodeWord` — 전자책 «장»: «몇 장» · «3장»). 전권 검토처럼 회차 단계가 아닌 걸음은 손댄 장을 모두 추천 참조로 받는다.
+- 이름은 서버가 준다(`online/purpose.mjs` 한 곳 → `/api/setup` 의 `name` · `me.appName`) — 로그인 화면 · 작업실 · 탭 제목 · 보내는 링크 제목. 화면 코드에는 «전자책 오토»가 없다(시험).
+- 말 바꾸기(작품 → 책)는 화면의 **고정 문구에만**(`W('…')` — 글자 그대로의 문구만 받는다, 시험). 사용자가 쓴 글 · 문서 이름은 건드리지 않는다.
+- 소설판(`SE_PURPOSE` 없음)과 개인판은 한 글자도 바뀌지 않는다(시험 · 화면 확인).

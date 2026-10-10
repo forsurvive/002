@@ -2175,6 +2175,28 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('회차 단계가 아닌 단계(목차)의 추천은 지금처럼 장을 걸지 않는다', !wf.recommendRefs(bp, eb, 'toc').includes(c1.docId));
 }
 
+// ---------------------------------------------------------------- 용도(전자책 오토)의 이름 · 말 — 화면 (docs/EBOOK_EDITION.md T-E04)
+// 이름은 서버가 준다(online/purpose.mjs 한 곳). 말 바꾸기(작품 → 책)는 고정 문구에만 — 사용자가 쓴 글은 건드리지 않는다.
+{
+  const app = src(join(ROOT, 'web', 'app.js'));
+  const login = src(join(ROOT, 'web', 'login.js'));
+  const school = src(join(ROOT, 'web', 'school.js'));
+  const webAll = readdirSync(join(ROOT, 'web')).filter((f) => /\.(js|html|css)$/.test(f)).map((f) => src(join(ROOT, 'web', f))).join('\n');
+  ok('**화면 코드의 문구에 «전자책 오토»가 박혀 있지 않다(이름은 서버가 준다)**', !/(['"`])[^'"`\n]*전자책 오토[^'"`\n]*\1/.test(webAll));
+  ok('작업실 · 옆 줄의 이름은 서버가 준 이름(없으면 스토리 엔진)', app.includes("const appName = () => (S.me && S.me.appName) || '스토리 엔진';")
+    && app.includes("class: 'top-name', style: 'font-size:30px', text: appName()") && app.includes("class: 'side-title', text: appName()") && !app.includes("text: '스토리 엔진'"));
+  ok('탭 제목도 서버가 준 이름으로', app.includes('document.title = S.me.appName') && login.includes('document.title = S.name') && school.includes("document.title = document.title.replace('스토리 엔진', S.me.appName)"));
+  ok('로그인 화면의 이름은 /api/setup 의 name', login.includes("text: appName() }), form)") && !login.includes("text: '스토리 엔진'"));
+  ok('보내는 링크의 제목도 그 이름', !school.includes("'스토리 엔진 초대'") && !school.includes("'스토리 엔진 비밀번호 재설정'") && school.includes("appName() + ' 초대'"));
+  ok('**말 바꾸기는 전자책 용도에서만**', app.includes("const isBook = () => !!(S.me && S.me.purpose === 'ebook');") && app.includes("const W = (s) => (isBook() ? String(s).replace(/작품/g, '책') : s);"));
+  const wCalls = app.match(/(?<![A-Za-z0-9_$.])W\([^)]/g) || [];
+  ok('**말 바꾸기는 고정 문구에만(W 는 글자 그대로의 문구만 받는다 — 사용자가 쓴 글에 닿지 않는다)**', wCalls.length >= 10 && wCalls.every((x) => x === "W('"), wCalls.filter((x) => x !== "W('").join(' '));
+  ok('새 작품 · 작품 파일 · 개인 작품이 전자책에서 «책»으로', ["W('새 작품')", "W('작품 파일 가져오기')", "W('작품 파일 내려받기')", "W('내 개인 작품')"].every((x) => app.includes(x)));
+  ok('단계 화면의 회차 말은 템플릿이 정한다(전자책 — 장)', app.includes("const ew = w.episodeWord || '화';") && app.includes("text: '몇 ' + ew") && app.includes('st.episodes.length + ew') && !app.includes("'화 ' + (STAGE_MARK"));
+  ok('끌 단계가 없는 템플릿(전자책)에는 «본문 단계» 스위치가 서지 않는다', app.includes('w.stages.some((x) => x.optional) ? ['));
+  ok('전자책의 분량 안내는 «책의 설계»가 정한다고', app.includes("'분량은 비워 두면 «책의 설계»에서 AI 가 자료를 보고 정합니다'") && app.includes("'분량은 비워 두면 회차 수를 스스로 정합니다'"));
+}
+
 // ---------------------------------------------------------------- Core 는 바깥을 모른다 (온라인화 Phase 1)
 //
 // core/ 의 코드는 파일 · 네트워크 · 자식 프로세스 · 환경 변수 · 개인판 앱(tools/)을 부르지 않는다.

@@ -18,6 +18,7 @@ import { importProject } from './import.mjs';
 import { loadAggregate } from './store.mjs';
 import { createJobQueue } from './jobs.mjs';
 import { eduOpAllowed } from './edition.mjs';
+import { purposeName } from './purpose.mjs';
 import { billingOps } from './billing/ops.mjs';
 
 const ok = (extra = {}) => ({ status: 200, body: { ok: true, ...extra } });
@@ -149,7 +150,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
       const mine = await one('SELECT settings, password_hash = $2 AS no_password FROM users WHERE id = $1', [user.id, auth.NO_PASSWORD]);
       // 구글 로그인(자유 가입판) — 켜졌는가 · 이 계정에 이은 구글(이메일) · 비밀번호가 없는 계정인가(구글로 만든 계정)
       const g = edition === 'open' ? await one(`SELECT email, created_at FROM user_identities WHERE provider = 'google' AND user_id = $1`, [user.id]) : null;
-      return ok({ loginId: user.loginId, displayName: user.displayName, platformAdmin: !!user.isPlatformAdmin, edition, purpose, organizations: orgs, classes, aiProvider: (mine && mine.settings && mine.settings.ai_provider) || '',
+      return ok({ loginId: user.loginId, displayName: user.displayName, platformAdmin: !!user.isPlatformAdmin, edition, purpose, appName: purposeName(purpose), organizations: orgs, classes, aiProvider: (mine && mine.settings && mine.settings.ai_provider) || '',
         ...(user.isPlatformAdmin ? { aiBilling: (mine && mine.settings && mine.settings.ai_billing) || '' } : {}),
         ...(edition === 'open' ? { google: { on: !!google, linked: !!g, email: g ? g.email : '', since: g ? g.created_at : null }, noPassword: !!(mine && mine.no_password) } : {}) });
     },

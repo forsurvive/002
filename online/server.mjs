@@ -475,7 +475,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         // 자유 가입판 — 기관 · 수업이 없다. 관리 단추는 운영자에게만(운영 화면), 내 수업 · 수업 자리는 없다.
         if (edition === 'open') {
           // pass — 이용권이 살아 있는가(새 AI 작업이 되는가). 첫 화면이 «이용권 없음» 한 줄을 세울 근거(막는 것은 서버다)
-          return { ...me, edition, purpose, manage: !!user.isPlatformAdmin, platformAdmin: !!user.isPlatformAdmin, classes: 0, member: false, places: [], roles: user.isPlatformAdmin ? ['platform_admin'] : [], pass: await passActive(pool, user.id) };
+          return { ...me, edition, purpose, appName: purposeName(purpose), manage: !!user.isPlatformAdmin, platformAdmin: !!user.isPlatformAdmin, classes: 0, member: false, places: [], roles: user.isPlatformAdmin ? ['platform_admin'] : [], pass: await passActive(pool, user.id) };
         }
         const r = (await pool.query(
           `SELECT bool_or(role = 'organization_admin') AS org_admin, count(*)::int AS n FROM organization_members WHERE user_id = $1 AND status = 'active'`, [user.id])).rows[0];
@@ -493,7 +493,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
           `SELECT role FROM organization_members WHERE user_id = $1 AND status = 'active'
             UNION SELECT role FROM class_members WHERE user_id = $1`, [user.id])).rows.map((x) => x.role));
         const roles = [...(user.isPlatformAdmin ? ['platform_admin'] : []), ...['organization_admin', 'instructor', 'student'].filter((x) => held.has(x))];
-        return { ...me, edition, purpose, manage: !!(user.isPlatformAdmin || r.org_admin), platformAdmin: !!user.isPlatformAdmin, classes, member: r.n > 0, places, roles };
+        return { ...me, edition, purpose, appName: purposeName(purpose), manage: !!(user.isPlatformAdmin || r.org_admin), platformAdmin: !!user.isPlatformAdmin, classes, member: r.n > 0, places, roles };
       };
 
       // ---------------- 구글 로그인 — 시작. login: 로그인 전(이은 계정이면 들어가고, 처음이면 새 계정) · link: 로그인한 뒤 «내 계정»에서 잇기

@@ -130,13 +130,13 @@
 | `POST /api/auth/signup` `{ loginId, displayName, password }` | **자유 가입판(`SE_EDITION=open`)에만.** 계정을 만들고 곧바로 쿠키. 409 같은 아이디 · 422 꼴 · 429 고삐(같은 곳에서 15분에 시도 20 · 1시간에 계정 5) · 403 `setup_needed`(처음 설정 전). 교육기관판에는 이 길이 없다(로그인 전 401 · 뒤 404) |
 | `GET /api/auth/google/start[?mode=link]` | **자유 가입판 + Secrets 에 `GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET` 이 둘 다 있을 때만**(아니면 이 길이 없다 — 로그인 전 401). 한 번용 값(state · nonce · PKCE verifier)을 `oauth_states` 에 두고 state 를 `se_oauth` 쿠키(HttpOnly · SameSite=Lax · `Path=/api/auth/google` · 10분)에도 실어 302 로 구글에. `mode=link` 는 로그인한 사람만(아니면 `/login`), 로그인한 사람의 `login` 은 `/` 로. 같은 곳에서 10분에 30번(넘으면 `?google=busy`). OPEN_EDITION §4-9 |
 | `GET /api/auth/google/callback?state&code` | 구글이 돌려보내는 주소(구글 클라우드 «승인된 리디렉션 URI» = `https://<주소>/api/auth/google/callback`). state 줄은 맞든 틀리든 지운다(한 번만) · 쿠키와 같아야 · 10분 안. 서버가 구글과 직접 코드 교환(시크릿 · verifier) → id_token 의 iss · aud · exp · nonce. 결과는 302 로만: 이은 계정 → `/` · 처음 → 새 계정(아이디는 이메일 앞부분, 겹치면 `-2`… · 비밀번호 없음 · 가입 고삐와 처음 설정 전 거절은 가입과 같다) → `/account.html?google=new` · 잇기 → `/account.html?google=linked`. 실패는 `?google=` `state` `expired` `cancel` `failed` `disabled` `setup` `busy` `retry`(로그인 화면) · `already` `taken` `one`(내 계정). **이메일이 같다고 저절로 잇지 않는다** |
-| `GET /api/me` | `{ me: { loginId, displayName } }` |
+| `GET /api/me` | `{ me: { loginId, displayName, edition, purpose, appName, … } }` — `purpose` 는 용도(`novel`/`ebook`), `appName` 은 화면 · 탭 제목에 보일 이름(«스토리 엔진» / «전자책 오토», EBOOK_EDITION §8). `/api/state` 의 `me` · `me.memberships` 도 같은 두 칸을 싣는다 |
 | `POST /api` `{ op, pid, … }` | **개인판과 같은 문 표**(`tools/ops.mjs`) · 같은 응답 꼴. 다른 점: pid 가 필요한 문은 «이 사람의 프로젝트»가 아니면 **404**(남의 것 · 지운 것 · 이상한 id 모두 같은 답) · `auth.write` 403 · AI 작업을 여는 문(`doc.update` `thread.send` `thread.edit` `thread.doc`)은 **영속 큐에 넣고 곧바로 `{ ok, jobId }`**(같은 대상에 도는 작업이 있으면 «이미 도는 중») · `job.pause/resume/answer/remove` 는 큐의 손잡이 · `project.create` 는 개인판처럼 에이전트 준비 작업을 곧바로 세운다 · `project.prepare` 는 끊긴 준비를 다시 |
 | `GET /api/state[?pid]` | 개인판과 같은 꼴 + `me`. `project.jobs` 는 jobs 표에서(대기 중은 `status:'running', step:'대기 중'`, 사람의 답을 기다림은 `paused` + `ask.say`). `project.auth` 는 `{ mode:'online', modes:[], hasKey:false }` — 화면이 «무엇으로»(키 칸)를 세우지 않는다 |
 | `GET /api/download` | 개인판과 같다(같은 소유 검사) |
 
 로그인 전 `/api*` 는 401 `{ code:'login' }` → 화면(`web/app.js`)이 `/login` 으로 보낸다. 가입 문은 없다 — 계정은 운영자가 `node online/admin.mjs create-user <아이디>` 로 만든다(SECURITY §7).
-`GET /api/setup`(로그인 전) → `{ needed, code, ai, edition, google }` — 로그인 화면이 처음 설정 · 가입 칸 · [Google 계정으로 계속하기]를 세울 근거(`google` 은 자유 가입판에서 구글 클라이언트가 있을 때만 true).
+`GET /api/setup`(로그인 전) → `{ needed, code, ai, edition, google, purpose, name }` — 로그인 화면이 처음 설정 · 가입 칸 · [Google 계정으로 계속하기]를 세울 근거(`google` 은 자유 가입판에서 구글 클라이언트가 있을 때만 true) · `name` 은 로그인 화면 · 탭 제목의 이름(`SE_PURPOSE=ebook` 이면 «전자책 오토»).
 
 ### 2-3a. 교육기관판 — `POST /api/edu { op, … }` (online/edu.mjs)
 

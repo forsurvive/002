@@ -46,11 +46,14 @@ export async function run({ pool, ok, eq }) {
     const s1 = await book.setup();
     ok('**전자책 오토 — 로그인 전 화면이 용도 · 이름을 받는다**', s1.purpose === 'ebook' && s1.name === '전자책 오토' && s1.edition === 'open', JSON.stringify(s1));
     eq('로그인 뒤 me 에 용도', (await book.get('/api/me')).me.purpose, 'ebook');
+    ok('**화면 이름은 서버가 준다 — me · 내 계정(me.memberships)에 «전자책 오토»**', (await book.get('/api/me')).me.appName === '전자책 오토'
+      && (await book.post('/api/edu', { op: 'me.memberships' })).appName === '전자책 오토');
     eq('작업실 상태(me)에도', (await book.get('/api/state')).me.purpose, 'ebook');
     eq('내 계정(me.memberships)에도', (await book.post('/api/edu', { op: 'me.memberships' })).purpose, 'ebook');
     const novel = await start({ SE_EDITION: 'open' });
     const s2 = await novel.setup();
-    ok('**용도를 적지 않은 앱은 지금 그대로 — novel · 스토리 엔진**', s2.purpose === 'novel' && s2.name === '스토리 엔진' && (await novel.get('/api/me')).me.purpose === 'novel');
+    ok('**용도를 적지 않은 앱은 지금 그대로 — novel · 스토리 엔진**', s2.purpose === 'novel' && s2.name === '스토리 엔진' && (await novel.get('/api/me')).me.purpose === 'novel'
+      && (await novel.get('/api/me')).me.appName === '스토리 엔진' && (await novel.post('/api/edu', { op: 'me.memberships' })).appName === '스토리 엔진');
     const school = await start({ SE_PURPOSE: 'ebook' });
     ok('용도는 판과 따로 돈다(교육기관판 + ebook)', (await school.setup()).purpose === 'ebook' && (await school.setup()).edition === 'school');
 

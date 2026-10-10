@@ -36,6 +36,11 @@ const INBOX = '__inbox__';
 const BODY_HINT = '직접 입력하거나 아래의 요청사항을 작성해주세요..';
 const STUDIO = 'Old Tower Studio';
 const brandMark = (style) => h('div', { class: 'brand', style, text: STUDIO });
+// 용도(docs/EBOOK_EDITION.md §8) — 이름은 서버가 준다(me.appName). 말 바꾸기(작품 → 책)는 고정 문구에만 쓴다(사용자가 쓴 글은 건드리지 않는다).
+// «작품»과 «책»은 둘 다 받침이 있어 토씨가 그대로 맞는다. 개인판 · 소설판은 me.purpose 가 ebook 이 아니라 한 글자도 바뀌지 않는다.
+const isBook = () => !!(S.me && S.me.purpose === 'ebook');
+const appName = () => (S.me && S.me.appName) || '스토리 엔진';
+const W = (s) => (isBook() ? String(s).replace(/작품/g, '책') : s);
 
 // 처음 쓰는 사람을 위한 작업 순서 — 설정 탭에 접어 둔다.
 const GUIDE = [
@@ -207,7 +212,7 @@ function importProjectFile() {
     const f = pick.files && pick.files[0];
     if (!f) return;
     let bundle;
-    try { bundle = JSON.parse(await f.text()); } catch { S.homeSay = '작품 파일이 아닙니다'; return render(); }
+    try { bundle = JSON.parse(await f.text()); } catch { S.homeSay = W('작품 파일이 아닙니다'); return render(); }
     S.homeSay = '가져오는 중…'; render();
     const r = await fetch(S.me ? '/api/import' : '/api', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'project.import', bundle }),
@@ -261,6 +266,7 @@ async function pull(force) {
   if (d.code === 'login') return toLogin(d);
   if (d.code === 'gate') return regate(d);
   S.me = d.me || null;   // 온라인판에서만 온다(로그인한 사람)
+  if (S.me && S.me.appName && document.title !== S.me.appName) document.title = S.me.appName;   // 탭 제목(전자책 오토)
   if (d.projects) S.projects = d.projects;
   if (S.pid && d.ok === false) { S.pid = null; S.project = null; }
   else if (d.project) S.project = d.project;
@@ -286,7 +292,7 @@ const SCROLLERS = ['.main', '#layer1 .panel-body', '#layer2 .panel-body', '#d-bo
 
 // 읽기만 하는 작품(강사 · 열람이 허락된 기관 관리자) — 고치는 손잡이를 모두 걷고 칸은 읽기 전용으로.
 // 막는 것은 서버다(쓰기 문은 403) — 이것은 누를 수 없는 단추를 보이지 않게 하는 안내일 뿐이다.
-const RO_HIDE = /^(\+|삭제|생성|갱신|추가|저장|만들기|복원|비우기|영구 삭제|승인|승인하고 다음 단계로|건너뛰기|건너뛰기 취소|다시 생성\(새 판\)|문서에서 고치기|고치기|되돌리기|파일 선택|일시중지|이어 하기|자료 분석 다시|에이전트 준비 다시|프로젝트 삭제|작품 파일 가져오기|이 판으로 되돌리기|자료 분석)$/;
+const RO_HIDE = /^(\+|삭제|생성|갱신|추가|저장|만들기|복원|비우기|영구 삭제|승인|승인하고 다음 단계로|건너뛰기|건너뛰기 취소|다시 생성\(새 판\)|문서에서 고치기|고치기|되돌리기|파일 선택|일시중지|이어 하기|자료 분석 다시|에이전트 준비 다시|프로젝트 삭제|작품 파일 가져오기|책 파일 가져오기|이 판으로 되돌리기|자료 분석)$/;
 function lockReadOnly() {
   for (const root of [$('root'), $('layer1'), $('layer2')]) {
     if (!root) continue;
@@ -377,7 +383,7 @@ function projectList() {
     h('div', { class: 'top home-top', style: 'position:static;padding:0 0 22px;border:none;background:none' },
       h('div', null,
         brandMark('margin-bottom:6px'),
-        h('div', { class: 'top-name', style: 'font-size:30px', text: '스토리 엔진' }),
+        h('div', { class: 'top-name', style: 'font-size:30px', text: appName() }),
         whoLine()),
       h('div', { class: 'line home-acts' },
         // 온라인판 — 관리는 운영자 · 기관 관리자에게만, 내 수업은 수업에 든 사람에게만, 내 계정은 누구나(막는 것은 서버다).
@@ -390,10 +396,10 @@ function projectList() {
           h('button', { class: 'nav-out', text: '로그아웃', onclick: logout })) : null,
         h('button', { class: 'nav-out', text: isLight() ? '어둡게' : '밝게', onclick: toggleTheme }),
         // 다른 PC · 개인판에서 내려받은 작품 파일 열기 — «+»(새 작품)와 헷갈리지 않게 위쪽 단추 줄에
-        h('button', { class: 'btn-line', text: '작품 파일 가져오기', onclick: importProjectFile }),
+        h('button', { class: 'btn-line', text: W('작품 파일 가져오기'), onclick: importProjectFile }),
         h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: () => startTour() }))),
     // 새 작품 «+» — 화면 한가운데(좁은 창에서도 잘리지 않게 줄을 따로 둔다)
-    h('div', { class: 'new-row' }, h('button', { class: 'plus big', text: '+', title: '새 작품', onclick: newProjectOpen })),
+    h('div', { class: 'new-row' }, h('button', { class: 'plus big', text: '+', title: W('새 작품'), onclick: newProjectOpen })),
     S.homeSay ? h('div', { class: 'new-row' }, h('div', { class: 'notice', text: S.homeSay })) : null,
     // 자유 가입판 — 이용권이 없으면 새 AI 작업이 서지 않는다는 것만 한 줄로(편집 · 열람 · 내보내기는 된다)
     S.me && S.me.edition === 'open' && S.me.pass === false ? h('div', { class: 'new-row' },
@@ -416,7 +422,7 @@ function app() {
   return h('div', { class: 'shell' },
     h('div', { class: 'side' },
       h('div', { class: 'side-top' },
-        h('button', { class: 'side-title', text: '스토리 엔진', onclick: goHome }),
+        h('button', { class: 'side-title', text: appName(), onclick: goHome }),
         brandMark()),
       // 단계 탭은 단계 흐름이 실려 올 때만(서버가 템플릿을 갖고 있을 때) 선다
       ['작업실', ...(p.workflow ? ['단계'] : []), '설정'].map((t) => h('button', {
@@ -429,7 +435,7 @@ function app() {
     h('div', { class: 'main' },
       h('div', { class: 'top' },
         h('div', { class: 'line' },
-          h('button', { class: 'back', text: '‹', title: '작품 목록', onclick: goHome }),
+          h('button', { class: 'back', text: '‹', title: W('작품 목록'), onclick: goHome }),
           h('button', { class: 'top-name', text: p.name, onclick: goHome }),
           // 온라인판 — 강사 · 기관 관리자의 열람. 고치는 문은 서버가 막는다(이 표시는 알림일 뿐이다)
           p.readOnly ? h('span', { class: 'mark', text: '읽기만' }) : null),
@@ -524,11 +530,12 @@ function stageSay(st) {
 
 function stagesView() {
   const w = S.project.workflow;
+  const ew = w.episodeWord || '화';   // 회차의 말(전자책 — 장)
   const row = (st) => h('div', { class: 'row' + (st.off ? '' : ''), onclick: () => openStage(st.key) },
     h('span', { class: 'mark', text: STAGE_MARK[st.status] || '○' }),
     h('div', { class: 'name', text: st.n + '  ' + st.title + (st.off ? ' (꺼짐)' : '') }),
     st.upstreamChanged ? h('span', { class: 'mark', text: '⚠ 앞 단계가 바뀜' }) : null,
-    (st.episodes || []).length ? h('span', { class: 'mark', text: st.episodes.length + '화' }) : null,
+    (st.episodes || []).length ? h('span', { class: 'mark', text: st.episodes.length + ew }) : null,
     h('div', { class: 'when', text: stageSay(st) }));
   // 지금 할 단계 · 다음 단계 — 승인 · 건너뜀이 아닌 첫 단계(꺼진 단계는 건너 센다). 강제가 아니라 길잡이다.
   const live = w.stages.filter((x) => !x.off);
@@ -548,8 +555,10 @@ function stagesView() {
     h('div', { class: 'sec' },
       h('div', { class: 'sec-head' },
         h('div', { class: 'name', text: w.title || '단계' }),
-        h('div', { class: 'when', text: '본문 단계' }),
-        h('button', { class: 'tg' + (w.bodyOn ? ' on' : ''), onmousedown: () => api('project.spec', { bodyStage: !w.bodyOn }) })),
+        // 끌 수 있는 단계(본문)가 있는 템플릿만 — 전자책 단계에는 없다
+        w.stages.some((x) => x.optional) ? [
+          h('div', { class: 'when', text: '본문 단계' }),
+          h('button', { class: 'tg' + (w.bodyOn ? ' on' : ''), onmousedown: () => api('project.spec', { bodyStage: !w.bodyOn }) })] : null),
       w.stages.map(row)),
     h('div', { class: 'when', text: '○ 시작 전 · ◐ 초안 · ● 승인 · ⤼ 건너뜀 — 순서는 강제가 아닙니다. 승인은 «이 단계의 산출물로 인정», 확정본은 «참조에서 최우선 사실»로 서로 다릅니다.' }));
 }
@@ -559,6 +568,7 @@ function stagePanel(close) {
   const st = w.stages.find((x) => x.key === S.open.key);
   if (!st) return h('div', { class: 'panel narrow' }, h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '없는 단계' }), h('button', { class: 'x', text: '×', onclick: close })));
   const per = st.output === 'perEpisode';
+  const ew = w.episodeWord || '화';   // 회차의 말(전자책 — 장)
   const ep = per ? (S.open.episode || Number(typedVal('st-ep', '')) || 0) : 0;
   const cur = per && ep ? (st.episodes || []).find((e) => e.episode === ep) : (per ? null : st);
   const status = cur ? cur.status : 'not_started';
@@ -580,7 +590,7 @@ function stagePanel(close) {
   };
   return h('div', { class: 'panel narrow' },
     h('div', { class: 'panel-head' },
-      h('div', { class: 'name', text: st.n + '  ' + st.title + (per && ep ? ' — ' + ep + '화' : '') }),
+      h('div', { class: 'name', text: st.n + '  ' + st.title + (per && ep ? ' — ' + ep + ew : '') }),
       h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
       st.task ? h('div', null, h('div', { class: 'lab', text: '이 단계에서 하는 일' }), h('div', { text: st.task.replace(/\{n\}/g, ep ? String(ep) : 'N') })) : null,
@@ -592,11 +602,11 @@ function stagePanel(close) {
         st.card.ask ? [h('div', { class: 'lab', text: '생각해 볼 질문' }), h('div', { text: st.card.ask })] : null) : null,
       st.prevPending && status === 'not_started' ? h('div', { class: 'notice', text: '앞 단계가 아직 승인 전입니다 — 그래도 시작할 수 있습니다' }) : null,
       cur && cur.upstreamChanged ? h('div', { class: 'notice', text: '⚠ 승인한 뒤 앞 단계 문서가 바뀌었습니다 — 다시 보거나 다시 생성해 보세요(자동으로 바뀌지 않습니다)' }) : null,
-      per && !S.open.episode ? h('div', null, h('div', { class: 'lab', text: '몇 화' }), textbox('st-ep', '예: 1')) : null,
+      per && !S.open.episode ? h('div', null, h('div', { class: 'lab', text: '몇 ' + ew }), textbox('st-ep', '예: 1')) : null,
       per && (st.episodes || []).length ? h('div', { class: 'line' }, st.episodes.map((e) => h('button', {
-        class: 'chip', text: e.episode + '화 ' + (STAGE_MARK[e.status] || ''), onclick: () => openStage(st.key, e.episode),
+        class: 'chip', text: e.episode + ew + ' ' + (STAGE_MARK[e.status] || ''), onclick: () => openStage(st.key, e.episode),
       }))) : null,
-      st.output === 'input' ? h('div', { class: 'when', text: '작품을 만들 때 넣은 규격과 자료입니다 — 설정 탭에서 고칩니다.' }) : null,
+      st.output === 'input' ? h('div', { class: 'when', text: W('작품을 만들 때 넣은 규격과 자료입니다 — 설정 탭에서 고칩니다.') }) : null,
       st.output === 'final' ? h('div', { class: 'when', text: '다 쓴 원고를 모순 검사 · 합평으로 점검하고 내려받습니다. 점검을 마쳤으면 승인하세요.' }) : null,
       st.output !== 'input' && st.output !== 'final' ? [
         refLine('참조(앞 단계에서 추천 — 빼거나 더할 수 있습니다)', S.open.refIds, byId, (ids) => { S.open.refIds = ids; render(); }, docId),
@@ -813,7 +823,7 @@ function aiCompany(p) {
     if (r.ok) { a.provider = r.provider; render(); }
   };
   return h('div', null,
-    h('div', { class: 'lab', text: '이 작품에 쓸 AI 회사' }),
+    h('div', { class: 'lab', text: W('이 작품에 쓸 AI 회사') }),
     h('div', { class: 'line' },
       h('button', { class: !a.provider ? 'btn' : 'btn-line', text: '내 기본' + (a.ownerDefault ? '(' + name(a.ownerDefault) + ')' : ''), onclick: () => set('') }),
       // 키를 넣은 회사만 고를 수 있다(서버도 막는다)
@@ -900,7 +910,7 @@ function settings() {
     (p.prompts || []).length ? agentList(p) : null,
     // 작품 통째로 — 다른 PC · 개인판(USB) · 온라인판에서 «작품 파일 가져오기»로 그대로 연다
     h('div', { class: 'line', style: 'padding-top:20px' },
-      h('button', { class: 'btn-line', text: '작품 파일 내려받기', onclick: () => download('project', '') }),
+      h('button', { class: 'btn-line', text: W('작품 파일 내려받기'), onclick: () => download('project', '') }),
       h('div', { class: 'when', text: '문서 · 판 이력 · 확정본 · 논의까지 한 파일로' })),
     h('div', { style: 'padding-top:20px' },
       h('button', {
@@ -1013,11 +1023,11 @@ function agentList(p) {
   const open = S.fold['prompts'] === undefined ? made : S.fold['prompts'];
   return h('details', { open: open ? 'open' : null },
     h('summary', {
-      text: made ? ('이 작품의 에이전트' + (p.agentKind ? ' — ' + p.agentKind : '')) : '에이전트',
+      text: made ? (W('이 작품의 에이전트') + (p.agentKind ? ' — ' + p.agentKind : '')) : '에이전트',
       onclick: () => { S.fold['prompts'] = !open; },
     }),
     h('div', { class: 'when', style: 'padding:2px 0 8px',
-      text: made ? '이 작품에 맞춰 지었습니다. 눌러서 고치십시오.' : '눌러서 고치십시오.' }),
+      text: made ? W('이 작품에 맞춰 지었습니다. 눌러서 고치십시오.') : '눌러서 고치십시오.' }),
     rows.map((pr) => h('div', {
       class: 'row', onclick: () => openPrompt(pr.code),
     },
@@ -1070,7 +1080,7 @@ function promptPanel(close) {
           S.open.one = { ...one, model: m };
           render();
           api('prompt.model', { code: one.code, model: m });
-        }, '작품 모델 따름 (' + ((S.project && S.project.model) || '') + ')')),
+        }, W('작품 모델 따름 (') + ((S.project && S.project.model) || '') + ')')),
       h('div', null, h('div', { class: 'lab', text: '이번에 할 일' }), area('pr-task', '이번에 할 일', one.task, { onblur: save })),
       h('div', null, h('div', { class: 'lab', text: '프롬프트' }), area('pr-craft', '프롬프트', one.craft, { class: 'body-edit', onblur: save }))));
 }
@@ -1535,7 +1545,7 @@ function newProjectPanel(close) {
     save: makeProject,
   };
   return h('div', { class: 'panel' },
-    h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '새 작품' }), h('button', { class: 'x', text: '×', onclick: close })),
+    h('div', { class: 'panel-head' }, h('div', { class: 'name', text: W('새 작품') }), h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
       placeChoice(),
       h('div', { class: 'grid2' },
@@ -1574,9 +1584,9 @@ function placeChoice() {
       h('div', { class: 'lab', text: '어디에 만들까요?' }),
       h('div', { class: 'line' },
         places.map((c) => h('button', { class: pick === c.classId ? 'btn' : 'btn-line', text: c.orgName + ' · ' + c.name, onclick: () => choose(c.classId) })),
-        h('button', { class: pick === '' ? 'btn' : 'btn-line', text: '내 개인 작품', onclick: () => choose('') })),
+        h('button', { class: pick === '' ? 'btn' : 'btn-line', text: W('내 개인 작품'), onclick: () => choose('') })),
     ] : null,
-    pick === '' ? h('div', { class: 'when', style: 'margin-top:8px', text: '내 개인 작품 — AI 는 내 AI 키(«내 계정»)로 돌고, 비용은 본인에게 나갑니다.' }) : null);
+    pick === '' ? h('div', { class: 'when', style: 'margin-top:8px', text: W('내 개인 작품 — AI 는 내 AI 키(«내 계정»)로 돌고, 비용은 본인에게 나갑니다.') }) : null);
 }
 
 // 돌려주는 값: 이 자리에서 창까지 다 갈무리했으면 true. 거절당했으면 false(창을 열어 둔다).
@@ -1595,7 +1605,7 @@ async function makeProject() {
   if (miss.length) {
     S.open.err = '필수 항목 누락 — ' + miss.join(' · ');
     // 분량은 필수가 아니다. 비어 있으면 스스로 정한다는 것만 함께 알린다.
-    S.open.note = body.spec.length.trim() ? '' : '분량은 비워 두면 회차 수를 스스로 정합니다';
+    S.open.note = body.spec.length.trim() ? '' : isBook() ? '분량은 비워 두면 «책의 설계»에서 AI 가 자료를 보고 정합니다' : '분량은 비워 두면 회차 수를 스스로 정합니다';
     render();
     return false;
   }

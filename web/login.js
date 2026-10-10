@@ -36,7 +36,10 @@ function h(tag, attrs, ...kids) {
 // 첫 화면 — 계정이 있으면 아이디 · 비밀번호, 처음이면 초대 코드 → (맞으면) 그 자리에서 계정 만들기.
 // 시험 운영(출입 열쇠)이면 열쇠 칸이 맨 위에 하나 더 붙고, 어느 단추든 열쇠부터 넘긴다.
 // 자유 가입판(S.edition 'open')에는 초대 코드가 없다.
-const S = { gate: false, invite: null, say: '', edition: 'school', google: false };
+const S = { gate: false, invite: null, say: '', edition: 'school', google: false, name: '' };
+// 앱 이름은 서버가 준다(/api/setup 의 name — 전자책 오토 · 스토리 엔진). 받기 전(출입 열쇠 앞)에는 지금 이름.
+const appName = () => S.name || '스토리 엔진';
+const nameFrom = (st) => { if (st && st.name) { S.name = String(st.name); document.title = S.name; } };
 const $ = (id) => document.getElementById(id);
 const v = (id) => ($(id) ? $(id).value.trim() : '');
 const post = async (url, body) => {
@@ -54,12 +57,13 @@ async function passGate() {
   S.gate = false;
   if ($('gt-box')) $('gt-box').remove();
   const st = await fetch('/api/setup').then((r) => r.json()).catch(() => ({}));
-  const was = S.edition + '|' + S.google;
+  const was = S.edition + '|' + S.google + '|' + S.name;
   if (st.edition) S.edition = st.edition === 'open' ? 'open' : 'school';
   S.google = !!st.google;
+  nameFrom(st);
   if (st.needed) { draw(setupForm(st.ai, st.code)); return false; }
   // 열쇠 전에는 판을 몰랐다(초대 코드 칸이 섰다) — 자유 가입판이면 가입 칸이 있는 첫 화면으로 다시 그린다
-  if (S.edition + '|' + S.google !== was) { draw(mainForms()); tell('출입 열쇠를 넘겼습니다 — 다시 한 번 눌러 주세요'); return false; }
+  if (S.edition + '|' + S.google + '|' + S.name !== was) { draw(mainForms()); tell('출입 열쇠를 넘겼습니다 — 다시 한 번 눌러 주세요'); return false; }
   return true;
 }
 
@@ -282,7 +286,7 @@ function draw(form) {
   for (const el of root.querySelectorAll('input[id]')) if (el.type !== 'hidden' && el.value !== el.defaultValue) keep[el.id] = el.value;
   root.textContent = '';
   root.appendChild(h('div', { class: 'body', style: 'max-width:380px;margin:0 auto;padding-top:12vh;padding-bottom:40px' },
-    h('div', { class: 'top-name', style: 'font-size:30px;margin-bottom:24px', text: '스토리 엔진' }), form));
+    h('div', { class: 'top-name', style: 'font-size:30px;margin-bottom:24px', text: appName() }), form));
   for (const [id, v] of Object.entries(keep)) {
     const el = $(id);
     if (!el) continue;
@@ -299,6 +303,7 @@ function draw(form) {
   S.gate = st.code === 'gate';
   S.edition = st.edition === 'open' ? 'open' : 'school';
   S.google = !!st.google;
+  nameFrom(st);
   // 링크로 왔으면(초대 링크 · 재설정 링크) 코드를 채워 둔다 — 주소창에서는 지운다(뒤에 남는 화면 · 스크린샷에 코드가 덜 보이게)
   const q = new URLSearchParams(location.search);
   const linkInvite = q.get('invite') || ''; const linkReset = q.get('reset') || ''; const linkId = q.get('id') || '';

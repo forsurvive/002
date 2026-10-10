@@ -75,7 +75,7 @@ erDiagram
 
 | 테이블 | 열 | 지금 JSON 에서 |
 |---|---|---|
-| `projects` | id · owner_user_id · organization_id(NULL=개인) · class_id(NULL) · name · spec jsonb{outline,form,length} · standard · request · model_policy jsonb{provider,tier} · no_count · agent_kind · workflow_template_id · legacy_id · created_at · updated_at · deleted_at | `name` `spec` `standard` `request` `model`→model_policy `noCount` `agents.__kind` |
+| `projects` | id · owner_user_id · organization_id(NULL=개인) · class_id(NULL) · name · spec jsonb{outline,form,length} · standard · request · model_policy jsonb{provider,tier} · no_count · agent_kind · workflow_template_id · workflow jsonb(005 — 흐름 설정 · `template` 은 그 작품의 단계 템플릿 열쇠, 없으면 `story_creation` · 전자책 오토가 만든 책은 `ebook`) · legacy_id · created_at · updated_at · deleted_at | `name` `spec` `standard` `request` `model`→model_policy `noCount` `agents.__kind` |
 | `project_members` | project_id · user_id · role(`owner`/`editor`/`viewer`) · created_at | 공동 작업은 후속. 강사의 열람은 수업 멤버십으로 판정 |
 | `categories` | id · project_id · name · sort_order · created_at · deleted_at · legacy_id | `categories[]` · 휴지통의 category 항목 |
 | `documents` | id · project_id · organization_id · kind(`doc`/`check`/`review`) · category_id · orphan_from_category_id · title · current_version_id · is_final · finalized_at · finalized_by · request · is_material · src · workflow_stage_id · generated_by_run_id · approved_at · approved_by · row_version · created_at · updated_at · deleted_at · deleted_by · purged_at · legacy_id | `docs[]` (`material` → is_material, `orphanFrom` → orphan_from_category_id) |

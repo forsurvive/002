@@ -12,6 +12,8 @@ try { if (localStorage.getItem('se-theme') === 'light') document.documentElement
 // 학생에게 비용 · 횟수 · 키를 보이지 않는다. 초대 코드는 만든 그 자리에서 한 번만 보인다.
 
 const PAGE = ['manage', 'account'].includes(document.body.dataset.page) ? document.body.dataset.page : 'school';
+// 앱 이름은 서버가 준다(me.memberships 의 appName — 전자책 오토 · 스토리 엔진). 탭 제목 · 보내는 링크의 제목에 쓴다.
+const appName = () => (S.me && S.me.appName) || '스토리 엔진';
 const S = { me: null, loggedIn: false, orgs: {}, progress: {}, shown: {}, say: '', open: {}, usage: {}, members: {}, wf: {}, wfOpen: {}, invites: {} };
 
 // 브라우저 자동 채움 막기 — 크롬은 autocomplete="off" 를 무시하고 저장된 로그인 아이디를 아무 칸에나 넣는다(2026-10-06 워크스페이스 칸에 아이디가 들어간 일).
@@ -89,6 +91,7 @@ async function load() {
   S.loggedIn = m.ok === true;
   S.me = m.ok ? m : null;
   S.edition = (m.ok && m.edition) || 'school';
+  if (S.me && S.me.appName) document.title = document.title.replace('스토리 엔진', S.me.appName);
   S.orgs = {};
   const gb = S.me && GOOGLE_SAY[S.googleBack];
   if (gb) { S.say = gb[1] + (S.googleBack === 'new' ? ' — 아이디 ' + S.me.loginId + ' · 비밀번호 없이 구글로 들어옵니다' : ''); S.sayGood = gb[0]; S.fresh = gb[0]; }
@@ -239,7 +242,7 @@ const codeBox = (key, note) => {
     who ? h('div', { class: 'lab', style: 'margin-bottom:4px;color:var(--ink);font-weight:700', text: who }) : null,
     h('div', { class: 'line' },
       h('div', { class: 'mark', style: 'font-size:13px;padding:6px 10px;word-break:break-all;white-space:normal', text: inviteUrl(code) }),
-      linkBtns(inviteUrl(code), '스토리 엔진 ' + (who || '초대')), hideBtn(key)),
+      linkBtns(inviteUrl(code), appName() + ' ' + (who || '초대')), hideBtn(key)),
     h('div', { class: 'when', text: note || '받은 사람이 누르면 ' + ((typeof v === 'object' && ROLE_SAY[v.role]) || '') + ' 계정 만들기 화면이 열립니다(코드 ' + code + ') · 닫아도 «초대 링크 목록»에서 다시 볼 수 있고, 못 쓰게 하려면 거기서 [취소]' }));
 };
 // [닫기] — 화면에서 접기만 한다(링크 · 계정은 그대로). 링크를 못 쓰게 하려면 «초대 링크 목록»의 [취소].
@@ -281,7 +284,7 @@ function inviteList(key, orgId, classId) {
   return h('div', { style: 'width:100%' }, btn,
     rows.length ? rows.map((x) => h('div', { class: 'row', style: 'cursor:default' },
       h('div', { class: 'name', style: 'font-weight:600', text: (ROLE_SAY[x.role] || x.role) + '용 초대 링크' + (x.className ? ' · ' + x.className : '') }),
-      x.code ? linkBtns(inviteUrl(x.code), '스토리 엔진 초대') : h('span', { class: 'when', text: '(다시 보일 수 없는 옛 초대)' }),
+      x.code ? linkBtns(inviteUrl(x.code), appName() + ' 초대') : h('span', { class: 'when', text: '(다시 보일 수 없는 옛 초대)' }),
       x.code ? h('span', { class: 'when', text: '코드 ' + x.code }) : null,
       h('span', { class: 'mark', text: x.used + ' / ' + x.max + '명' }),
       h('div', { class: 'when', text: '~ ' + day(x.expiresAt) + (x.madeBy ? ' · ' + x.madeBy : '') }),
@@ -975,7 +978,7 @@ async function giveResetCode(orgId, m, after) {
 }
 const resetLine = (code, loginId) => (code ? h('div', { class: 'line', style: 'margin-top:6px' },
   h('div', { class: 'mark', style: 'font-size:14px;padding:4px 8px', text: code }), copyBtn(code),
-  linkBtns(resetUrl(code, loginId), '스토리 엔진 비밀번호 재설정'),
+  linkBtns(resetUrl(code, loginId), appName() + ' 비밀번호 재설정'),
   h('div', { class: 'when', text: '재설정 코드(7일 · 한 번) — 링크는 그 사람에게만 1:1로 보내세요(단체방에 올리지 않습니다)' })) : null);
 
 function membersBox(orgId, { fixed = false } = {}) {
@@ -1286,7 +1289,7 @@ function customerDetail(d) {
       } }),
       u.operator ? null : h('button', { class: 'btn-text', text: '비밀번호 재설정 코드', onclick: resetCode })),
     codeBox('mk-reset-' + u.userId, '본인에게만 1:1로 보내세요 · 7일 · 한 번'),
-    S.shown['mk-reset-' + u.userId] && S.bill.cust.resetLink ? h('div', { class: 'line' }, linkBtns(S.bill.cust.resetLink, '스토리 엔진 비밀번호 재설정')) : null,
+    S.shown['mk-reset-' + u.userId] && S.bill.cust.resetLink ? h('div', { class: 'line' }, linkBtns(S.bill.cust.resetLink, appName() + ' 비밀번호 재설정')) : null,
     h('div', { class: 'lab', text: '메모(운영자만 봅니다)' }),
     h('textarea', { id: k + '-memo', placeholder: '이 고객에 대한 메모' }),
     h('div', { class: 'line', style: 'margin-top:6px' }, h('button', { class: 'btn-line', text: '메모 저장', onclick: async () => {
