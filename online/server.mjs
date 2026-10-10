@@ -29,7 +29,7 @@ import { createJobQueue } from './jobs.mjs';
 import { createTenancy, SAY } from './tenancy.mjs';
 import { createEdu } from './edu.mjs';
 import { editionOf } from './edition.mjs';
-import { purposeOf, purposeName } from './purpose.mjs';
+import { purposeOf, purposeName, purposeTemplate } from './purpose.mjs';
 import { createBilling, passActive } from './billing/service.mjs';
 import { googleConfig, freshStart, authorizeUrl, exchangeCode, readIdToken, loginIdFrom, STATE_MINUTES, CALLBACK_PATH } from './google.mjs';
 import { createWorkflowSource } from './workflow.mjs';
@@ -88,7 +88,7 @@ export function onlinePlan(env = process.env) {
 }
 
 // 온라인판에서 문 표에 넣는 것 — 저장은 PostgreSQL, 작업은 영속 큐(online/jobs.mjs), 과금 갈래는 화면에 없다.
-function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs = null, pool = null } = {}) {
+function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs = null, pool = null, templateKey = '' } = {}) {
   const by = { userId: user.id };
   const state = {
     // 작업 줄은 jobs 표가 맡는다 — 덩어리에 싣지 않고 읽을 때 붙인다(화면은 개인판과 같은 p.jobs 를 본다)
@@ -156,6 +156,7 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
   } : null;
   return {
     importProject: importOne,
+    templateKey,   // 새 작품의 단계 템플릿 — 앱의 용도가 정한다(전자책 오토는 ebook)
     who: () => user.loginId || '',   // 단계 승인에 «누가»를 남긴다
     state, jobs, engine: pick, auth: { view, write: view }, limit: () => null,
     // 단계 흐름 — 템플릿은 운영자 · 기관이 고쳐 쓴 것까지. 강의 카드는 기관 프로젝트면 기관 설정(기본 켬), 개인 프로젝트면 그 사람의 설정(기본 끔).
@@ -183,6 +184,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
   const store = createProjectStore(pool);
   const edition = plan.edition || 'school';
   const purpose = plan.purpose || 'novel';
+  const templateKey = purposeTemplate(purpose);   // 새 작품(책)의 단계 템플릿
   // 구글 로그인(자유 가입판만) — Secrets 에 GOOGLE_CLIENT_ID · GOOGLE_CLIENT_SECRET 이 둘 다 있을 때만 선다(docs/OPEN_EDITION.md §4-9)
   const gcfg = edition !== 'open' ? null : google !== undefined ? google : googleConfig(process.env);
   // 이용권(자유 가입판만) — 웹훅 시크릿은 Secrets 의 GROBLE_WEBHOOK_SECRET(교체 중이면 GROBLE_WEBHOOK_SECRET_PREVIOUS 도). 코드 · Git · 로그 · 응답에 두지 않는다.
@@ -192,7 +194,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
     ? createBilling({ pool, secrets: () => [process.env.GROBLE_WEBHOOK_SECRET, process.env.GROBLE_WEBHOOK_SECRET_PREVIOUS], log: (m) => console.log('  [billing] ' + m),
       siteUrl: site ? 'https://' + site : '' }) : null;
   const tenancy = createTenancy(pool, { edition });
-  const wfs = createWorkflowSource(pool);
+  const wfs = createWorkflowSource(pool, { defaultKey: templateKey });
   const edu = createEdu({ pool, credentials, wfs, keyTester, subscription, codeKeys, recoveryCode: plan.recoveryCode || '', edition, billing: bill, google: !!gcfg, purpose });
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
 
@@ -616,7 +618,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
           place = await tenancy.canCreateInClass(user, body.classId);
           if (!place.ok) return json(res, place.reason === 'missing' ? 404 : 403, bad(SAY[place.reason] || NOT_FOUND, place.reason));
         }
-        const { OPS } = createOps(depsFor(store, queue, worker, user, { tenancy, place, wfs, pool }));
+        const { OPS } = createOps(depsFor(store, queue, worker, user, { tenancy, place, wfs, pool, templateKey }));
         const fn = OPS[op];
         if (!fn) return json(res, 404, bad('그런 문이 없습니다: ' + op));
         if (!NO_PID.has(op)) {
@@ -659,7 +661,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const etag = await fingerprint(user, pid);
         const cache = { etag, 'cache-control': 'private, no-cache' };
         if (etag && req.headers['if-none-match'] === etag) return send(res, 304, '', 'application/json; charset=utf-8', cache);
-        const { stateOf } = createOps(depsFor(store, queue, worker, user, { tenancy, wfs, pool }));
+        const { stateOf } = createOps(depsFor(store, queue, worker, user, { tenancy, wfs, pool, templateKey }));
         const projects = await store.listFor(user.id);
         if (!pid) return json(res, 200, { ok: true, projects, me: await withRoles() }, cache);
         const acc = await tenancy.access(user, pid);
@@ -692,13 +694,13 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       // 작품 가져오기 — 몸통이 커서 따로 연 문(위에서 로그인한 사람만 크게 받았다). 하는 일은 op 'project.import' 와 같다.
       if (req.method === 'POST' && url.pathname === '/api/import') {
         if (!user) return json(res, 401, bad('로그인이 필요합니다', 'login'));
-        const { OPS } = createOps(depsFor(store, queue, worker, user, { tenancy, wfs, pool }));
+        const { OPS } = createOps(depsFor(store, queue, worker, user, { tenancy, wfs, pool, templateKey }));
         return json(res, 200, await OPS['project.import'](body));   // 감사 기록(project.import)은 importProject 가 남긴다
       }
 
       if (req.method === 'GET' && url.pathname === '/api/download') {
         const pid = url.searchParams.get('pid');
-        const { downloadOf } = createOps(depsFor(store, queue, worker, user, { tenancy, wfs, pool }));
+        const { downloadOf } = createOps(depsFor(store, queue, worker, user, { tenancy, wfs, pool, templateKey }));
         const d = (await canRead(user, pid)) ? await downloadOf(pid, url.searchParams.get('kind'), url.searchParams.get('id'), url.searchParams.get('fmt') === 'txt' ? 'txt' : 'md') : null;
         if (!d) return send(res, 404, '없음', 'text/plain; charset=utf-8');
         return send(res, 200, d.text, d.type || 'text/markdown; charset=utf-8', {

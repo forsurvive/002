@@ -60,10 +60,14 @@ export function createOps(d) {
       if (miss.length) return bad('필수 항목 누락 — ' + miss.join(' · '));
       if (materials.some((m) => binary(m.text))) return bad(NOT_TEXT);
       const p = await state.create({ name, spec, standard: b.standard, request: b.request, materials });
+      // 앱의 용도가 정한 단계 템플릿(전자책 오토 — ebook). 이야기 만들기(기본)는 적지 않는다 — 지금까지의 작품과 같은 꼴
+      const tpl = d.templateKey && d.templateKey !== 'story_creation' ? String(d.templateKey) : '';
       // 작법서를 문서로 세워 둔다 — 본문은 베끼지 않고 가리키기만 한다. 걸고 싶을 때 참조로 걸고, 필요 없으면 지운다.
       const books = bookList();
-      if (books.length) {
+      if (books.length || tpl) {
         await state.update(p.id, (pr) => {
+          if (tpl) pr.workflow = { ...(pr.workflow || {}), template: tpl };
+          if (!books.length) return;
           const cat = model.categoryCreate(pr, BOOK_CATEGORY);
           for (const bk of books) model.docCreate(pr, { title: bk.title, src: bk.src, categoryId: cat.id });
         });
