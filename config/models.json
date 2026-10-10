@@ -1,6 +1,6 @@
 {
   "_note": "운영 카탈로그. 화면은 High Reasoning / Balanced / Fast 만 보이고, 실제 model id 와 가격(백만 토큰당 USD)은 여기에만 둔다. 모델이 바뀌면 이 파일만 고친다. Claude: 2026-10-04 Anthropic 공식 표. Gemini: 2026-10-05 ai.google.dev 공식 모델 · 가격 표(3.8 Flash 값은 2026-12-31 까지 — 2027-01-01 부터 입력 1.5 · 출력 7.5 · 캐시 0.15). ChatGPT(OpenAI): 모델 id 는 OpenAI 공식 SDK(openai-node shared.ts)로 확인, 가격은 공식 페이지에 닿을 수 없어 2차 자료 기준(2026-10-05) — 운영자가 OpenAI 가격 표와 맞춰 볼 것.",
-  "_limits_note": "contextTokens(문맥 — 입력과 출력을 합친 창) · maxOutputTokens(한 번에 받는 출력 상한)는 긴 글 조치(docs/EBOOK_EDITION.md §5-1)가 쓴다. Claude 는 2026-10-10 Anthropic 공식 모델 표(Opus 5.5 · Sonnet 5.5 — 1M / 128K, Haiku 4.5 — 200K / 64K). 확인하지 못한 회사 · 모델은 contextTokens 를 비워 둔다(사전 검사 없이 회사의 «너무 길다» 답으로 나눠 읽는다). 출력 상한에 닿으면 이어 쓴다.",
+  "_limits_note": "우리 쪽에서 성능을 줄이는 상한은 두지 않는다(2026-10-10 사용자 지시 «성능을 최대한»). maxOutputTokens 는 그 모델이 허락하는 최대치 — Claude 는 API 가 이 값을 반드시 받으므로 공식 표의 최대치(Opus 5.5 · Sonnet 5.5 128K, Haiku 4.5 64K, 2026-10-10), 0 이면 보내지 않아 모델이 제 최대치까지 쓴다(OpenAI · Gemini). 입력은 늘 통째로 먼저 보내고, 회사가 «한 번에 못 받는다»고 답할 때만 나눠 읽는다. 출력이 한도에 닿으면 끊긴 자리부터 이어 쓴다(docs/EBOOK_EDITION.md §5-1).",
   "aliases": {
     "opus": "high_reasoning",
     "sonnet": "balanced",
@@ -13,7 +13,6 @@
       "tier": "high_reasoning",
       "modelId": "claude-opus-5-5",
       "displayName": "Claude Opus 5.5",
-      "contextTokens": 1000000,
       "maxOutputTokens": 128000,
       "price": {
         "inputPerMTok": 4,
@@ -27,7 +26,6 @@
       "tier": "balanced",
       "modelId": "claude-sonnet-5-5",
       "displayName": "Claude Sonnet 5.5",
-      "contextTokens": 1000000,
       "maxOutputTokens": 128000,
       "price": {
         "inputPerMTok": 2,
@@ -41,7 +39,6 @@
       "tier": "fast",
       "modelId": "claude-haiku-4-5",
       "displayName": "Claude Haiku 4.5",
-      "contextTokens": 200000,
       "maxOutputTokens": 64000,
       "price": {
         "inputPerMTok": 1,
@@ -55,7 +52,7 @@
       "tier": "high_reasoning",
       "modelId": "gpt-5.5",
       "displayName": "GPT-5.5",
-      "maxOutputTokens": 32000,
+      "maxOutputTokens": 0,
       "price": {
         "inputPerMTok": 5,
         "outputPerMTok": 30,
@@ -67,7 +64,7 @@
       "tier": "balanced",
       "modelId": "gpt-5.4-mini",
       "displayName": "GPT-5.4 mini",
-      "maxOutputTokens": 32000,
+      "maxOutputTokens": 0,
       "price": {
         "inputPerMTok": 0.75,
         "outputPerMTok": 4.5,
@@ -79,7 +76,7 @@
       "tier": "fast",
       "modelId": "gpt-5.4-nano",
       "displayName": "GPT-5.4 nano",
-      "maxOutputTokens": 16000,
+      "maxOutputTokens": 0,
       "price": {
         "inputPerMTok": 0.2,
         "outputPerMTok": 1.25,
@@ -91,7 +88,7 @@
       "tier": "high_reasoning",
       "modelId": "gemini-3.1-pro-preview",
       "displayName": "Gemini 3.1 Pro (Preview)",
-      "maxOutputTokens": 32000,
+      "maxOutputTokens": 0,
       "price": {
         "inputPerMTok": 2,
         "outputPerMTok": 12,
@@ -103,7 +100,7 @@
       "tier": "balanced",
       "modelId": "gemini-3.8-flash",
       "displayName": "Gemini 3.8 Flash",
-      "maxOutputTokens": 32000,
+      "maxOutputTokens": 0,
       "price": {
         "inputPerMTok": 0.75,
         "outputPerMTok": 3.75,
@@ -115,7 +112,7 @@
       "tier": "fast",
       "modelId": "gemini-3.5-flash-lite",
       "displayName": "Gemini 3.5 Flash-Lite",
-      "maxOutputTokens": 16000,
+      "maxOutputTokens": 0,
       "price": {
         "inputPerMTok": 0.3,
         "outputPerMTok": 2.5,

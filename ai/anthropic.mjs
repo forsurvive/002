@@ -13,7 +13,8 @@ import { success, failure, usageOf } from './provider.mjs';
 import { sseEvents, retryAfterOf, netDetail, SAY } from './http.mjs';
 
 export const ANTHROPIC_VERSION = '2023-06-01';
-export const DEFAULT_MAX_OUTPUT = 32000;
+// max_tokens 는 Messages API 가 반드시 받는다 — 카탈로그가 적은 그 모델의 최대치를 보낸다. 카탈로그에 없을 때만 이 값(지금 Claude 의 최대 출력)
+export const DEFAULT_MAX_OUTPUT = 128000;
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 
 // HTTP 상태 + 오류 종류 → 갈래

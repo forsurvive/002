@@ -10,7 +10,7 @@
 import { success, failure, usageOf } from './provider.mjs';
 import { sseEvents, deadline, retryAfterOf, headerOf, SAY } from './http.mjs';
 
-export const DEFAULT_MAX_OUTPUT = 32000;
+// 출력 상한 — 카탈로그가 적은 값(그 모델의 최대치)만 보낸다. 0 이면 보내지 않는다(모델이 제 최대치까지 쓴다 — 우리가 줄이지 않는다).
 
 export function reasonOf(status, code = '', message = '') {
   const c = String(code || '');
@@ -47,7 +47,7 @@ export function createOpenAIProvider({ baseUrl = 'https://api.openai.com', fetch
         model,
         ...(String(systemPrompt).trim() ? { instructions: String(systemPrompt) } : {}),
         input: String(userPrompt),
-        max_output_tokens: Number(maxOutputTokens) || DEFAULT_MAX_OUTPUT,
+        ...(Number(maxOutputTokens) > 0 ? { max_output_tokens: Number(maxOutputTokens) } : {}),
         stream: true,
         store: false,
         ...(temperature == null ? {} : { temperature: Number(temperature) }),

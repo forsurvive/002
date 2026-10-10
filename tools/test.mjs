@@ -2585,6 +2585,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     && lastReq.body.messages[0].role === 'user' && lastReq.body.messages[0].content.includes('써라'));
   mode = 'length'; ar = await ask();
   ok('출력 상한에 닿으면 성공이되 잘림을 남긴다', ar.ok && ar.finishReason === 'length');
+  eq('**Claude: 카탈로그가 적지 않았으면 max_tokens 는 지금 Claude 의 최대 출력(API 가 반드시 받는 값)**', lastReq.body.max_tokens, 128000);
   mode = 'refusal'; eq('거절은 safety', (await ask()).reason, 'safety');
   mode = 'midError'; eq('스트림 중간 오류도 갈래로', (await ask()).reason, 'overloaded');
   mode = 'auth'; ar = await ask();
@@ -2667,6 +2668,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('OpenAI: 요청 모양 — Responses · Bearer · instructions/input · 상한 · 스트림 · 보관 안 함', oreq.url === '/v1/responses' && oreq.headers.authorization === 'Bearer ' + FAKE_KEY
     && oreq.body.instructions === '체계' && oreq.body.input === '써라' && oreq.body.max_output_tokens === 700 && oreq.body.stream === true && oreq.body.store === false && !('temperature' in oreq.body));
   om = 'length'; orr = await oAsk(); ok('OpenAI: 상한에 닿으면 잘림을 남긴다', orr.ok && orr.finishReason === 'length' && orr.text === '잘린');
+  ok('**OpenAI: 출력 상한을 적지 않으면 보내지 않는다(모델이 제 최대치까지 — 우리가 줄이지 않는다)**', !('max_output_tokens' in oreq.body));
   om = 'filter'; eq('OpenAI: 내용 필터는 safety', (await oAsk()).reason, 'safety');
   om = 'failed'; eq('OpenAI: 응답 실패는 overloaded', (await oAsk()).reason, 'overloaded');
   om = 'auth'; orr = await oAsk(); ok('**OpenAI: 키가 틀리면 auth — 결과에 키가 없다**', orr.reason === 'auth' && !JSON.stringify(orr).includes(FAKE_KEY));
@@ -2712,6 +2714,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     && greq.headers['x-goog-api-key'] === FAKE_KEY && !greq.url.includes(FAKE_KEY) && greq.body.systemInstruction.parts[0].text === '체계'
     && greq.body.contents[0].role === 'user' && greq.body.contents[0].parts[0].text === '써라' && greq.body.generationConfig.maxOutputTokens === 600);
   gm = 'length'; gr = await gAsk(); ok('Gemini: MAX_TOKENS 는 잘림', gr.ok && gr.finishReason === 'length');
+  ok('**Gemini: 출력 상한을 적지 않으면 보내지 않는다(모델이 제 최대치까지)**', !('maxOutputTokens' in greq.body.generationConfig));
   gm = 'safety'; eq('Gemini: SAFETY 로 멈추면 safety', (await gAsk()).reason, 'safety');
   gm = 'blocked'; eq('Gemini: 프롬프트가 막히면 safety', (await gAsk()).reason, 'safety');
   gm = 'badkey'; gr = await gAsk(); ok('**Gemini: 키가 틀리면 auth(400 이어도) — 결과에 키가 없다**', gr.reason === 'auth' && !JSON.stringify(gr).includes(FAKE_KEY));
@@ -2744,8 +2747,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     { provider: 'google', tier: 'balanced', modelId: 'gem-old', active: false },
   ]);
   ok('카탈로그가 찾아 준다', C1.resolve('anthropic', 'balanced').modelId === 'claude-test-b' && C1.resolve('google', 'balanced') === null);
-  ok('문맥 크기(contextTokens)를 남긴다 — 적지 않으면 0(모름)', cat.createCatalog([{ provider: 'anthropic', tier: 'fast', modelId: 'c-f', contextTokens: 200000, maxOutputTokens: 64000 }]).resolve('anthropic', 'fast').contextTokens === 200000
-    && C1.resolve('anthropic', 'balanced').contextTokens === 0);
+  ok('카탈로그에는 우리 쪽 문맥 상한이 없다(2026-10-10 «이런 걸 설정하면 안돼») — 출력 상한은 그 모델의 최대치만', !('contextTokens' in cat.createCatalog([{ provider: 'anthropic', tier: 'fast', modelId: 'c-f', contextTokens: 200000, maxOutputTokens: 64000 }]).resolve('anthropic', 'fast'))
+    && C1.resolve('anthropic', 'balanced').maxOutputTokens === 9000);
   ok('틀린 줄은 문제로 적는다(겹침 · 모르는 provider)', C1.problems.length === 2, C1.problems.join(' / '));
   ok('**화면에 내보내는 선택지에는 model id 가 없다**', C1.choices().every((c) => !JSON.stringify(c).includes('test-')) && C1.choices().length === 2);
   ok('허락된 것만 보인다', C1.choices({ providers: ['openai'] }).length === 1);

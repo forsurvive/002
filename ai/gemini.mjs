@@ -9,7 +9,7 @@
 import { success, failure, usageOf } from './provider.mjs';
 import { sseEvents, deadline, retryAfterOf, headerOf, SAY } from './http.mjs';
 
-export const DEFAULT_MAX_OUTPUT = 32000;
+// 출력 상한 — 카탈로그가 적은 값(그 모델의 최대치)만 보낸다. 0 이면 보내지 않는다(모델이 제 최대치까지 쓴다 — 우리가 줄이지 않는다).
 const SAFETY_STOPS = new Set(['SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'LANGUAGE']);
 
 export function reasonOf(status, apiStatus = '', message = '') {
@@ -41,7 +41,7 @@ export function createGeminiProvider({ baseUrl = 'https://generativelanguage.goo
         ...(String(systemPrompt).trim() ? { systemInstruction: { parts: [{ text: String(systemPrompt) }] } } : {}),
         contents: [{ role: 'user', parts: [{ text: String(userPrompt) }] }],
         generationConfig: {
-          maxOutputTokens: Number(maxOutputTokens) || DEFAULT_MAX_OUTPUT,
+          ...(Number(maxOutputTokens) > 0 ? { maxOutputTokens: Number(maxOutputTokens) } : {}),
           ...(temperature == null ? {} : { temperature: Number(temperature) }),
         },
       };

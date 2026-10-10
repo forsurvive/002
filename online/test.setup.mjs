@@ -186,10 +186,11 @@ export async function run({ pool, ok, eq }) {
     ok('세 tier 가 다 있다(Anthropic)', ['high_reasoning', 'balanced', 'fast'].every((t) => c.catalog.resolve('anthropic', t)));
     ok('개인판 별칭이 tier 로 이어진다', c.aliasTiers && c.aliasTiers.opus === 'high_reasoning' && c.aliasTiers.sonnet === 'balanced');
     ok('가격이 있어 비용을 추정한다', c.catalog.entries().every((e) => e.price && e.price.inputPerMTok > 0 && e.price.outputPerMTok > 0));
-    // 긴 글(EBOOK_EDITION §5-1) — Claude 는 문맥 · 출력 상한을 공식 표대로(Opus 5.5 · Sonnet 5.5 1M / 128K, Haiku 4.5 200K / 64K)
+    // 성능을 줄이는 우리 쪽 상한은 없다(2026-10-10) — Claude 는 API 가 반드시 받는 max_tokens 를 그 모델의 최대치로(Opus 5.5 · Sonnet 5.5 128K, Haiku 4.5 64K),
+    // OpenAI · Gemini 는 0(보내지 않음 — 모델이 제 최대치까지)
     const hi = c.catalog.resolve('anthropic', 'high_reasoning'); const mid = c.catalog.resolve('anthropic', 'balanced'); const lo = c.catalog.resolve('anthropic', 'fast');
-    ok('**Claude 의 문맥 · 출력 상한이 카탈로그에 있다**', hi.contextTokens === 1000000 && hi.maxOutputTokens === 128000 && mid.contextTokens === 1000000 && mid.maxOutputTokens === 128000
-      && lo.contextTokens === 200000 && lo.maxOutputTokens === 64000, JSON.stringify([hi, mid, lo].map((e) => [e.contextTokens, e.maxOutputTokens])));
-    ok('출력 상한은 문맥보다 작다(적혀 있는 것만)', c.catalog.entries().every((e) => !e.contextTokens || e.maxOutputTokens < e.contextTokens));
+    ok('**Claude 의 출력 상한은 그 모델의 최대치**', hi.maxOutputTokens === 128000 && mid.maxOutputTokens === 128000 && lo.maxOutputTokens === 64000, JSON.stringify([hi, mid, lo].map((e) => e.maxOutputTokens)));
+    ok('**OpenAI · Gemini 에는 출력 상한을 적지 않는다(보내지 않음)**', c.catalog.entries().filter((e) => e.provider !== 'anthropic').every((e) => e.maxOutputTokens === 0));
+    ok('카탈로그에 문맥 상한이 없다', c.catalog.entries().every((e) => !('contextTokens' in e)));
   }
 }
