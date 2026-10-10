@@ -2146,6 +2146,33 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('단계마다 기본 등급이 데이터로 있다(기획 · 플롯은 High Reasoning, 분석은 Fast)', wf.stageOf(tpl, 'outline').tier === 'high_reasoning' && wf.stageOf(tpl, 'study').tier === 'fast' && wf.stageOf(tpl, 'world').tier === 'balanced');
   ok('기본 등급도 고쳐 쓴다 — 모르는 등급 · 입력 단계는 버린다', wf.cleanOverride(tpl, 'world', { tier: 'fast' }).tier === 'fast'
     && !('tier' in wf.cleanOverride(tpl, 'world', { tier: 'opus' })) && !('tier' in wf.cleanOverride(tpl, 'spec', { tier: 'fast' })));
+
+  // 전자책 단계(docs/EBOOK_EDITION.md) — 같은 단계 기능 위에 데이터만 다르다. 완전 수동으로도 끝까지 간다.
+  const eb = JSON.parse(src(join(ROOT, 'config', 'workflows', 'ebook.json')));
+  const ve = wf.validateTemplate(eb);
+  ok('전자책 템플릿이 쓸 수 있는 꼴이다(8단계 · 9포지션)', ve.ok && eb.key === 'ebook' && eb.stages.length === 8 && eb.positions.length === 9, ve.problems.join(' / '));
+  ok('전자책 단계 차례 — 의뢰 · 분석 · 설계 · 목차 · 장 · 전권 검토 · 서문 · 완성', eb.stages.map((x) => x.key).join() === 'brief,study,design,toc,chapters,review,preface,finish');
+  ok('만들 글이 있는 단계는 모두 맡을 포지션 · 할 일 · 카드가 있다', eb.stages.filter((x) => x.output !== 'input' && x.output !== 'final').every((x) => x.position && x.task && x.card && x.card.what));
+  ok('**설계 단계가 분량 · 장 수 · 구성과 그 근거를 정한다(승인 지점)**', /분량/.test(wf.stageOf(eb, 'design').task) && /근거/.test(wf.stageOf(eb, 'design').task) && /장 수/.test(wf.stageOf(eb, 'design').task));
+  ok('**모르는 포지션 · 겹친 포지션 · 이름 없는 포지션은 까닭을 적는다**',
+    wf.validateTemplate({ ...eb, stages: eb.stages.map((x) => (x.key === 'toc' ? { ...x, position: 'NOPE' } : x)) }).problems.some((x) => /unknown position NOPE/.test(x))
+    && !wf.validateTemplate({ ...eb, positions: [...eb.positions, eb.positions[0]] }).ok
+    && !wf.validateTemplate({ ...eb, positions: eb.positions.map((x, i) => (i ? x : { ...x, name: ' ' })) }).ok
+    && !wf.validateTemplate({ ...eb, positions: eb.positions.map((x, i) => (i ? x : { ...x, tier: 'opus' })) }).ok);
+  ok('포지션이 없는 템플릿(이야기 만들기)은 지금처럼', !('positions' in tpl) && v0.ok);
+  const bp = store.blankProject('p_eb', '전자책 시험');
+  bp.spec.form = '실용서';
+  model.materialAdd(bp, '노트', '현장 사례');
+  eq('**장을 고르지 않으면 «몇 장인지»를 묻는다**', wf.startStage(bp, eb, 'chapters').error, '몇 장인지 골라 주세요');
+  const c1 = wf.startStage(bp, eb, 'chapters', { episode: 1 });
+  const c2 = wf.startStage(bp, eb, 'chapters', { episode: 2 });
+  ok('장마다 따로(«1장» · «2장»)', model.findDoc(bp, c1.docId).title === '1장' && model.findDoc(bp, c2.docId).title === '2장');
+  const toc = wf.startStage(bp, eb, 'toc');
+  ok('2장은 목차를 추천하고 다른 장은 걸지 않는다', wf.recommendRefs(bp, eb, 'chapters', 2).includes(toc.docId) && !wf.recommendRefs(bp, eb, 'chapters', 2).includes(c1.docId));
+  const rv = wf.recommendRefs(bp, eb, 'review');
+  ok('**전권 검토는 손댄 장을 모두 추천한다(차례대로)**', rv.includes(c1.docId) && rv.includes(c2.docId) && rv.indexOf(c1.docId) < rv.indexOf(c2.docId) && rv.includes(toc.docId));
+  eq('장 할 일의 {n} 을 채운다', wf.stageTask(wf.stageOf(eb, 'chapters'), 4).startsWith('목차의 4장 카드를 따라 4장 본문'), true);
+  ok('회차 단계가 아닌 단계(목차)의 추천은 지금처럼 장을 걸지 않는다', !wf.recommendRefs(bp, eb, 'toc').includes(c1.docId));
 }
 
 // ---------------------------------------------------------------- Core 는 바깥을 모른다 (온라인화 Phase 1)

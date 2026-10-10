@@ -67,6 +67,18 @@ export async function run({ pool, ok, eq }) {
     eq('모르는 값이 적혀 있어도 이야기 만들기', (await wfs.templateFor(novelPid)).key, 'story_creation');
     await pool.query(`UPDATE projects SET workflow = workflow - 'template' WHERE id = $1`, [novelPid]);
     ok('관리 화면이 고칠 템플릿은 앱의 용도가 정한다(이 앱은 이야기 만들기)', (await wfs.editorView()).key === 'story_creation');
+
+    // ---------------- 작업실이 받는 단계 — 책은 전자책 8단계 · 말은 «장», 작품은 지금처럼 16단계 · «화»
+    const stOf = async (app, pid) => (await app.get('/api/state?pid=' + pid)).project;
+    const bs = await stOf(book, bookPid);
+    ok('**책의 작업실은 전자책 단계(8단계 · 장)를 받는다**', bs.workflow && bs.workflow.stages.length === 8 && bs.workflow.episodeWord === '장' && bs.workflow.title === '전자책 만들기',
+      JSON.stringify(bs.workflow && { n: bs.workflow.stages.length, w: bs.workflow.episodeWord }));
+    ok('책의 첫 걸음(의뢰 · 자료)은 규격과 자료가 있으면 끝', bs.workflow.stages[0].key === 'brief' && bs.workflow.stages[0].status === 'approved');
+    const ns = await stOf(novel, novelPid);
+    ok('작품의 작업실은 지금처럼(16단계 · 화)', ns.workflow.stages.length === 16 && ns.workflow.episodeWord === '화');
+    eq('**장을 고르지 않고 장 집필을 시작하면 «몇 장인지»를 묻는다**', (await book.post('/api', { op: 'stage.start', pid: bookPid, key: 'chapters' })).error, '몇 장인지 골라 주세요');
+    eq('책의 템플릿을 고르면 전자책(관리 화면이 아닌 작품 쪽)', (await createWorkflowSource(pool, { defaultKey: 'ebook' }).templateFor(bookPid)).key, 'ebook');
+    ok('전자책 오토의 관리 화면은 전자책 단계를 고친다', (await createWorkflowSource(pool, { defaultKey: 'ebook' }).editorView()).stages.length === 8);
   } finally {
     for (const s of servers) await new Promise((r) => s.close(r));
   }

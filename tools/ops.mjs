@@ -398,7 +398,7 @@ export function createOps(d) {
         const cards = !!(await cardsOn(p));
         const defs = new Map(t.stages.map((s) => [s.key, s]));
         return {
-          title: t.title, bodyOn, cards,
+          title: t.title, bodyOn, cards, episodeWord: t.episodeWord || '화',   // 회차 단계의 말(전자책 — 장)
           stages: wf.view(p, t, { bodyOn }).map((v) => {
             const s = defs.get(v.key);
             return { ...v, task: wf.stageTask(s, 0), ...(cards && s.card ? { card: s.card } : {}) };

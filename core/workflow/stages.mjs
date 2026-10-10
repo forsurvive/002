@@ -27,6 +27,18 @@ export function validateTemplate(t) {
     for (const k of s.inputs || []) if (!keys.has(k)) problems.push(s.key + ': unknown input ' + k);
     if (s.reviseOf && !keys.has(s.reviseOf)) problems.push(s.key + ': unknown reviseOf ' + s.reviseOf);
   }
+  // 포지션(전자책 오토 — 걸음을 맡을 자리, docs/EBOOK_EDITION.md §4) — 있으면 열쇠 · 이름 · 등급을 보고, 단계가 가리키는 포지션이 있어야 한다
+  const positions = new Set();
+  if (t.positions !== undefined) {
+    if (!Array.isArray(t.positions)) problems.push('positions must be a list');
+    else for (const x of t.positions) {
+      if (!x || !x.key || positions.has(x.key)) { problems.push('position key missing or duplicated: ' + (x && x.key)); continue; }
+      positions.add(x.key);
+      if (!String(x.name || '').trim()) problems.push('position name missing: ' + x.key);
+      if (x.tier !== undefined && !STAGE_TIERS.includes(x.tier)) problems.push('position ' + x.key + ': unknown tier ' + x.tier);
+    }
+  }
+  for (const s of t.stages) if (s.position !== undefined && !positions.has(s.position)) problems.push(s.key + ': unknown position ' + s.position);
   return { ok: problems.length === 0, problems };
 }
 
@@ -34,6 +46,8 @@ export const stageOf = (t, key) => (t.stages || []).find((s) => s.key === key) |
 export const slotKey = (key, episode) => (episode ? key + '#' + Number(episode) : key);
 const epOf = (slot) => { const i = String(slot).indexOf('#'); return i < 0 ? 0 : Number(String(slot).slice(i + 1)) || 0; };
 const stateOf = (p, slot) => (p.stages && p.stages[slot]) || null;
+// 회차 단계의 손댄 회차들(차례대로)
+const episodesOf = (p, key) => Object.keys(p.stages || {}).filter((k) => k.startsWith(key + '#')).map(epOf).filter(Boolean).sort((a, b) => a - b);
 const livingDoc = (p, id) => (id ? model.findDoc(p, id) : null);
 
 export function docTitle(stage, episode) {
@@ -62,8 +76,9 @@ export function recommendRefs(p, t, key, episode = 0) {
   for (const k of s.inputs || []) {
     const inp = stageOf(t, k);
     if (!inp) continue;
-    if (inp.output === 'perEpisode') add(docOf(p, t, k, episode));
-    else add(docOf(p, t, k, 0));
+    if (inp.output !== 'perEpisode') add(docOf(p, t, k, 0));
+    else if (s.output === 'perEpisode') add(docOf(p, t, k, episode));
+    else for (const e of episodesOf(p, k)) add(docOf(p, t, k, e));   // 회차 단계가 아닌 단계(전권 검토)는 손댄 회차를 모두
   }
   if (s.materials) for (const d of model.materialDocs(p)) add(d);
   // 수정 단계에서는 고치는 문서 자신이 «대상»이므로 참조에서 뺀다
@@ -76,8 +91,8 @@ function inputDocs(p, t, s, episode) {
   for (const k of s.inputs || []) {
     const inp = stageOf(t, k);
     if (!inp) continue;
-    const d = docOf(p, t, k, inp.output === 'perEpisode' ? episode : 0);
-    if (d) docs.push(d);
+    const eps = inp.output !== 'perEpisode' ? [0] : s.output === 'perEpisode' ? [episode] : episodesOf(p, k);
+    for (const e of eps) { const d = docOf(p, t, k, e); if (d) docs.push(d); }
   }
   return docs;
 }
@@ -114,7 +129,7 @@ export function view(p, t, { bodyOn = true } = {}) {
     const base = { key: s.key, n: s.n, title: s.title, output: s.output, optional: !!s.optional, off, prevPending };
     if (s.output !== 'perEpisode') return { ...base, ...one(0), refs: recommendRefs(p, t, s.key, 0) };
     // 회차 단계 — 손댄 회차들을 모아 보인다(몇 화까지 갈지는 회차 계획 문서가 정하고, 사람이 회차를 골라 시작한다)
-    const eps = Object.keys(p.stages || {}).filter((k) => k.startsWith(s.key + '#')).map(epOf).filter(Boolean).sort((a, b) => a - b);
+    const eps = episodesOf(p, s.key);
     const episodes = eps.map((e) => ({ episode: e, ...one(e), refs: recommendRefs(p, t, s.key, e) }));
     const done = episodes.filter((e) => e.status === 'approved').length;
     return { ...base, status: episodes.length ? (done === episodes.length ? 'approved' : 'draft') : 'not_started', docId: '', docTitle: '',
@@ -129,7 +144,7 @@ export function startStage(p, t, key, { episode = 0, refIds = null, now = Date.n
   if (!s) return { ok: false, error: '없는 단계입니다' };
   if (s.output === 'input' || s.output === 'final') return { ok: false, error: '이 단계는 만들 글이 없습니다' };
   const ep = s.output === 'perEpisode' ? Math.max(1, Number(episode) || 0) : 0;
-  if (s.output === 'perEpisode' && !Number(episode)) return { ok: false, error: '몇 화인지 골라 주세요' };
+  if (s.output === 'perEpisode' && !Number(episode)) return { ok: false, error: '몇 ' + (t.episodeWord || '화') + '인지 골라 주세요' };
   let d = docOf(p, t, key, ep);
   if (s.output === 'revision' && !d) return { ok: false, error: '고칠 문서가 아직 없습니다 — 앞 단계를 먼저 만들어 주세요' };
   if (!d) {
