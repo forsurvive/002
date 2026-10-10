@@ -2206,6 +2206,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('단계 화면의 회차 말은 템플릿이 정한다(전자책 — 장)', app.includes("const ew = w.episodeWord || '화';") && app.includes("text: '몇 ' + ew") && app.includes('st.episodes.length + ew') && !app.includes("'화 ' + (STAGE_MARK"));
   ok('끌 단계가 없는 템플릿(전자책)에는 «본문 단계» 스위치가 서지 않는다', app.includes('w.stages.some((x) => x.optional) ? ['));
   ok('전자책의 분량 안내는 «책의 설계»가 정한다고', app.includes("'분량은 비워 두면 «책의 설계»에서 AI 가 자료를 보고 정합니다'") && app.includes("'분량은 비워 두면 회차 수를 스스로 정합니다'"));
+  // 긴 글(EBOOK_EDITION §5-1) — 저장이 거절돼도(너무 큼 · 연결) 쓴 글을 잃지 않는다
+  ok('**문서 저장이 거절되면 쓴 글을 칸에 되살리고 까닭을 보인다**', app.includes('Object.assign(S.typed, kept);') && app.includes("'저장하지 못했습니다 — '") && /try \{ r = await api\('doc\.write', body\); \} catch/.test(app));
+  ok('파일로 문서를 만들지 못하면 말없이 지나가지 않는다', app.includes("'파일로 문서를 만들지 못했습니다 — '"));
 }
 
 // ---------------------------------------------------------------- Core 는 바깥을 모른다 (온라인화 Phase 1)

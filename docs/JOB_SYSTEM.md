@@ -105,6 +105,8 @@ RETURNING j.*;
 
 - 호출 시간 상한: 지금과 같은 뜻의 `CALL_TIMEOUT`(기본 30분). 작업 전체 상한: `JOB_MAX_DURATION`(기본 2시간) — 넘으면 `failed(timeout)`.
   → 구현(2026-10-05): `online/worker.mjs` `maxJobMs`(env `JOB_MAX_DURATION_MS`) — 끊고 «작업이 너무 오래 걸려 멈췄습니다», 본문은 그대로.
+  → 바꿈(2026-10-10, EBOOK_EDITION §5-1 «긴 글이 실패하지 않게»): 넘으면 `failed` 가 아니라 **`paused`**(작업 줄 «오래 걸려 잠시 멈췄습니다 — [이어 하기]로 읽은 데부터 잇습니다»).
+    나눠 읽은 조각 · 이어 쓴 글은 체크포인트에 남아 이어 하기가 그 자리부터 잇는다. 본문은 그대로.
 - 취소: `cancel_requested_at` 을 찍으면 worker 가 heartbeat 때 보고 진행 중 HTTP 를 `AbortController` 로 끊는다. 결과는 버리고 문서는 그대로.
 - 일시중지: `pause_requested_at` → worker 는 **돌던 호출을 끝까지 하고**(지금 약속 그대로) 다음 호출 앞(`ctx.gate()`)에서 체크포인트를 저장하고 `paused` 로 내려놓는다. 이어 하기 = `queued`.
 

@@ -122,7 +122,10 @@ export interface AIProvider {
 ## 5. 모델 등급(tier)과 카탈로그
 
 - 화면은 `High Reasoning / Balanced / Fast` 만 안다. 실제 id 는 `model_catalog(provider, tier) → model_id`(관리자가 바꾼다, 부록 E).
-- 카탈로그는 처음에 `ai/models.default.json` 같은 **심는 값**으로 시작해 DB 로 옮긴다. 각 줄에 가격·출력 상한·문맥 길이·활성 여부.
+- 카탈로그는 처음에 `ai/models.default.json` 같은 **심는 값**으로 시작해 DB 로 옮긴다. 각 줄에 가격·출력 상한·활성 여부.
+- (2026-10-10 «성능을 최대한») 우리 쪽에서 성능을 줄이는 상한을 두지 않는다 — 출력 상한은 **그 모델의 최대치**(Claude 는 `max_tokens` 가 필수라 공식 표의 최대치: Opus 5.5 · Sonnet 5.5 128K, Haiku 4.5 64K),
+  0 이면 보내지 않는다(OpenAI · Gemini — 모델이 제 최대치까지). 문맥 길이는 카탈로그에 두지 않는다 — 입력은 늘 통째로 먼저 보내고, 거절의 토큰 수(`fit`)로 넘치는 만큼만 나눠 읽는다.
+- 끊긴 응답(출력 한도 · 문맥 초과 · 시간 초과 · 연결 끊김 · 스트림 중간 오류 · 끝맺음 없이 닫힘)은 받은 글이 있으면 실패가 아니라 `finishReason: 'length'`(+ `cut`)로 돌려준다 — Core 가 이어 쓴다(`core/generation/continue.mjs`).
 - 시나리오 5(명세 부록 Z): 관리자가 «OpenAI Balanced» 의 model id 를 바꿔도 Core·workflow 는 그대로.
 - 개인판의 별칭(`opus`·`sonnet`·`fable`)은 CLI 가 받는 이름이다. 온라인 카탈로그와의 대응은 운영자가 정한다
   (예시 후보 — Anthropic: High Reasoning ← Opus 계열, Balanced ← Sonnet 계열, Fast ← Haiku 계열. `fable` 의 자리는 확인 후 결정).

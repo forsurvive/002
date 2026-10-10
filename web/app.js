@@ -1273,10 +1273,18 @@ function docPanel(close) {
     if ('d-title' in S.typed) body.title = $('d-title').value;
     if ('d-body' in S.typed && $('d-body')) body.body = $('d-body').value;
     if ('d-req' in S.typed) body.request = $('d-req').value;
+    // 저장이 거절되면(너무 큼 · 연결 끊김) 쓴 글을 버리지 않는다 — 친 그대로 칸에 되살리고 까닭을 보인다
+    const kept = Object.fromEntries(['d-title', 'd-body', 'd-req'].filter((k) => k in S.typed).map((k) => [k, S.typed[k]]));
     clearTyped('d-title', 'd-body', 'd-req');
     if (Object.keys(body).length === 1) return;   // 손대지 않았으면 쓰지 않는다
     if (S.open) S.open.fresh = false;             // 한 글자라도 담았으면 갓 만든 것이 아니다
-    const r = await api('doc.write', body);
+    let r = null;
+    try { r = await api('doc.write', body); } catch { r = null; }
+    if (!r || r.ok === false) {
+      Object.assign(S.typed, kept);
+      if (S.open && S.open.id === d.id) { S.open.err = '저장하지 못했습니다 — ' + ((r && r.error) || '연결을 확인해 주세요') + ' · 쓴 글은 칸에 남아 있습니다'; render(); }
+      return;
+    }
     if (S.open && S.open.id === d.id) {
       S.open.baseAt = null;
       if (r && r.conflict) { S.open.err = '그사이 다른 곳에서 고친 글이 있었습니다 — 그 글은 이력(판)에 남아 있습니다'; render(); }
@@ -1650,8 +1658,11 @@ function newDocPanel(close) {
           class: 'btn', text: '생성', onclick: makeDoc,
         }),
         fileButton(async (name, text) => {
-          const r = await api('doc.create', { title: name.replace(/\.[^.]+$/, ''), body: text });
-          if (r.ok) { S.open = { type: 'doc', id: r.id }; render(); }
+          let r = null;
+          try { r = await api('doc.create', { title: name.replace(/\.[^.]+$/, ''), body: text }); } catch { r = null; }
+          if (r && r.ok) { S.open = { type: 'doc', id: r.id }; render(); return; }
+          // 만들지 못했으면 말없이 지나가지 않는다
+          S.open.err = '파일로 문서를 만들지 못했습니다 — ' + ((r && r.error) || '연결을 확인해 주세요'); render();
         }))));
 }
 

@@ -73,7 +73,7 @@ export async function run({ pool, ok, eq }) {
     ok('감싼 콘솔(한 겹)은 문자열 · 오류 모두 가린다', got.length === 2 && !got.some((x) => x.includes(k2) || x.includes(k3)));
   }
 
-  // ---------------- 작업 하나의 상한 — 넘으면 끊고 failed(timeout), 본문은 그대로
+  // ---------------- 작업 하나가 한 번에 도는 시간 — 넘으면 실패가 아니라 «멈춤»(이어 하기로 잇는다), 본문은 그대로(2026-10-10 긴 글이 시간 때문에 실패하지 않게)
   {
     const queue = createJobQueue(pool);
     // 끊길 때까지 돌아오지 않는 부르기
@@ -84,11 +84,11 @@ export async function run({ pool, ok, eq }) {
     await slow.start();
     let row = null;
     for (const end = Date.now() + 5000; Date.now() < end; await sleep(100)) {
-      row = (await pool.query('SELECT status, error_code, error_message_safe FROM jobs WHERE id = $1', [j.jobId])).rows[0];
-      if (row.status === 'failed') break;
+      row = (await pool.query('SELECT status, step, error_code FROM jobs WHERE id = $1', [j.jobId])).rows[0];
+      if (row.status === 'paused') break;
     }
     await slow.stop({ graceMs: 200 });
-    ok('**작업이 상한을 넘으면 끊고 failed(timeout) · 사람 말로**', row.status === 'failed' && row.error_code === 'timeout' && /오래 걸려/.test(row.error_message_safe), JSON.stringify(row));
-    eq('끊겨도 본문은 그대로', (await store.get(pid)).docs.find((x) => x.id === doc2).body, '처음 글');
+    ok('**작업이 오래 걸리면 실패가 아니라 멈춤 — 이어 하기로 잇는다고 사람 말로**', row.status === 'paused' && /오래 걸려/.test(row.step) && /이어 하기/.test(row.step), JSON.stringify(row));
+    eq('멈춰도 본문은 그대로', (await store.get(pid)).docs.find((x) => x.id === doc2).body, '처음 글');
   }
 }

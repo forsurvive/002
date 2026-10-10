@@ -31,7 +31,8 @@ const SAY = {
  */
 export function createWorker({ queue, store, call, prepare = null, allowed = null, workflow = null }, {
   concurrency = Number(process.env.WORKER_CONCURRENCY) || 4, heartbeatMs = 15000, idleMs = 10 * 60 * 1000, leaseMs = LEASE_MS, log = () => {},
-  // 작업 하나의 상한(JOB_SYSTEM §106 — 기본 2시간). 넘으면 끊고 failed(timeout). 문서는 그대로(결과는 새 판으로만 쌓인다).
+  // 작업 하나가 한 번에 도는 시간(JOB_SYSTEM §106 — 기본 2시간). 넘으면 실패로 끝내지 않고 «멈춤»으로 내려놓는다 —
+  // 나눠 읽은 조각 · 이어 쓴 글은 체크포인트에 남아 [이어 하기]가 그 자리부터 잇는다(긴 글이 시간 때문에 실패하지 않게, EBOOK_EDITION §5-1). 문서는 그대로.
   maxJobMs = Number(process.env.JOB_MAX_DURATION_MS) || 2 * 60 * 60 * 1000,
 } = {}) {
   const id = 'w-' + process.pid + '-' + randomBytes(3).toString('hex');
@@ -108,7 +109,10 @@ export function createWorker({ queue, store, call, prepare = null, allowed = nul
     if (lost) return;   // 울타리 밖 — 이미 다른 worker 가 맡았거나 회수됐다. 아무것도 쓰지 않는다.
     if (res === PARK) return queue.park(row.id, id, { status: 'paused' });
     // 이 worker 가 내려가느라 끊은 것 — 취소가 아니다. 곧바로 다시 줄 세운다(다른 worker · 다시 뜬 worker 가 잇는다).
-    if (overdue && !cancelled) return queue.finish(row.id, id, { status: 'failed', errorCode: 'timeout', errorSafe: '작업이 너무 오래 걸려 멈췄습니다 — 나눠서 다시 해 보세요' });
+    if (overdue && !cancelled) {
+      await queue.step(row.id, id, '오래 걸려 잠시 멈췄습니다 — [이어 하기]로 읽은 데부터 잇습니다').catch(() => {});
+      return queue.park(row.id, id, { status: 'paused' });
+    }
     if (stopped && !cancelled) return queue.retryLater(row.id, id, { delayMs: 0, errorCode: 'worker_stopped' });
     if (cancelled || controller.signal.aborted) return queue.finish(row.id, id, { status: 'cancelled' });
     if (res && res.ok !== false) return queue.finish(row.id, id, { status: 'done' });
