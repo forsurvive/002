@@ -128,18 +128,21 @@
 | `POST /api/auth/logout` | 세션 폐기 + 쿠키 지움 |
 | `POST /api/billing/groble` | **자유 가입판에만** — 그로블 정기결제 웹훅(OPEN_EDITION §4-4). 서명(`X-Groble-Signature` · `-Previous`, ±5분)이 문을 지킨다 — 출입 열쇠 · 호스트 이름 · 로그인 · Origin 과 무관. 200 받음(같은 `X-Groble-Idempotency-Key` 는 그대로 200) · 401 서명 · 429 거듭 틀림 · 503 시크릿 없음 · DB 안 됨(다시 보내 달라). 410 은 돌려주지 않는다 |
 | `POST /api/auth/signup` `{ loginId, displayName, password }` | **자유 가입판(`SE_EDITION=open`)에만.** 계정을 만들고 곧바로 쿠키. 409 같은 아이디 · 422 꼴 · 429 고삐(같은 곳에서 15분에 시도 20 · 1시간에 계정 5) · 403 `setup_needed`(처음 설정 전). 교육기관판에는 이 길이 없다(로그인 전 401 · 뒤 404) |
+| `GET /api/auth/google/start[?mode=link]` | **자유 가입판 + Secrets 에 `GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET` 이 둘 다 있을 때만**(아니면 이 길이 없다 — 로그인 전 401). 한 번용 값(state · nonce · PKCE verifier)을 `oauth_states` 에 두고 state 를 `se_oauth` 쿠키(HttpOnly · SameSite=Lax · `Path=/api/auth/google` · 10분)에도 실어 302 로 구글에. `mode=link` 는 로그인한 사람만(아니면 `/login`), 로그인한 사람의 `login` 은 `/` 로. 같은 곳에서 10분에 30번(넘으면 `?google=busy`). OPEN_EDITION §4-9 |
+| `GET /api/auth/google/callback?state&code` | 구글이 돌려보내는 주소(구글 클라우드 «승인된 리디렉션 URI» = `https://<주소>/api/auth/google/callback`). state 줄은 맞든 틀리든 지운다(한 번만) · 쿠키와 같아야 · 10분 안. 서버가 구글과 직접 코드 교환(시크릿 · verifier) → id_token 의 iss · aud · exp · nonce. 결과는 302 로만: 이은 계정 → `/` · 처음 → 새 계정(아이디는 이메일 앞부분, 겹치면 `-2`… · 비밀번호 없음 · 가입 고삐와 처음 설정 전 거절은 가입과 같다) → `/account.html?google=new` · 잇기 → `/account.html?google=linked`. 실패는 `?google=` `state` `expired` `cancel` `failed` `disabled` `setup` `busy` `retry`(로그인 화면) · `already` `taken` `one`(내 계정). **이메일이 같다고 저절로 잇지 않는다** |
 | `GET /api/me` | `{ me: { loginId, displayName } }` |
 | `POST /api` `{ op, pid, … }` | **개인판과 같은 문 표**(`tools/ops.mjs`) · 같은 응답 꼴. 다른 점: pid 가 필요한 문은 «이 사람의 프로젝트»가 아니면 **404**(남의 것 · 지운 것 · 이상한 id 모두 같은 답) · `auth.write` 403 · AI 작업을 여는 문(`doc.update` `thread.send` `thread.edit` `thread.doc`)은 **영속 큐에 넣고 곧바로 `{ ok, jobId }`**(같은 대상에 도는 작업이 있으면 «이미 도는 중») · `job.pause/resume/answer/remove` 는 큐의 손잡이 · `project.create` 는 개인판처럼 에이전트 준비 작업을 곧바로 세운다 · `project.prepare` 는 끊긴 준비를 다시 |
 | `GET /api/state[?pid]` | 개인판과 같은 꼴 + `me`. `project.jobs` 는 jobs 표에서(대기 중은 `status:'running', step:'대기 중'`, 사람의 답을 기다림은 `paused` + `ask.say`). `project.auth` 는 `{ mode:'online', modes:[], hasKey:false }` — 화면이 «무엇으로»(키 칸)를 세우지 않는다 |
 | `GET /api/download` | 개인판과 같다(같은 소유 검사) |
 
 로그인 전 `/api*` 는 401 `{ code:'login' }` → 화면(`web/app.js`)이 `/login` 으로 보낸다. 가입 문은 없다 — 계정은 운영자가 `node online/admin.mjs create-user <아이디>` 로 만든다(SECURITY §7).
+`GET /api/setup`(로그인 전) → `{ needed, code, ai, edition, google }` — 로그인 화면이 처음 설정 · 가입 칸 · [Google 계정으로 계속하기]를 세울 근거(`google` 은 자유 가입판에서 구글 클라이언트가 있을 때만 true).
 
 ### 2-3a. 교육기관판 — `POST /api/edu { op, … }` (online/edu.mjs)
 
 | op | 누가 | 하는 일 |
 |---|---|---|
-| `me.memberships` | 로그인한 사람 | 내 기관(역할) · 수업(역할) |
+| `me.memberships` | 로그인한 사람 | 내 기관(역할) · 수업(역할). 자유 가입판은 `google: {on, linked, email, since}`(구글 로그인이 켜졌나 · 이은 구글 계정) · `noPassword`(구글로 만든 계정 — 비밀번호 없음)도 |
 | `org.create` `{name, slug}` | 플랫폼 관리자 | 기관 만들기 |
 | `org.list` | 플랫폼 관리자(전체) · 기관 관리자(제 기관) | |
 | `org.settings` `{orgId, adminCanReadProjects, studentCards, allowCopy, aiProvider, aiTier}` | 기관 관리자(열람은 최상위만) | 열람 정책 · 강의 카드 · 복사 허용 · 기관 작품의 AI 회사 · 새 수업 작품의 시작 등급(`high_reasoning`/`balanced`) |
@@ -165,11 +168,13 @@
 | `member.create` `{orgId, role, loginId, displayName?, classId?, password?}` | **최상위 관리자만** | 기관 관리자 · 강사 · 학생 계정을 직접 만든다(학생은 수업 · 자리 상한). 비밀번호는 운영자가 정한다(기술 지원용) — 비우면 서버가 지어 응답에 `password`. 봉한 사본을 두어 `org.members` 가 **최상위 관리자에게만** `knownPassword` 로 다시 보인다(본인이 바꾸면 지운다). 기관 관리자 · 강사는 초대 코드로 사람을 부른다(2026-10-05 사용자 결정) |
 | `member.reset_password` `{orgId, userId}` | 기관 관리자(그 기관 — 기관 관리자는 최상위만) · 강사(맡은 수업의 학생만) | 비밀번호를 바꾸지 않고 **재설정 코드**(7일 · 한 번)를 준다 → `{resetCode, days}`. 쓰기 전까지 `org.members` · `class.progress` 에 다시 보인다(봉한 사본). 관리자는 남의 비밀번호를 모른다 |
 | (링크) `/login?invite=코드` · `/login?reset=코드&id=아이디` | 누구나 | 코드를 손으로 옮기지 않게 — 관리 화면의 [링크 복사] · [보내기](휴대폰 공유 창). 초대 링크는 코드가 채워진 «계정 만들기»(이미 로그인했으면 «내 계정 → 새 수업 코드 넣기»로), 재설정 링크는 아이디 · 코드가 채워진 «비밀번호를 잊었어요». 열면 주소창에서 코드를 지운다. 재설정 링크는 1:1로만(2026-10-05) |
-| `me.pass` · `me.pass.checkout` `{planId}` | 로그인한 사람(**자유 가입판에만** — 교육기관판은 404) | 내 이용권 `{active, status: active\|past_due\|cancel_pending\|ended\|none, provider, paidUntil, nextBillingDate, serviceEndsAt, finalFailure, plans:[{id,name}]}`(금액 없음) · [결제하기] → `{url}`(결제창 + 새 참조값) |
-| `billing.customers` `{q?, status?, limit?, offset?}` · `billing.customer` `{userId}` | **최상위 운영자**(자유 가입판에만) | 고객 목록(찾기 · 상태별 거르기 `active\|past_due\|cancel_pending\|ended\|none\|free` · 50명씩) · 한 사람(이용권 줄 · 결제 기록 — 이름 · 전화 · 이메일 가림 · 메모) |
+| `me.pass` · `me.pass.checkout` `{planId}` | 로그인한 사람(**자유 가입판에만** — 교육기관판은 404) | 내 이용권 `{active, status: active\|past_due\|cancel_pending\|ended\|none, provider, paidUntil, nextBillingDate, serviceEndsAt, finalFailure, plans:[{id,name}], refund}`(금액 없음) · [결제하기] → `{url}`(결제창 + 새 참조값). `refund` = `{eligible, reason: ok\|requested\|refunded\|ai_used, paidOn, until, aiRuns, noUse, days, request}` — 이번 정기결제 결제의 환불 판정(OPEN_EDITION §4-8) |
+| `me.pass.refund` | 로그인한 사람(자유 가입판에만 — 제 것만) | [환불 요청] — 서버가 다시 판정(결제일 다음 날부터 n일 · 결제 뒤 AI 작업 0)하고 받으면 그 정기결제 이용권을 **곧바로 멈춘다**(편집 · 열람 · 내보내기는 그대로). 판정 근거(결제 때 · 기한 · AI 작업 수)를 `refund_requests` 에. 422 `off` · `no_payment` · `window_passed` · `ai_used` · `requested` · `refunded`. 돈 · 해지는 운영자가 그로블에서(그로블에 판매자 환불 API 가 없다) → 웹훅이 오면 «환불됨 · 해지됨»이 저절로 |
+| `billing.customers` `{q?, status?, limit?, offset?}` · `billing.customer` `{userId}` | **최상위 운영자**(자유 가입판에만) | 고객 목록(찾기 · 상태별 거르기 `active\|past_due\|cancel_pending\|ended\|none\|free` · 50명씩) · 한 사람(이용권 줄 · 결제 기록 — 이름 · 전화 · 이메일 가림 · 메모 · 환불 건 · `user.google`(이은 구글, 이메일 가림) · `user.noPassword`) |
 | `billing.extend` `{userId, days, reason}` · `billing.end` `{userId, reason}` · `billing.free` `{userId, on, reason}` · `billing.memo` `{userId, memo}` | 최상위 운영자 | 손 연장(지금 기한부터 n일 — `manual` 줄) · 이용권 끝내기(모든 줄 + 무료 이용 끔) · 무료 이용 · 메모. 감사 기록(왜 · 메모는 길이만). 그로블 카드 청구는 끊지 않는다 |
 | `billing.events` · `billing.link` `{eventId, loginId\|userId, reason}` · `billing.ignore` `{eventId, reason}` · `billing.health` | 최상위 운영자 | 결제 기록(«확인 필요» 따로 · 최근 100 · 이번 달 수 · 합계) · [이 계정에 연결](금액 검사 없이 반영 · 참조값(다른 계정 것이면 409) 또는 구매자 이메일을 기억) · [무시] · 웹훅 상태(시크릿 있음/없음 · 마지막 받은 때 · 틀린 서명 수 · 소식이 늦은 정기결제 수) |
-| `billing.plans` · `billing.plan.save` `{id?, name, checkoutUrl, price, cycleMonths, productId, enabled, sortOrder}` · `billing.rules` · `billing.rules.save` `{trialDays, graceDays}` | 최상위 운영자 | 결제 옵션(가격 · 주기는 만든 뒤 못 바꿈 · 상품 번호는 빈 때 한 번) · 이용 규칙(체험 0~90 · 여유 0~60, 막는 범위는 «새 AI 작업만» 고정) |
+| `billing.plans` · `billing.plan.save` `{id?, name, checkoutUrl, price, cycleMonths, productId, enabled, sortOrder}` · `billing.rules` · `billing.rules.save` `{trialDays?, graceDays?, refundDays?, refundNoUse?}` | 최상위 운영자 | 결제 옵션(가격 · 주기는 만든 뒤 못 바꿈 · 상품 번호는 빈 때 한 번) · 이용 규칙(체험 0~90 · 여유 0~60 · 환불 기간 0~30(기본 7, 0 이면 [환불 요청] 없음) · «AI 작업 전까지만»(기본 켬), 보내지 않은 값은 그대로, 막는 범위는 «새 AI 작업만» 고정) |
+| `billing.refund.withdraw` `{id, reason}` | 최상위 운영자 | 환불 요청 되돌리기 — 아직 환불되지 않은 «처리 중» 요청만(404 · 409), 멈췄던 이용권을 되살린다 · 감사 기록. 환불 건은 `billing.events` 의 `refunds`(처리 중 먼저) · `billing.customer` 의 `refunds` · `billing.health` 의 `refundsOpen` · `refundsUncancelled`(환불됐는데 그로블 정기결제가 살아 있는 건) |
 | `user.reset_code` `{userId}` | 최상위 운영자(두 판) | 운영자 아닌 계정에 비밀번호 재설정 코드(7일 · 한 번) — 기관에 묶이지 않은 계정용(자유 가입판 §4-5) |
 | `password.reset` `{loginId, code, password}` | **로그인 없이** | 로그인 화면 «비밀번호를 잊었어요» — 재설정 코드(또는 운영자는 Secrets 의 `SE2_RECOVERY_CODE`)로 새 비밀번호를 정하고 곧바로 들어간다. 틀리면 초대 코드와 같은 맞히기 고삐 |
 
@@ -185,7 +190,7 @@
 관리 화면(2026-10-05 다시 짬): 맨 위 줄에서 고른다 — [운영](최상위만: 현황 · 감사 기록 · 단계 · 강의 카드(전체) · 계정 멈추기) · 기관마다 · [+ 새 기관](이용 기간 90일 · 40자리를 바로 연다 · 기관 관리자 아이디 · 이름 · 비밀번호를 넣으면 그 계정도 함께 — 기관 자체는 로그인 계정이 아니다).
 기관을 고르면 상태 카드(이용 기간 · AI · 시작 등급 — 빠진 것은 붉게, 운영자에게는 이용 기간 · 범위 · 멈추기 줄) 아래 탭 넷 [수업] [사용자] [AI] [설정].
 AI 회사는 키를 넣은 회사만 고른다(서버도 `no_key` 로 막는다) — 첫 키의 회사가 저절로 기본, 그 키를 지우면 남은 키의 회사로. 시작 등급 기본은 Balanced. 키가 없는 기관은 [AI] 탭부터 열린다.
-화면: `/manage.html` «관리»(운영자 · 기관 관리자에게만 첫 화면 단추가 보인다 — 막는 것은 서버) · `/school.html` «내 수업»(수업에 든 사람에게만 단추 — 내 수업 작품 · 개인 작품으로 복사 · 수업 현황 · 학생 초대 코드 · 새 수업 코드 넣기) · `/account.html` «내 계정»(누구나 — 새 수업 코드 넣기 · 내 AI 키 · 내 비밀번호 바꾸기). `POST /api/auth/password {current, next}` 는 내 비밀번호 바꾸기.
+화면: `/manage.html` «관리»(운영자 · 기관 관리자에게만 첫 화면 단추가 보인다 — 막는 것은 서버) · `/school.html` «내 수업»(수업에 든 사람에게만 단추 — 내 수업 작품 · 개인 작품으로 복사 · 수업 현황 · 학생 초대 코드 · 새 수업 코드 넣기) · `/account.html` «내 계정»(누구나 — 새 수업 코드 넣기 · 내 AI 키 · 내 비밀번호 바꾸기). `POST /api/auth/password {current, next}` 는 내 비밀번호 바꾸기(비밀번호가 없는 계정 — 구글로 만든 것 — 은 403 `no_password`: 세션만으로 정하지 못하고 운영자의 재설정 코드로).
 
 편집기 문(`POST /api`)의 `project.create` 에 `classId` 를 주면 그 수업의 프로젝트가 된다(멤버 · 열린 수업 · 유효 라이선스일 때만, 아니면 403/404 — 개인 프로젝트로 새지 않는다).
 열람 권한(강사 · 기관 관리자)으로 상태를 받으면 `project.readOnly = true`, 고치는 문은 403 `read_only`.

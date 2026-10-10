@@ -81,6 +81,7 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
 `DATABASE_URL`(Replit 이 넣어 줌) · `SESSION_SECRET` · `CREDENTIALS_KEY_V1`(credential 암호화 마스터 키, 32바이트 base64) · `NODE_ENV`(`staging`/`production`) ·
 `SE_EDITION`(`school` 기본 — 교육기관판 · `open` — 자유 가입판, docs/OPEN_EDITION.md. 모르는 값은 `school`) ·
 `GROBLE_WEBHOOK_SECRET` · `GROBLE_WEBHOOK_SECRET_PREVIOUS`(자유 가입판만 — 그로블 웹훅 서명 시크릿, 교체하는 24시간만 옛 값도 · §4-4) ·
+`GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET`(자유 가입판만 — 구글 로그인, 둘 다 있을 때만 단추가 선다 · §4-5) ·
 `SE_TRUST_PROXY=1`(플랫폼 앞단 뒤) · `SE_WORKER=0`(웹만 — worker 는 `npm run worker` 로 따로, `WORKER_POLL_MS` 기본 2000) · `SE_MIGRATE_ON_BOOT`(기본 켬) · `DB_POOL_MAX`(기본 5) · `WORKER_CONCURRENCY` · (플랫폼이 AI 를 대 줄 때만) `ANTHROPIC_API_KEY`·`OPENAI_API_KEY`·`GEMINI_API_KEY`.
 **기관/개인의 API 키는 환경 변수에 두지 않는다** — DB 에 암호화(명세 AH-7).
 
@@ -181,6 +182,30 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
 
 시크릿을 바꿀 때: 그로블에서 재발급 → 새 값을 `GROBLE_WEBHOOK_SECRET`, 옛 값을 `GROBLE_WEBHOOK_SECRET_PREVIOUS` 에 → 다시 게시 → 24시간 뒤 `…_PREVIOUS` 를 지운다(그동안 두 서명을 모두 받는다).
 웹훅이 오래 끊겼으면(그로블은 20건 연속 실패 + 3일이면 엔드포인트를 끈다): [결제 기록]의 «소식이 늦은 정기결제» → [고객]에서 [기간 연장]으로 메우고, 그로블 «연동»에서 다시 켠다.
+
+**출시한 뒤 새 기능 받기**(예: 2026-10-10 환불 · 구글 로그인 — 새 표 `refund_requests` · `user_identities` · `oauth_states`): Shell `npm run update` → ▶(개발 DB 에 017 · 018 이 선다) → 미리보기 확인 → 다시 게시.
+게시 중에 Replit 이 «운영 DB 구조를 바꾼다»(새 표 만들기)를 보이면 그 바꿈은 받아도 된다 — 새 마이그레이션은 이미 선 표를 만나면 넘어간다(§5). **«개발 데이터베이스 스키마 및 데이터를 프로덕션에 복사» 는 고르지 않는다**(가입자 · 결제를 덮어쓴다).
+«마이그레이션 검증에 실패했습니다»가 뜨면 «배포를 취소»를 고르고 화면을 남긴다(운영 사이트는 옛 판으로 그대로 돈다).
+
+## 4-5. 구글 로그인 켜기(자유 가입판, 2026-10-10 — docs/OPEN_EDITION.md §4-9)
+
+Secrets 에 두 값이 없으면 구글 단추가 서지 않을 뿐 나머지는 그대로다. 구글 클라우드 화면 이름은 바뀔 수 있다(2026-10 기준 «Google 인증 플랫폼 / Google Auth Platform»).
+
+1. **구글 클라우드 프로젝트**: console.cloud.google.com → 새 프로젝트(예: `storyengine-open`).
+2. **Google 인증 플랫폼 → 시작하기(브랜딩)**: 앱 이름 «스토리 엔진» · 사용자 지원 이메일 · 대상 **외부(External)** · 연락처 이메일 → 만들기. 로고는 올리지 않는다(올리면 구글의 브랜드 검토를 기다린다).
+   받는 범위는 기본(`openid` · `email` · `profile`)만 — 민감한 범위가 아니어서 앱 검토가 필요 없다.
+3. **클라이언트 → 클라이언트 만들기**: 애플리케이션 유형 **웹 애플리케이션** · 이름(예: «스토리 엔진 자유 가입판») · **승인된 리디렉션 URI** 에
+   `https://<자유 가입판 주소>/api/auth/google/callback` 하나(게시한 사이트의 운영 → [이용 규칙] 맨 아래 «구글 로그인»에 [복사]와 함께 있다 — 글자 하나라도 다르면 구글이 `redirect_uri_mismatch` 로 거절한다).
+   «승인된 JavaScript 원본»은 비워 둔다(서버가 구글과 직접 주고받는다). → 만들기.
+4. 나온 **클라이언트 ID** 와 **클라이언트 보안 비밀번호**를 곧바로 Replit Secrets 의 `GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET` 에 넣는다(채팅 · 문서 · 깃에 붙이지 않는다 —
+   보안 비밀번호는 나중에 다시 보이지 않을 수 있다. 잃으면 그 클라이언트에 새 비밀번호를 만들어 바꾼다).
+5. **대상(Audience) → 게시 상태**: «테스트 중»이면 테스트 사용자로 넣은 계정만 들어온다 → **[앱 게시]로 «프로덕션 단계»**(기본 범위뿐이라 검토 없이 바뀐다).
+6. Replit → **다시 게시**(Secrets 는 다시 게시해야 들어간다) → 운영 → [이용 규칙] «구글 로그인: 켜짐» → 로그아웃한 창에서 [Google 계정으로 계속하기] 한 번.
+   구글 쪽 설정은 들어가기까지 몇 분 ~ 몇 시간 걸릴 수 있다(구글 안내) — `redirect_uri_mismatch` 가 나오면 3 의 주소부터 견준다.
+7. 운영자 계정도 구글로 들어오려면: 비밀번호로 로그인 → 내 계정 → [구글 계정 연결].
+
+지키는 것(시험이 본다): 이메일이 같다고 저절로 잇지 않는다 · 구글로 만든 계정은 비밀번호가 없다(비밀번호로도 들어가려면 운영자의 재설정 코드) · 시크릿은 화면 · 로그에 없다. SECURITY.md §5-2.
+작업 공간 미리보기(….replit.dev)에서 구글 로그인을 시험하려면 그 주소의 `/api/auth/google/callback` 도 3 에 하나 더 넣는다(미리보기 주소는 바뀔 수 있다 — 게시한 주소로 시험하는 편이 낫다).
 
 ## 5. PostgreSQL (Phase 3 계획)
 

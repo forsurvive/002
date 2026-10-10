@@ -98,7 +98,7 @@ G: 드라이브 직접 읽기(웹 서비스라 사용자의 PC 를 못 본다 �
 | 필요한 것 | 이미 있는 것 | 더할 것 |
 |---|---|---|
 | **용도 축** | 판 스위치 `online/edition.mjs`(`SE_EDITION`) — 문 · 화면을 판마다 숨긴다 | `online/purpose.mjs`(`SE_PURPOSE=novel\|ebook`, 모르는 값은 novel). `/api/setup` · `me` 에 실어 화면이 말(작품→책 등) · 첫 화면 · 기본 템플릿을 바꾼다 |
-| **단계 템플릿** | `config/workflows/story_creation.json`(16단계) · `core/workflow/stages.mjs`(순수 — 단계 꼴 · 상태 · 승인 · 다시 열기 · 건너뛰기) · DB `workflow_overrides.template_key` | `config/workflows/ebook.json` — ①규격 · 자료 ②자료 분석 ③기획(관점 + 헌장) ④목차 · 장 카드 ⑤장 집필(회차 = 장, `perEpisode`) ⑥전권 검토 ⑦개정 ⑧제본. `tools/workflow.mjs` 의 고정 경로를 «템플릿 키로 고르기»로(프로젝트에 `template_key` — 마이그레이션 018, 이미 선 것을 만나도 넘어가게) |
+| **단계 템플릿** | `config/workflows/story_creation.json`(16단계) · `core/workflow/stages.mjs`(순수 — 단계 꼴 · 상태 · 승인 · 다시 열기 · 건너뛰기) · DB `workflow_overrides.template_key` | `config/workflows/ebook.json` — ①규격 · 자료 ②자료 분석 ③기획(관점 + 헌장) ④목차 · 장 카드 ⑤장 집필(회차 = 장, `perEpisode`) ⑥전권 검토 ⑦개정 ⑧제본. `tools/workflow.mjs` 의 고정 경로를 «템플릿 키로 고르기»로(프로젝트에 `template_key` — 다음 빈 번호의 마이그레이션(018 은 구글 로그인이 썼다), 이미 선 것을 만나도 넘어가게) |
 | **도장 셋** | 단계 승인(`stage.approve`)과 확정본(`isFinal`)이 다른 개념으로 이미 있다 | 도장 ① = 기획 승인 + 헌장을 확정본으로 · ② = 목차 승인 · ③ = 제본 승인. 도장 카드의 세 단추 = [승인] · [고쳐서 다시](= «이번 요청사항» 한 줄로 다시 생성) · [직접 고침](문서 편집) |
 | **문서** | 문서 · 판(AI 결과는 새 판, 온라인은 판을 지우지 않는다) · 참조(순서 = 프롬프트 순서) · 카테고리 | 헌장 · 목차 · 장 · 출처 대장 · 결산 = 문서. «단계» 카테고리 아래 그대로. 출처 대장은 «자료 분석»에서 번호(`S-001`…)를 붙여 시작 |
 | **분야 정본** | 작법서 카테고리 · 에이전트 자동 생성(F-KIND · F-AGENT) — 소설 중심 | `config/canon/*.md`(실용 · 입문 · 기술 · 비즈니스 · 에세이 · 연구 · 일반) — 판단 기준 · 금지 · 수치 · «문제가 아닌 것». 기획에서 분야를 고르면 이어 붙는다(덮어쓰지 않고 잇는다) |
@@ -193,7 +193,7 @@ AI 실패는 기존 문서를 덮지 않는다(결과는 새 판) · 긴 일은 
 | 티켓 | 내용 |
 |---|---|
 | T-E01 | `online/purpose.mjs` + `SE_PURPOSE`(기본 novel) · `/api/setup` · `me` 에 `purpose` · 시험(모르는 값은 novel · 소설판 화면 그대로) |
-| T-E02 | 템플릿 고르기 — `tools/workflow.mjs` 의 고정 경로 → 템플릿 키 · 프로젝트에 `template_key`(마이그레이션 018) · 기존 프로젝트는 `story_creation` |
+| T-E02 | 템플릿 고르기 — `tools/workflow.mjs` 의 고정 경로 → 템플릿 키 · 프로젝트에 `template_key`(다음 빈 번호의 마이그레이션 — 018 은 구글 로그인) · 기존 프로젝트는 `story_creation` |
 | T-E03 | `config/workflows/ebook.json`(단계 8 · 카드 · task · tier) · `validateTemplate` 시험 |
 | T-E04 | 화면 말 묶음(작품 → 책 · 회차 → 장) — 전자책판에서만 · 시험 |
 

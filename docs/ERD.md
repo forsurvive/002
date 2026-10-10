@@ -62,6 +62,8 @@ erDiagram
 |---|---|---|
 | `users` | id · login_id(유일, 소문자) · email(NULL 가능) · display_name · password_hash · status(`active`/`disabled`) · is_platform_admin · created_at · updated_at · last_login_at | 학생은 이메일 없이 login_id(+초대 코드)로 — 개인정보 최소(명세 §34) |
 | `sessions` | id · user_id · token_hash(유일, SHA-256) · created_at · expires_at · last_seen_at · ip · user_agent · revoked_at | 쿠키에는 원문 토큰, DB 에는 해시만 |
+| `user_identities` | provider(`google`) · subject(구글의 sub) · user_id · email · created_at · last_login_at | migrations/018(2026-10-10, 자유 가입판). PK(provider, subject) — 구글 계정 하나는 우리 계정 하나에. 이메일이 같다고 저절로 잇지 않는다(SECURITY §5-2). 구글로 만든 계정의 `users.password_hash` 는 `'!'`(비밀번호 없음) |
+| `oauth_states` | state(PK) · nonce · verifier(PKCE) · mode(`login`/`link`) · user_id(link 때) · created_at | 구글 로그인 시작 한 번에 한 줄 — 10분 · 한 번만(돌아올 때 지운다, 오래된 줄은 다음 시작이 치운다) |
 | `organizations` | id · name · slug(유일) · status · settings jsonb(허용 provider·기본 tier·학생 모델 선택 허용·학생 강의 카드·작품 열람 정책·영구삭제 정책) · max_concurrent_jobs · created_at · updated_at | |
 | `organization_members` | id · organization_id · user_id · role(`organization_admin`/`instructor`/`student`) · status · created_at | UNIQUE(organization_id, user_id, role). 한 사람이 여러 역할 가능 |
 | `licenses` | id · organization_id · plan(`trial`/`education_standard`/…) · status(`active`/`suspended`/`expired`/`revoked`) · starts_at · ends_at · seat_limit · allowed_workflows text[] · allowed_providers text[] · allowed_model_tiers text[] · features jsonb · created_by · created_at · updated_at | AI 사용량이 아니라 **소프트웨어 사용권**(명세 §31·부록 P). AI 작업 때마다 재검증 |
@@ -128,7 +130,8 @@ AI 비용(본인 키 — `generation_runs` · `usage_ledger`)과 **섞지 않는
 | `subscriptions` | id · user_id · provider(`groble`/`manual`/`trial`) · ref · status(`active`/`past_due`/`cancel_pending`/`ended`) · paid_until · next_billing_date · service_ends_at · final_failure · occurred_at · plan_id · last_paid_at · last_amount · created_at · updated_at | UNIQUE(user_id, provider, ref) — 정기결제마다 한 줄 · 운영자 연장 · 가입 체험. **쓸 수 있는가 = paid_until > now() 인 줄이 있는가**(또는 무료 이용 · 운영자). `occurred_at` 보다 이르거나 같은 소식은 기록만 |
 | `billing_events` | id · provider · idem_key · event_id · type · occurred_at · received_at · ref · merchant_uid · amount · user_id · subscription_id · result · note · review · resolved_by · resolved_at · raw jsonb | UNIQUE(provider, idem_key) — 같은 `X-Groble-Idempotency-Key` 는 한 번만. `raw` 는 받은 원문(이름 · 이메일 · 전화 — 운영 화면에서 가려서). `review` = «확인 필요» |
 | `billing_customers` | user_id · free · memo · updated_by · updated_at | 무료 이용(운영자가 주는 계정) · 운영 메모 |
-| `app_settings` | key · value jsonb · updated_by · updated_at | `billing.rules` = { trialDays(기본 0), graceDays(기본 10) } |
+| `app_settings` | key · value jsonb · updated_by · updated_at | `billing.rules` = { trialDays(기본 0), graceDays(기본 10), refundDays(기본 7), refundNoUse(기본 true) } |
+| `refund_requests` | id · user_id · subscription_id · merchant_uid · amount · paid_at · deadline · ai_runs · in_policy · prev_paid_until · source(`user`/`groble`) · status(`open`/`done`/`withdrawn`) · refunded_at · cancelled_at · resolved_by · resolved_at · created_at | migrations/017(2026-10-10). 환불 한 건 = 결제 하나 — **그때의 판정 근거**(결제 때 · 기한 · 결제 뒤 AI 작업 수 · 규정 안인가)와 할 일 둘(그로블 환불 `refunded_at` · 그로블 정기결제 해지 `cancelled_at`)의 확인. 둘 다 되면 `done`. `prev_paid_until` 은 [요청 되돌리기]가 이용권을 되살릴 값. 그로블에서 먼저 환불하면 `source='groble'` 로 생긴다. 설계: OPEN_EDITION §4-8 |
 
 ## 4. 핵심 색인 · 제약
 
