@@ -101,13 +101,18 @@ export async function login(db, { loginId, password, ip = '', userAgent = '' }) 
     return SAME_FAILURE;
   }
   fails.delete(key);
+  return { ok: true, token: await openSession(db, u.id, { ip, userAgent }) };
+}
+
+// 세션 열기 — 원문 토큰은 쿠키로만 돌려주고 DB 에는 SHA-256 만 남긴다. 마지막 로그인 시각 · 감사 기록까지.
+export async function openSession(db, userId, { ip = '', userAgent = '', action = 'auth.login' } = {}) {
   const token = randomBytes(32).toString('base64url');
   await db.query(
     `INSERT INTO sessions (user_id, token_hash, expires_at, ip, user_agent) VALUES ($1, $2, now() + make_interval(days => $3), $4, $5)`,
-    [u.id, tokenHash(token), SESSION_DAYS, String(ip).slice(0, 64), String(userAgent).slice(0, 256)]);
-  await db.query('UPDATE users SET last_login_at = now() WHERE id = $1', [u.id]);
-  await audit(db, { actor: u.id, action: 'auth.login', targetType: 'user', targetId: u.id, ip });
-  return { ok: true, token };
+    [userId, tokenHash(token), SESSION_DAYS, String(ip).slice(0, 64), String(userAgent).slice(0, 256)]);
+  await db.query('UPDATE users SET last_login_at = now() WHERE id = $1', [userId]);
+  await audit(db, { actor: userId, action, targetType: 'user', targetId: userId, ip });
+  return token;
 }
 
 // 세션 토큰 → 사용자(살아 있을 때만). 마지막 본 시각은 5분에 한 번만 고친다.
