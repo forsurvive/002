@@ -80,6 +80,7 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
 
 `DATABASE_URL`(Replit 이 넣어 줌) · `SESSION_SECRET` · `CREDENTIALS_KEY_V1`(credential 암호화 마스터 키, 32바이트 base64) · `NODE_ENV`(`staging`/`production`) ·
 `SE_EDITION`(`school` 기본 — 교육기관판 · `open` — 자유 가입판, docs/OPEN_EDITION.md. 모르는 값은 `school`) ·
+`SE_PURPOSE`(`novel` 기본 — 지금 그대로 · `ebook` — 전자책 오토(전자책 집필만 하는 앱), docs/EBOOK_EDITION.md · §4-7. 모르는 값은 `novel`) ·
 `GROBLE_WEBHOOK_SECRET` · `GROBLE_WEBHOOK_SECRET_PREVIOUS`(자유 가입판만 — 그로블 웹훅 서명 시크릿, 교체하는 24시간만 옛 값도 · §4-4) ·
 `GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET`(자유 가입판만 — 구글 로그인, 둘 다 있을 때만 단추가 선다 · §4-5) ·
 `RESEND_API_KEY`(자유 가입판만 — 환불 요청 · 구독 취소를 운영자에게 알리는 메일, §4-6) · `MAIL_FROM`(선택 — Resend 에서 도메인을 확인한 뒤의 보내는 주소) ·
@@ -224,6 +225,30 @@ Secrets 에 두 값이 없으면 구글 단추가 서지 않을 뿐 나머지는
 3. **다시 게시**(Secrets 는 다시 게시해야 들어간다).
 4. 게시한 사이트 → 관리 → 운영 → [이용 규칙] 맨 아래 «알림 메일» — «보내는 길 켜짐»을 보고, **받을 메일 주소**(1 에서 가입한 이메일)를 넣고 [저장] → [시험 메일 보내기] → 받은편지함(없으면 스팸함) 확인.
 5. 안 오면 [시험 메일 보내기]가 까닭을 말한다 — «Resend 가 거절했습니다»면 받을 주소가 1 의 이메일과 같은지 본다.
+
+## 4-7. 전자책 오토 띄우기 — 세 번째 앱(2026-10-10, docs/EBOOK_EDITION.md)
+
+코드는 같다 — 같은 GitHub 브랜치를 **App 하나 더**로 띄우고 Secrets 에 `SE_EDITION=open` · `SE_PURPOSE=ebook`.
+DB · AI 키 봉인 열쇠 · 구글 로그인(구글 클라우드 «ebook auto» 프로젝트) · 그로블 상품이 모두 따로다(다른 두 앱의 계정 · 작품과 섞이지 않는다).
+
+1. **App 하나 더**: replit.com/import → 같은 저장소(`forsurvive/002`)로 새 App → Git 창에서 브랜치 `claude/charming-keller-12p0c5`.
+2. **데이터베이스**: 그 App 의 Database 에서 PostgreSQL 을 새로 만든다(`DATABASE_URL` 이 저절로).
+3. **Secrets**: `SE_EDITION` = `open` · `SE_PURPOSE` = `ebook` · `CREDENTIALS_KEY_V1` = Shell 에서 `npm run key` 로 만든 44자(**다른 두 앱과 다른 값** — 한 번 넣으면 바꾸지 않는다 · 비밀번호 관리자에 따로 · 채팅 · 문서 · 깃에 붙이지 않는다).
+4. ▶ 실행 → Console 에 `Edition : open (open sign-up)` 과 `Purpose : ebook (e-book auto)` 가 찍히는지 → 미리보기를 새 탭으로 → 로그인 화면 이름이 **«전자책 오토»**인지 → **처음 설정**(운영자 계정 — Console 의 설정 코드).
+5. **첫 게시**: 예약된 VM · Deployment secrets 에 위 셋이 보이는지 → **처음 한 번만** 개발 DB 를 운영 DB 로 복사해서 게시(§4-4 의 4 와 같은 까닭 · 같은 화면) → 게시한 주소(`https://….replit.app`)를 적어 둔다.
+   실패 화면의 [Agent로 수정] · [Agent(으)로 조사하기]는 누르지 않는다. 출시한 뒤에는 복사를 고르지 않는다.
+6. **구글 로그인**(§4-5 의 순서, 구글 클라우드 «ebook auto» 프로젝트):
+   브랜딩의 앱 이름이 **«전자책 오토»**인지(«스토리엔진»으로 저장했으면 Google 인증 플랫폼 → 브랜딩에서 고쳐 저장) →
+   클라이언트 → 클라이언트 만들기 — 유형 **웹 애플리케이션** · 이름 «전자책 오토» · **승인된 리디렉션 URI** = `https://<전자책 오토 주소>/api/auth/google/callback`
+   (게시한 사이트의 관리 → 운영 → [이용 규칙] 맨 아래 «구글 로그인»에 [복사]와 함께 있다) → 나온 ID · 보안 비밀번호를 곧바로 이 앱의 Secrets `GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET` 에 →
+   대상(Audience) → [앱 게시]로 «프로덕션 단계» → Replit **다시 게시** → 로그아웃한 창에서 [Google 계정으로 계속하기] 한 번.
+7. (선택) **운영자 알림 메일** — §4-6 과 같다(같은 Resend 키를 이 앱의 Secrets 에 넣어도 된다 — 받을 주소는 이 앱의 [이용 규칙]에 따로).
+8. **AI 키**: 운영자는 이용권 없이도 AI 작업을 한다 — 내 계정 → AI 키(Claude)를 넣고 시험한다. 고객이 쓰려면 이용권이 있어야 한다(아래 9).
+9. **결제**(그로블 상품 «전자책 오토»)는 따로 만든다 — 가격은 사람이 정한다(EBOOK_EDITION §10-6). 정하면 §4-4 의 5~8 과 같은 순서(진입 · 이동 · 웹훅 주소는 이 앱의 운영 화면에 [복사]와 함께).
+10. **확인**: 새 책(자료 한 줄이라도) → 단계 탭에 «전자책 만들기» 8걸음 · 장 집필은 «몇 장» · 자료 분석이 끝나면 맨 끝 줄 «서문: 필요 / 필요 없음»에 따라 «서문» 걸음이 켜지거나 꺼진다.
+    걸음마다 [생성] → 읽기 → (이번 요청사항을 붙여 다시 생성 — 새 판) → [승인] 으로 끝까지 간다(완전 수동).
+
+**새 판 받기**는 다른 두 앱과 같다 — Shell `npm run update` → ▶ 를 누르기 전에 곧바로 다시 게시 → 확인 → ▶ (§4-4 맨 아래).
 
 ## 5. PostgreSQL (Phase 3 계획)
 
