@@ -30,6 +30,7 @@ import { createTenancy, SAY } from './tenancy.mjs';
 import { createEdu } from './edu.mjs';
 import { editionOf } from './edition.mjs';
 import { createBilling, passActive } from './billing/service.mjs';
+import { googleConfig, freshStart, authorizeUrl, exchangeCode, readIdToken, loginIdFrom, STATE_MINUTES, CALLBACK_PATH } from './google.mjs';
 import { createWorkflowSource } from './workflow.mjs';
 import { createWorker } from './worker.mjs';
 import { createChangeHub } from './events.mjs';
@@ -172,16 +173,19 @@ function depsFor(store, queue, worker, user, { tenancy = null, place = null, wfs
  *   queue · worker : 작업 큐와 (같은 프로세스의) worker — 작업을 넣으면 worker 를 깨운다. worker 가 없으면 넣기만 한다(따로 띄운 worker 가 집는다)
  *   credentials : 자격증명 서비스(ai/credentials.mjs) — 처음 설정에서 AI 키를 봉해 넣을 때 쓴다
  *   denyFrames : 남의 페이지 안(iframe)에 싣지 못하게 한다 — 운영에서만 켠다(작업 공간의 미리보기 창이 iframe 이다, docs/SECURITY.md §6)
+ *   google : 구글 로그인 설정 — 비우면 Secrets 에서(자유 가입판만), null 이면 끈다. 시험은 가짜 구글 주소를 넣는다.
  */
-export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null, keyTester = null, subscription = null, hub = null, codeKeys = keysFromEnv(process.env), billing } = {}) {
+export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = false, denyFrames = false, queue = createJobQueue(pool), worker = null, credentials = null, keyTester = null, subscription = null, hub = null, codeKeys = keysFromEnv(process.env), billing, google } = {}) {
   const store = createProjectStore(pool);
   const edition = plan.edition || 'school';
+  // 구글 로그인(자유 가입판만) — Secrets 에 GOOGLE_CLIENT_ID · GOOGLE_CLIENT_SECRET 이 둘 다 있을 때만 선다(docs/OPEN_EDITION.md §4-9)
+  const gcfg = edition !== 'open' ? null : google !== undefined ? google : googleConfig(process.env);
   // 이용권(자유 가입판만) — 웹훅 시크릿은 Secrets 의 GROBLE_WEBHOOK_SECRET(교체 중이면 GROBLE_WEBHOOK_SECRET_PREVIOUS 도). 코드 · Git · 로그 · 응답에 두지 않는다.
   const bill = billing !== undefined ? billing : edition === 'open'
     ? createBilling({ pool, secrets: () => [process.env.GROBLE_WEBHOOK_SECRET, process.env.GROBLE_WEBHOOK_SECRET_PREVIOUS], log: (m) => console.log('  [billing] ' + m) }) : null;
   const tenancy = createTenancy(pool, { edition });
   const wfs = createWorkflowSource(pool);
-  const edu = createEdu({ pool, credentials, wfs, keyTester, subscription, codeKeys, recoveryCode: plan.recoveryCode || '', edition, billing: bill });
+  const edu = createEdu({ pool, credentials, wfs, keyTester, subscription, codeKeys, recoveryCode: plan.recoveryCode || '', edition, billing: bill, google: !!gcfg });
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
 
   // 화면은 제 자리의 파일만 부른다 — 스크립트는 외부 파일만, 꾸밈은 style 속성을 쓰므로 인라인 꾸밈만 허락
@@ -311,6 +315,47 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
   };
   const signupGiveBack = (slot) => { const i = slot.f.made.indexOf(slot.now); if (i >= 0) slot.f.made.splice(i, 1); };
 
+  // ---------------- 구글 로그인(자유 가입판) — 시작 → 구글 → 돌아옴. 값의 뜻은 online/google.mjs.
+  // state 는 서버 표(oauth_states)와 쿠키 둘 다에 둔다 — 돌아온 요청이 이 브라우저에서 시작한 것인지 본다. 쿠키는 이 두 길에만 실린다.
+  const OAUTH_COOKIE = 'se_oauth';
+  const oauthCookie = (v, clear = false) => [OAUTH_COOKIE + '=' + (clear ? '' : v), 'Path=/api/auth/google', 'HttpOnly', 'SameSite=Lax',
+    'Max-Age=' + (clear ? 0 : STATE_MINUTES * 60), ...(secure ? ['Secure'] : [])].join('; ');
+  // 돌아오는 주소 — 구글 클라우드의 «승인된 리디렉션 URI»와 글자까지 같아야 한다(게시한 주소로 열면 https://그 주소/api/auth/google/callback).
+  // host 는 hostOf 가 허락한 이름(URL). https 는 앞단이 받으므로 이름만, 이 컴퓨터 안(http)은 포트까지.
+  const callbackUrl = (host) => (secure ? 'https://' + host.hostname : 'http://' + host.host) + CALLBACK_PATH;
+  const go = (res, location, cookies = []) => send(res, 302, '', 'text/plain; charset=utf-8', { location, ...(cookies.length ? { 'set-cookie': cookies } : {}) });
+  const sameText = (a, b) => { const x = Buffer.from(String(a)); const y = Buffer.from(String(b)); return x.length > 0 && x.length === y.length && timingSafeEqual(x, y); };
+  // 시작 고삐 — 같은 곳(IP)에서 10분에 30번(한 번용 값의 표가 부풀지 않게)
+  const googleStarts = new Map();   // ip → [때]
+  const googleTake = (ip, now = Date.now()) => {
+    const since = now - 10 * 60 * 1000;
+    if (googleStarts.size > 5000) for (const [k, v] of googleStarts) if (!v.some((t) => t > since)) googleStarts.delete(k);
+    const f = (googleStarts.get(ip) || []).filter((t) => t > since);
+    googleStarts.set(ip, f);
+    if (f.length >= 30) return false;
+    f.push(now);
+    return true;
+  };
+  // 구글로 처음 온 사람의 새 계정 — 아이디는 이메일 앞부분(겹치면 -2 · -3 …, 그래도 겹치면 무작위), 이름은 구글의 이름, 이메일은 구글이 확인한 것.
+  // 비밀번호는 없다(auth.NO_PASSWORD). 같은 구글 계정이 그새 다른 탭에서 먼저 이어졌으면 만든 계정을 거두고 null.
+  async function googleSignup(id) {
+    const base = loginIdFrom(id.email);
+    for (let i = 0; i < 6; i++) {
+      const loginId = i === 0 ? base : base.slice(0, 40) + '-' + (i < 4 ? String(i + 1) : randomBytes(3).toString('hex'));
+      const made = await auth.createUser(pool, { loginId, noPassword: true, displayName: id.name || loginId, email: id.email || null });
+      if (!made.ok) { if (made.code === 'conflict') continue; return null; }
+      try {
+        await pool.query(`INSERT INTO user_identities (provider, subject, user_id, email, last_login_at) VALUES ('google', $1, $2, $3, now())`, [id.sub, made.user.id, id.email]);
+        return made.user;
+      } catch (e) {
+        await pool.query('DELETE FROM users WHERE id = $1', [made.user.id]);
+        if (e && e.code === '23505') return null;
+        throw e;
+      }
+    }
+    return null;
+  }
+
   async function handle(req, res) {
     try {
       const url = new URL(req.url, 'http://127.0.0.1');
@@ -380,7 +425,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const empty = (await pool.query('SELECT count(*)::int AS n FROM users')).rows[0].n === 0;
         // 바깥에 열었으면(플랫폼 앞단을 거치면 소켓 주소가 루프백일 수 있다) 출입 열쇠만 믿는다
         const trusted = !!plan.gate || (!plan.exposed && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || ''));
-        if (req.method === 'GET') return json(res, 200, ok({ needed: empty && (trusted || !!setupCode), code: empty && !trusted && !!setupCode, ai: !!credentials, edition }));
+        if (req.method === 'GET') return json(res, 200, ok({ needed: empty && (trusted || !!setupCode), code: empty && !trusted && !!setupCode, ai: !!credentials, edition, google: !!gcfg }));
         if (req.method !== 'POST') return json(res, 405, bad('POST 만 받습니다'));
         if (!empty) return json(res, 409, bad('이미 설정을 마쳤습니다 — 로그인해 주세요'));
         if (!trusted) {
@@ -440,6 +485,78 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const roles = [...(user.isPlatformAdmin ? ['platform_admin'] : []), ...['organization_admin', 'instructor', 'student'].filter((x) => held.has(x))];
         return { ...me, edition, manage: !!(user.isPlatformAdmin || r.org_admin), platformAdmin: !!user.isPlatformAdmin, classes, member: r.n > 0, places, roles };
       };
+
+      // ---------------- 구글 로그인 — 시작. login: 로그인 전(이은 계정이면 들어가고, 처음이면 새 계정) · link: 로그인한 뒤 «내 계정»에서 잇기
+      if (gcfg && req.method === 'GET' && url.pathname === '/api/auth/google/start') {
+        const mode = url.searchParams.get('mode') === 'link' ? 'link' : 'login';
+        if (mode === 'link' && !user) return go(res, '/login');
+        if (mode === 'login' && user) return go(res, '/');
+        if (!googleTake(ipOf(req))) return go(res, (mode === 'link' ? '/account.html' : '/login') + '?google=busy');
+        await pool.query('DELETE FROM oauth_states WHERE created_at < now() - make_interval(mins => $1)', [STATE_MINUTES]);
+        const s = freshStart();
+        await pool.query('INSERT INTO oauth_states (state, nonce, verifier, mode, user_id) VALUES ($1, $2, $3, $4, $5)',
+          [s.state, s.nonce, s.verifier, mode, mode === 'link' ? user.id : null]);
+        return go(res, authorizeUrl(gcfg, { redirectUri: callbackUrl(host), state: s.state, nonce: s.nonce, challenge: s.challenge }), [oauthCookie(s.state)]);
+      }
+      // ---------------- 구글 로그인 — 돌아옴. 무엇이 틀렸는지는 화면에 이름(?google=…)으로만 알린다.
+      if (gcfg && req.method === 'GET' && url.pathname === CALLBACK_PATH) {
+        const clear = oauthCookie('', true);
+        const state = String(url.searchParams.get('state') || '');
+        // 한 번만 — 맞든 틀리든 그 줄은 여기서 지운다(같은 돌아옴을 두 번 받지 않는다)
+        const row = state && state.length <= 100 ? (await pool.query(
+          `DELETE FROM oauth_states WHERE state = $1 RETURNING mode, user_id, nonce, verifier, created_at > now() - make_interval(mins => $2) AS fresh`, [state, STATE_MINUTES])).rows[0] : null;
+        const mode = row ? row.mode : 'login';
+        const fail = (why) => go(res, (mode === 'link' ? '/account.html' : '/login') + '?google=' + why, [clear]);
+        if (!row || !sameText(state, auth.readCookie(req, OAUTH_COOKIE))) return fail('state');
+        if (!row.fresh) return fail('expired');
+        if (url.searchParams.get('error')) return fail('cancel');   // 구글 화면에서 그만뒀다(access_denied 등)
+        const code = String(url.searchParams.get('code') || '');
+        if (!code || code.length > 2048) return fail('failed');
+        const tok = await exchangeCode(gcfg, { code, verifier: row.verifier, redirectUri: callbackUrl(host) });
+        // 콘솔에는 까닭의 이름만(구글의 오류 본문 · 코드 · 시크릿은 싣지 않는다)
+        if (!tok.ok) { console.log('  [google] ' + tok.reason + (tok.status ? ' ' + tok.status : '')); return fail('failed'); }
+        const id = readIdToken(tok.idToken, { clientId: gcfg.clientId, nonce: row.nonce });
+        if (!id.ok) { console.log('  [google] id_token ' + id.reason); return fail('failed'); }
+        const ip = ipOf(req); const userAgent = req.headers['user-agent'] || '';
+        const known = (await pool.query(
+          `SELECT i.user_id, u.status FROM user_identities i JOIN users u ON u.id = i.user_id WHERE i.provider = 'google' AND i.subject = $1`, [id.sub])).rows[0];
+        if (mode === 'link') {
+          // 잇기는 시작한 그 사람이 지금도 이 브라우저로 들어와 있을 때만. 구글 계정 하나는 우리 계정 하나에, 우리 계정 하나에는 구글 하나.
+          if (!user || user.id !== row.user_id) return fail('state');
+          if (known) return fail(known.user_id === user.id ? 'already' : 'taken');
+          if ((await pool.query(`SELECT 1 FROM user_identities WHERE provider = 'google' AND user_id = $1`, [user.id])).rows.length) return fail('one');
+          try {
+            await pool.query(`INSERT INTO user_identities (provider, subject, user_id, email) VALUES ('google', $1, $2, $3)`, [id.sub, user.id, id.email]);
+          } catch (e) {
+            if (e && e.code === '23505') return fail('taken');
+            throw e;
+          }
+          await auth.audit(pool, { actor: user.id, action: 'auth.google_link', targetType: 'user', targetId: user.id, ip });
+          return go(res, '/account.html?google=linked', [clear]);
+        }
+        // 이은 계정이면 그 계정으로(멈춘 계정은 들이지 않는다). 다른 계정으로 들어와 있었으면 그 세션은 닫는다.
+        if (known) {
+          if (known.status !== 'active') {
+            await auth.audit(pool, { actor: known.user_id, action: 'auth.login_failed', targetType: 'user', targetId: known.user_id, ip, details: { via: 'google' } });
+            return fail('disabled');
+          }
+          await pool.query(`UPDATE user_identities SET last_login_at = now() WHERE provider = 'google' AND subject = $1`, [id.sub]);
+          if (user) await auth.logout(pool, token);
+          const t = await auth.openSession(pool, known.user_id, { ip, userAgent, action: 'auth.google_login' });
+          return go(res, '/', [clear, auth.sessionCookie(t, { secure })]);
+        }
+        // 처음 — 새 계정. 자유 가입과 같은 고삐 · 처음 설정 전에는 받지 않는다. 이메일이 같은 계정이 있어도 저절로 잇지 않는다.
+        if (!(await pool.query('SELECT EXISTS (SELECT 1 FROM users WHERE is_platform_admin) AS y')).rows[0].y) return fail('setup');
+        const slot = signupTake(ip);
+        if (!slot) return fail('busy');
+        const made = await googleSignup(id);
+        if (!made) { signupGiveBack(slot); return fail('retry'); }
+        await auth.audit(pool, { actor: made.id, action: 'auth.signup', targetType: 'user', targetId: made.id, ip, details: { via: 'google' } });
+        if (bill) await bill.grantTrial(made.id);   // 이용 규칙의 무료 체험 — 자유 가입과 같다
+        if (user) await auth.logout(pool, token);
+        const t = await auth.openSession(pool, made.id, { ip, userAgent, action: 'auth.google_login' });
+        return go(res, '/account.html?google=new', [clear, auth.sessionCookie(t, { secure })]);
+      }
 
       if (req.method === 'GET' && (url.pathname === '/login' || url.pathname === '/login.html')) {
         // 이미 들어와 있는 사람이 초대 링크를 열면 — 지금 계정으로 참여하는 자리(내 계정 «새 수업 코드 넣기»)로 코드를 들고 간다(자유 가입판에는 초대가 없다)

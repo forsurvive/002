@@ -41,12 +41,15 @@ const dummy = async () => (dummyHash = dummyHash || await hashPassword(randomByt
 // ---------------------------------------------------------------- 계정
 
 export const LOGIN_RE = /^[a-z0-9][a-z0-9._-]{2,63}$/;
+// 비밀번호 없음 — 구글로 만든 계정(docs/OPEN_EDITION.md §4-9). scrypt 꼴이 아니라 어떤 비밀번호와도 맞지 않는다.
+// 비밀번호로도 들어가려면 운영자의 재설정 코드로 정한다(그때 이 표시가 진짜 해시로 바뀐다).
+export const NO_PASSWORD = '!';
 
-export async function createUser(db, { loginId, password, displayName = '', email = null, isPlatformAdmin = false }) {
+export async function createUser(db, { loginId, password, displayName = '', email = null, isPlatformAdmin = false, noPassword = false }) {
   const login = String(loginId || '').trim().toLowerCase();
   if (!LOGIN_RE.test(login)) return { ok: false, code: 'validation', error: '아이디는 영문 소문자·숫자·. _ - 로 3~64자' };
-  if (String(password || '').length < MIN_PASSWORD) return { ok: false, code: 'validation', error: '비밀번호는 ' + MIN_PASSWORD + '자 이상' };
-  const hash = await hashPassword(password);
+  if (!noPassword && String(password || '').length < MIN_PASSWORD) return { ok: false, code: 'validation', error: '비밀번호는 ' + MIN_PASSWORD + '자 이상' };
+  const hash = noPassword ? NO_PASSWORD : await hashPassword(password);
   try {
     const { rows } = await db.query(
       `INSERT INTO users (login_id, email, display_name, password_hash, is_platform_admin)
@@ -94,8 +97,10 @@ export async function login(db, { loginId, password, ip = '', userAgent = '' }) 
   if (throttled(key)) return { ok: false, code: 'rate_limited', error: '잠시 뒤에 다시 시도해 주세요' };
   const { rows } = await db.query('SELECT id, password_hash, status FROM users WHERE login_id = $1', [login]);
   const u = rows[0];
-  const good = await verifyPassword(password, u ? u.password_hash : await dummy());
-  if (!u || !good || u.status !== 'active') {
+  // 비밀번호가 없는 계정(구글로만)도 없는 계정처럼 — 같은 시간 · 같은 문구
+  const real = !!u && u.password_hash !== NO_PASSWORD;
+  const good = await verifyPassword(password, real ? u.password_hash : await dummy());
+  if (!real || !good || u.status !== 'active') {
     noteFail(key);
     await audit(db, { actor: u ? u.id : null, action: 'auth.login_failed', targetType: 'user', targetId: login, ip });
     return SAME_FAILURE;
@@ -139,6 +144,8 @@ export async function logout(db, token) {
 // 비밀번호를 바꾸면 그 사람의 모든 세션을 끊는다
 export async function changePassword(db, userId, { current, next }) {
   const { rows } = await db.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
+  // 비밀번호가 없는 계정은 세션만으로 비밀번호를 정하지 못한다(훔친 세션이 오래 남는 길이 된다) — 운영자의 재설정 코드로
+  if (rows[0] && rows[0].password_hash === NO_PASSWORD) return { ok: false, code: 'no_password', error: '비밀번호가 없는 계정입니다(구글로 들어옵니다) — 비밀번호를 정하려면 운영자에게 재설정 코드를 받아 주세요' };
   if (!rows[0] || !(await verifyPassword(current, rows[0].password_hash))) return { ok: false, code: 'unauthenticated', error: '지금 비밀번호가 맞지 않습니다' };
   if (String(next || '').length < MIN_PASSWORD) return { ok: false, code: 'validation', error: '비밀번호는 ' + MIN_PASSWORD + '자 이상' };
   // 본인이 바꾸면 운영자가 들고 있던 사본(known_password_sealed)도 지운다 — 그때부터는 본인만 안다

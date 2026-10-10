@@ -36,7 +36,7 @@ function h(tag, attrs, ...kids) {
 // 첫 화면 — 계정이 있으면 아이디 · 비밀번호, 처음이면 초대 코드 → (맞으면) 그 자리에서 계정 만들기.
 // 시험 운영(출입 열쇠)이면 열쇠 칸이 맨 위에 하나 더 붙고, 어느 단추든 열쇠부터 넘긴다.
 // 자유 가입판(S.edition 'open')에는 초대 코드가 없다.
-const S = { gate: false, invite: null, say: '', edition: 'school' };
+const S = { gate: false, invite: null, say: '', edition: 'school', google: false };
 const $ = (id) => document.getElementById(id);
 const v = (id) => ($(id) ? $(id).value.trim() : '');
 const post = async (url, body) => {
@@ -54,11 +54,12 @@ async function passGate() {
   S.gate = false;
   if ($('gt-box')) $('gt-box').remove();
   const st = await fetch('/api/setup').then((r) => r.json()).catch(() => ({}));
-  const was = S.edition;
+  const was = S.edition + '|' + S.google;
   if (st.edition) S.edition = st.edition === 'open' ? 'open' : 'school';
+  S.google = !!st.google;
   if (st.needed) { draw(setupForm(st.ai, st.code)); return false; }
   // 열쇠 전에는 판을 몰랐다(초대 코드 칸이 섰다) — 자유 가입판이면 가입 칸이 있는 첫 화면으로 다시 그린다
-  if (S.edition !== was) { draw(mainForms()); tell('출입 열쇠를 넘겼습니다 — 다시 한 번 눌러 주세요'); return false; }
+  if (S.edition + '|' + S.google !== was) { draw(mainForms()); tell('출입 열쇠를 넘겼습니다 — 다시 한 번 눌러 주세요'); return false; }
   return true;
 }
 
@@ -136,6 +137,24 @@ async function joinWithAccount(e) {
   location.href = '/';
 }
 
+// 구글로 계속하기(자유 가입판 · 운영자가 켰을 때) — 이은 계정이면 들어가고, 처음이면 새 계정을 만든다(서버 /api/auth/google/start → 구글 → 돌아옴)
+async function googleGo() {
+  tell('');
+  if (!(await passGate())) return;
+  location.href = '/api/auth/google/start';
+}
+// 구글에서 돌아온 까닭(서버의 ?google=…) → 안내
+const GOOGLE_SAY = {
+  cancel: '구글 로그인을 그만뒀습니다',
+  state: '다시 시도해 주세요 — 시작한 이 브라우저에서 10분 안에 돌아와야 합니다',
+  expired: '시간이 지났습니다 — 다시 시도해 주세요',
+  failed: '구글과 확인을 마치지 못했습니다 — 잠시 뒤 다시 시도해 주세요',
+  disabled: '멈춘 계정입니다 — 운영자에게 문의해 주세요',
+  setup: '아직 가입을 받지 않습니다 — 운영자가 처음 설정을 마친 뒤에 다시 와 주세요',
+  busy: '잠시 뒤에 다시 시도해 주세요',
+  retry: '한 번 더 눌러 주세요',
+};
+
 // 처음 설정 — 계정이 하나도 없을 때만 서버가 needed 를 준다. 운영자 계정과 (있으면) AI 키를 한 번에.
 // 키는 서버가 봉해 저장하고 다시 돌려주지 않는다 — 이 화면도 보낸 뒤 칸을 비운다.
 async function setup(e) {
@@ -170,6 +189,8 @@ function mainForms() {
       h('input', { id: 'lg-pw', type: 'password', autocomplete: 'current-password' }),
       h('div', { class: 'line', style: 'margin-top:14px' }, h('button', { class: 'btn-red', type: 'submit', text: '로그인' }),
         h('button', { class: 'btn-text', type: 'button', text: S.forgot ? '닫기' : '비밀번호를 잊었어요', onclick: () => { S.forgot = !S.forgot; draw(mainForms()); } }))),
+    S.edition === 'open' && S.google ? h('div', { class: 'line', style: 'margin-top:12px' },
+      h('button', { class: 'btn-line', type: 'button', style: 'flex:1', text: 'Google 계정으로 계속하기', onclick: googleGo })) : null,
     S.forgot ? h('form', { onsubmit: resetPw, style: 'margin-top:14px;padding:14px;border-radius:12px;background:var(--group)' },
       h('div', { class: 'when', text: S.edition === 'open' ? '재설정 코드는 운영자에게 문의해 받습니다.' : '재설정 코드는 학생은 선생님(또는 기관 관리자)에게, 강사는 기관 관리자에게, 기관 관리자는 운영자에게 받습니다.' }),
       field('아이디', 'rs-id', 'text', { autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
@@ -277,10 +298,12 @@ function draw(form) {
   const st = await fetch('/api/setup').then((r) => r.json()).catch(() => ({}));
   S.gate = st.code === 'gate';
   S.edition = st.edition === 'open' ? 'open' : 'school';
+  S.google = !!st.google;
   // 링크로 왔으면(초대 링크 · 재설정 링크) 코드를 채워 둔다 — 주소창에서는 지운다(뒤에 남는 화면 · 스크린샷에 코드가 덜 보이게)
   const q = new URLSearchParams(location.search);
   const linkInvite = q.get('invite') || ''; const linkReset = q.get('reset') || ''; const linkId = q.get('id') || '';
-  if (linkInvite || linkReset) history.replaceState(null, '', '/login');
+  const googleBack = q.get('google') || '';
+  if (linkInvite || linkReset || googleBack) history.replaceState(null, '', '/login');
   if (linkReset && !st.needed) S.forgot = true;
   // 자유 가입판 — /login?signup 으로 오면(소개 페이지 · 결제창의 «진입 페이지») 가입 칸을 열어 둔다
   if (S.edition === 'open' && q.has('signup') && !linkReset) S.signup = true;
@@ -293,7 +316,7 @@ function draw(form) {
   } else if (!st.needed && linkInvite && $('iv-code')) {
     $('iv-code').value = linkInvite;
     await checkCode({ preventDefault() {} });   // 맞으면 곧바로 «계정 만들기» 칸이 열린다
-  }
+  } else if (GOOGLE_SAY[googleBack]) tell(GOOGLE_SAY[googleBack]);
   const boot = $('boot');
   if (boot) boot.remove();
 })();

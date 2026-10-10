@@ -8,6 +8,7 @@
 
 import { summarize, rulesOf, normEmail, kstDay, STATUS_SQL } from './service.mjs';
 import { isUuid } from '../tenancy.mjs';
+import { NO_PASSWORD } from '../auth.mjs';
 
 export const PASS_FILTERS = ['active', 'past_due', 'cancel_pending', 'ended', 'none', 'free'];
 
@@ -72,8 +73,11 @@ export function createBillingAdmin({ pool, billing }) {
     // 한 사람 — 이용권(줄들) · 결제 기록(가려서) · 메모
     async customer(userId) {
       if (!isUuid(userId)) return null;
-      const u = await one(`SELECT u.id, u.login_id, u.display_name, u.created_at, u.last_login_at, u.status, u.is_platform_admin, coalesce(c.free, false) AS free, coalesce(c.memo, '') AS memo
-        FROM users u LEFT JOIN billing_customers c ON c.user_id = u.id WHERE u.id = $1`, [userId]);
+      // 구글 로그인 — 이은 구글(이메일은 가려서) · 비밀번호가 없는 계정인가(구글로 만든 계정 — 비밀번호를 정하려면 재설정 코드)
+      const u = await one(`SELECT u.id, u.login_id, u.display_name, u.created_at, u.last_login_at, u.status, u.is_platform_admin, coalesce(c.free, false) AS free, coalesce(c.memo, '') AS memo,
+          u.password_hash = $2 AS no_password, (SELECT i.email FROM user_identities i WHERE i.provider = 'google' AND i.user_id = u.id LIMIT 1) AS google_email,
+          EXISTS (SELECT 1 FROM user_identities i WHERE i.provider = 'google' AND i.user_id = u.id) AS google
+        FROM users u LEFT JOIN billing_customers c ON c.user_id = u.id WHERE u.id = $1`, [userId, NO_PASSWORD]);
       if (!u) return null;
       const subs = (await pool.query(
         `SELECT s.provider, s.ref, s.status, s.paid_until, s.next_billing_date::text AS next_billing_date, s.service_ends_at, s.final_failure, s.last_paid_at, s.last_amount, s.created_at, p.name AS plan_name
@@ -81,7 +85,8 @@ export function createBillingAdmin({ pool, billing }) {
       const events = (await pool.query(`SELECT ${EVENT_COLS} FROM billing_events e LEFT JOIN users u ON u.id = e.user_id WHERE e.user_id = $1 ORDER BY e.received_at DESC, e.id DESC LIMIT 50`, [userId])).rows;
       const refunds = (await pool.query(`SELECT ${REFUND_COLS} FROM refund_requests r JOIN users u ON u.id = r.user_id WHERE r.user_id = $1 ORDER BY r.created_at DESC LIMIT 20`, [userId])).rows;
       return {
-        user: { userId: u.id, loginId: u.login_id, name: u.display_name, createdAt: u.created_at, lastLoginAt: u.last_login_at, accountStatus: u.status, operator: u.is_platform_admin, free: u.free, memo: u.memo },
+        user: { userId: u.id, loginId: u.login_id, name: u.display_name, createdAt: u.created_at, lastLoginAt: u.last_login_at, accountStatus: u.status, operator: u.is_platform_admin, free: u.free, memo: u.memo,
+          google: u.google ? { email: maskEmail(u.google_email) } : null, noPassword: !!u.no_password },
         pass: summarize(subs, { free: u.free, operator: u.is_platform_admin }),
         subscriptions: subs.map((s) => ({ provider: s.provider, ref: shortRef(s.ref), status: s.status, paidUntil: s.paid_until, nextBillingDate: s.next_billing_date || '', serviceEndsAt: s.service_ends_at,
           finalFailure: s.final_failure, lastPaidAt: s.last_paid_at, lastAmount: s.last_amount, plan: s.plan_name || '', createdAt: s.created_at })),

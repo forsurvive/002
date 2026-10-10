@@ -66,7 +66,23 @@ const done = (text) => tell(text, true);
   if (S.linkInvite) { history.replaceState(null, '', location.pathname); S.sayGood = true; S.fresh = true; S.say = '초대 링크로 왔습니다 — 아래 «새 수업 코드 넣기»의 [들어가기]를 누르면 지금 계정으로 참여합니다'; }
   // 결제를 마치고 돌아왔으면(그로블 «이동 페이지» = /account.html?paid=1) 웹훅이 닿을 때까지 잠깐 이용권을 다시 본다
   if (PAGE === 'account' && q.has('paid')) { history.replaceState(null, '', location.pathname); S.paidPoll = true; }
+  // 구글에서 돌아왔으면(?google=…, 잇기 · 구글로 가입) 알린다 — 주소창에서는 지운다
+  S.googleBack = PAGE === 'account' ? q.get('google') || '' : '';
+  if (S.googleBack) history.replaceState(null, '', location.pathname);
 }
+// 구글에서 돌아온 까닭(서버의 ?google=…) → 알림. [잘 됐는가, 문구]
+const GOOGLE_SAY = {
+  linked: [true, '구글 계정을 이었습니다 — 다음부터 로그인 화면의 [Google 계정으로 계속하기]로 들어옵니다'],
+  new: [true, '구글 계정으로 가입했습니다'],
+  already: [true, '이미 이 계정에 이어진 구글 계정입니다'],
+  taken: [false, '그 구글 계정은 다른 계정에 이어져 있습니다 — 그 계정으로 들어가려면 로그아웃한 뒤 [Google 계정으로 계속하기]'],
+  one: [false, '이 계정에는 이미 다른 구글 계정이 이어져 있습니다'],
+  cancel: [false, '구글 연결을 그만뒀습니다'],
+  state: [false, '다시 시도해 주세요 — 시작한 이 브라우저에서 10분 안에 돌아와야 합니다'],
+  expired: [false, '시간이 지났습니다 — 다시 시도해 주세요'],
+  failed: [false, '구글과 확인을 마치지 못했습니다 — 잠시 뒤 다시 시도해 주세요'],
+  busy: [false, '잠시 뒤에 다시 시도해 주세요'],
+};
 
 async function load() {
   const m = await edu('me.memberships');
@@ -74,6 +90,9 @@ async function load() {
   S.me = m.ok ? m : null;
   S.edition = (m.ok && m.edition) || 'school';
   S.orgs = {};
+  const gb = S.me && GOOGLE_SAY[S.googleBack];
+  if (gb) { S.say = gb[1] + (S.googleBack === 'new' ? ' — 아이디 ' + S.me.loginId + ' · 비밀번호 없이 구글로 들어옵니다' : ''); S.sayGood = gb[0]; S.fresh = gb[0]; }
+  S.googleBack = '';
   if (S.me && PAGE === 'account') S.myKeys = (await edu('me.key.list')).credentials || [];
   if (S.me && PAGE === 'account' && S.edition === 'open') await loadPass();
   if (S.me && S.me.platformAdmin && PAGE === 'account') { const v = await edu('me.sub.view'); S.sub = v.ok ? v : null; }
@@ -535,7 +554,7 @@ const ACT = {
   'license.limits': '쓸 수 있는 AI 바꿈', 'class.create': '수업 만듦', 'class.dates': '수업 기간', 'class.archive': '수업 닫음', 'class.reopen': '수업 다시 엶', 'class.assign': '강사 맡김', 'class.unassign': '강사 뺌', 'invite.create': '초대 코드',
   'invite.revoke': '초대 코드 거둠', 'invite.accept': '초대로 들어옴', 'credential.set': 'AI 키 넣음', 'credential.revoke': 'AI 키 지움', 'member.create': '계정 만듦',
   'member.remove': '사용자 뺌', 'member.reset_password': '비밀번호 재설정', 'workflow.save': '단계 고침', 'project.create': '작품 만듦', 'project.delete': '작품 지움',
-  'project.copy_personal': '개인 작품으로 복사', 'project.import': '작품 가져옴', 'ai.choose': 'AI 회사 고름', 'auth.login': '로그인', 'auth.login_failed': '로그인 실패',
+  'project.copy_personal': '개인 작품으로 복사', 'project.import': '작품 가져옴', 'ai.choose': 'AI 회사 고름', 'auth.login': '로그인', 'auth.login_failed': '로그인 실패', 'auth.google_login': '구글로 로그인', 'auth.google_link': '구글 계정 연결',
   'auth.password_changed': '비밀번호 바꿈', 'user.status': '계정 상태', 'admin.password_reset': '비밀번호 재설정(도구)', 'admin.user_created': '계정 만듦(도구)', 'setup.first_admin': '첫 관리자 만듦',
   'auth.signup': '가입', 'user.reset_code': '비밀번호 재설정 코드', 'billing.extend': '이용 기간 연장', 'billing.end': '이용권 끝냄', 'billing.free': '무료 이용', 'billing.memo': '고객 메모',
   'billing.link': '결제 연결', 'billing.ignore': '결제 무시', 'billing.plan_create': '결제 옵션 넣음', 'billing.plan_update': '결제 옵션 고침', 'billing.rules': '이용 규칙',
@@ -963,6 +982,11 @@ function membersBox(orgId, { fixed = false } = {}) {
 
 function passwordBox() {
   const k = 'pwbox';
+  // 구글로 만든 계정 — 비밀번호가 없다. 세션만으로는 정하지 못한다(서버도 막는다) — 운영자의 재설정 코드로.
+  if (S.me && S.me.noPassword) {
+    return PAGE !== 'account' ? null : section('내 비밀번호',
+      h('div', { class: 'when', text: '비밀번호 없음 — 구글 계정으로 들어옵니다. 비밀번호로도 들어가려면 운영자에게 재설정 코드를 받아 로그인 화면의 «비밀번호를 잊었어요»에 넣으세요(아이디 ' + S.me.loginId + ').' }));
+  }
   if (!S.open[k] && PAGE !== 'account') return h('button', { class: 'btn-text', text: '내 비밀번호 바꾸기', onclick: () => { S.open[k] = true; render(); } });
   const go = async () => {
     if (val('pw-next') !== val('pw-next2')) return tell('새 비밀번호가 서로 다릅니다');
@@ -978,6 +1002,18 @@ function passwordBox() {
       field('새 비밀번호(10자 이상)', 'pw-next', 'password', { autocomplete: 'new-password' }),
       field('새 비밀번호 한 번 더', 'pw-next2', 'password', { autocomplete: 'new-password' }),
       h('button', { class: 'btn-red', text: '바꾸기', onclick: go })));
+}
+
+// ---------------------------------------------------------------- 구글 로그인(자유 가입판, docs/OPEN_EDITION.md §4-9)
+// 켜졌을 때만. 이은 구글 계정(이메일)을 보이고, 안 이었으면 [구글 계정 연결] — 구글을 다녀와 이 화면으로 돌아온다.
+function googleBox() {
+  const g = S.me && S.me.google;
+  if (S.edition !== 'open' || !g || (!g.on && !g.linked)) return null;
+  return section('구글 로그인',
+    g.linked ? h('div', { class: 'notice good', text: '이어짐 — ' + (g.email || '구글 계정') + (g.since ? ' · ' + kday(g.since) + '부터' : '') + (g.on ? '' : ' · 지금은 구글 로그인이 꺼져 있습니다') })
+      : h('div', { class: 'line', style: 'align-items:center' },
+        h('span', { class: 'when', style: 'flex:1', text: '구글 계정을 이으면 로그인 화면의 [Google 계정으로 계속하기]로도 들어옵니다' }),
+        h('button', { class: 'btn-line', text: '구글 계정 연결', onclick: () => { location.href = '/api/auth/google/start?mode=link'; } })));
 }
 
 // ---------------------------------------------------------------- 단계 · 강의 카드 고쳐 쓰기
@@ -1150,7 +1186,8 @@ function customerDetail(d) {
       h('div', { class: 'name', style: 'flex:1;font-weight:700', text: (u.name || u.loginId) + ' · ' + u.loginId }),
       u.operator ? h('span', { class: 'mark', text: '운영자' }) : null,
       u.accountStatus !== 'active' ? h('span', { class: 'mark', style: 'color:var(--red)', text: '정지됨' }) : null),
-    h('div', { class: 'when', text: '가입 ' + day(u.createdAt) + (u.lastLoginAt ? ' · 마지막 로그인 ' + day(u.lastLoginAt) : '') }),
+    h('div', { class: 'when', text: '가입 ' + day(u.createdAt) + (u.lastLoginAt ? ' · 마지막 로그인 ' + day(u.lastLoginAt) : '')
+      + (u.google ? ' · 구글 로그인(' + u.google.email + ')' : '') + (u.noPassword ? ' · 비밀번호 없음(정하려면 재설정 코드)' : '') }),
     h('div', { class: 'lab', text: '이용권' }),
     h('div', { class: 'notice' + (p.active ? ' good' : ''), text: (p.operator ? '운영자 — 이용권 없이' : p.free ? '무료 이용' : PASS_SAY[p.status] || p.status)
       + (p.paidUntil && !p.free && !p.operator ? ' · 기한 ' + when(p.paidUntil) : '') + (p.nextBillingDate ? ' · 다음 결제일 ' + p.nextBillingDate : '') + (p.serviceEndsAt ? ' · ' + when(p.serviceEndsAt) + ' 해지' : '') }),
@@ -1359,7 +1396,19 @@ function rulesTab() {
       h('button', { class: 'btn-red', text: '저장', onclick: save })),
     toggleRow('환불은 결제 뒤 AI 작업을 하기 전까지만', !!R.refundNoUse, flipNoUse, '그로블 상품 설명 · 약관의 환불 규정과 같게 둡니다'),
     h('div', { class: 'when', style: 'margin-top:8px', text: '여유 — 다음 결제일 뒤 이만큼 더 씁니다(그로블의 갱신 재시도 3일 + 유예 7일). 갱신 소식이 끝내 오지 않아도 저절로 끝납니다.' }),
-    toggleRow('이용권이 끝났을 때 막는 것: 새 AI 작업만', true, null, '편집 · 열람 · 내보내기는 늘 됩니다 — 바꿀 수 없습니다(원칙: AI 실패 · 결제가 작품을 막지 않는다)'));
+    toggleRow('이용권이 끝났을 때 막는 것: 새 AI 작업만', true, null, '편집 · 열람 · 내보내기는 늘 됩니다 — 바꿀 수 없습니다(원칙: AI 실패 · 결제가 작품을 막지 않는다)'),
+    googleCard());
+}
+// 구글 로그인(§4-9) — 켜졌는가(Secrets 의 두 값) · 구글 클라우드 «승인된 리디렉션 URI»에 넣을 돌아오는 주소
+function googleCard() {
+  const on = !!(S.me && S.me.google && S.me.google.on);
+  const cb = location.origin + '/api/auth/google/callback';
+  return h('div', { class: 'card-box', style: 'margin-top:16px' },
+    h('div', { class: 'lab', text: '구글 로그인' }),
+    h('div', { class: 'when', text: on ? '켜짐 — 로그인 화면에 [Google 계정으로 계속하기]가 섭니다' : '꺼짐 — Secrets 에 GOOGLE_CLIENT_ID · GOOGLE_CLIENT_SECRET 을 넣고 다시 게시하면 켜집니다' }),
+    h('div', { class: 'line', style: 'align-items:center' },
+      h('div', { class: 'mark', style: 'font-size:13px;padding:4px 8px;word-break:break-all;white-space:normal', text: cb }), copyBtn(cb),
+      h('span', { class: 'when', text: '← 구글 클라우드 «승인된 리디렉션 URI»(게시한 주소에서 열었을 때 복사)' })));
 }
 
 // ---------------------------------------------------------------- 운영(플랫폼 관리자)
@@ -1529,7 +1578,7 @@ function paint() {
   }
   if (PAGE === 'account') {
     $('root').replaceChildren(h('div', { class: 'body' }, head('내 계정'), notice,
-      S.loggedIn ? [S.edition === 'open' ? passBox() : joinBox(), myKeyBox(), subBox(), passwordBox(), themeBox()] : h('div', { class: 'when', text: '로그인이 필요합니다' })));
+      S.loggedIn ? [S.edition === 'open' ? passBox() : joinBox(), myKeyBox(), subBox(), googleBox(), passwordBox(), themeBox()] : h('div', { class: 'when', text: '로그인이 필요합니다' })));
     return;
   }
   $('root').replaceChildren(h('div', { class: 'body' }, head('내 수업'), notice,
