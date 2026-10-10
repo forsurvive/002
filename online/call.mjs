@@ -7,7 +7,7 @@
 
 import { createHash } from 'node:crypto';
 import { planCall } from '../core/reference/plan.mjs';
-import { cleanResponse } from '../core/prompt/assemble.mjs';
+import { cleanResponse, cleanPart } from '../core/prompt/assemble.mjs';
 import { promptFor, slotModel } from '../tools/prompt-pick.mjs';
 import { haveBrain } from '../tools/prompts.mjs';
 
@@ -42,7 +42,7 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
     : null);
 
   // 공통 — 기록을 남기고 · 라우터로 부르고 · 결과를 적는다
-  async function send(pid, project, { systemPrompt, userPrompt, alias, modelSource = '', code, inputs = [], request = '', requestOnce = '', stageKey = '', stageTier = '', target = '', signal = null }, ctx) {
+  async function send(pid, project, { systemPrompt, userPrompt, alias, modelSource = '', code, inputs = [], request = '', requestOnce = '', stageKey = '', stageTier = '', target = '', signal = null, part = false }, ctx) {
     // 고른 AI 회사 — 작품이 정했으면 그것, 아니면 비용 주체의 기본(기관 작품은 기관, 개인 작품은 그 사람)
     const row = (await pool.query(
       `SELECT p.owner_user_id, p.organization_id, p.model_policy->>'provider' AS project_provider,
@@ -91,7 +91,8 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
         },
       },
     });
-    const text = r.ok ? cleanResponse(r.text) : '';
+    // 이어 쓴 조각은 다듬지 않는다(잇는 자리) · 길이 한도에 닿은 응답은 끝을 다듬지 않는다(core/generation/continue.mjs)
+    const text = !r.ok ? '' : part ? cleanPart(r.text) : cleanResponse(r.text, { keepEnd: r.finishReason === 'length' });
     const okNow = r.ok && !!text;
     const u = r.usage || {};
     const rt = r.routing || {};
@@ -106,8 +107,8 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
         r.costUsd == null ? null : r.costUsd, r.costSource || 'none', String(r.providerRequestId || ''), rt.provider || '', rt.tier || '', rt.modelId || '',
         rt.ownerType || '', rt.credentialId || null]);
     if (!r.ok) return { ok: false, error: r.error, reason: r.reason, retryAfterMs: r.retryAfterMs || 0, runId: run };
-    if (!text) return { ok: false, error: '빈 응답', reason: 'empty', runId: run };
-    return { ok: true, text, usage: r.usage, costUsd: r.costUsd, runId: run };
+    if (!text.trim()) return { ok: false, error: '빈 응답', reason: 'empty', runId: run };
+    return { ok: true, text, usage: r.usage, costUsd: r.costUsd, runId: run, finishReason: String(r.finishReason || 'stop') };
   }
 
   // 계획을 거치는 부르기 — Core(run.mjs)가 부르는 모양: call(args, ctx)
@@ -120,15 +121,16 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
     return send(pid, project, {
       systemPrompt: plan.systemPrompt, userPrompt: plan.userPrompt, alias: plan.model, modelSource: plan.modelSource, code,
       inputs: plan.inputs, request: args.request, requestOnce: args.requestOnce, stageKey: args.stageKey, stageTier: args.stageTier, target: (args.targetIds || [])[0] || '', signal: args.signal,
+      part: !!args.continueFrom,
     }, ctx);
   }
 
   // 이미 지은 프롬프트로 곧장 — 에이전트 준비(F-KIND · F-AGENT)가 쓴다(core/generation/agents.mjs 의 raw)
-  call.raw = async ({ systemPrompt, prompt, code, signal = null, model = '' }, ctx = {}) => {
+  call.raw = async ({ systemPrompt, prompt, code, signal = null, model = '', continued = false }, ctx = {}) => {
     if (!haveBrain()) return { ok: false, error: '내장 프롬프트를 읽지 못했습니다', reason: 'prompts' };
     const project = await store.get(ctx.pid);
     if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다', reason: 'other' };
-    return send(ctx.pid, project, { systemPrompt, userPrompt: prompt, alias: model, modelSource: 'control', code, signal }, ctx);
+    return send(ctx.pid, project, { systemPrompt, userPrompt: prompt, alias: model, modelSource: 'control', code, signal, part: !!continued }, ctx);
   };
 
   return call;

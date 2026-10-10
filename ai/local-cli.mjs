@@ -13,7 +13,7 @@ export const localCliProvider = {
     if (!r.ok) return failure(r.reason, r.error, common);
     const u = r.usage || {};
     return success({
-      ...common, text: r.text, usage: u, finishReason: 'stop',
+      ...common, text: r.text, usage: u, finishReason: r.finishReason || 'stop',   // 길이 한도에 닿았으면 length(tools/call.mjs) — Core 가 이어 쓴다
       costUsd: r.usage ? Number(u.costUsd) || 0 : null, costSource: r.usage ? 'provider' : 'none',
     });
   },

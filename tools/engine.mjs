@@ -2,7 +2,7 @@
 // 자동 집필과 손 작업이 모두 이 문을 지난다.
 
 import { haveBrain } from './prompts.mjs';
-import { cleanResponse } from './assemble.mjs';
+import { cleanResponse, cleanPart } from './assemble.mjs';
 import { planCall } from '../core/reference/plan.mjs';
 import * as gen from '../core/generation/run.mjs';
 import { localCliProvider } from '../ai/local-cli.mjs';
@@ -44,7 +44,7 @@ export async function callOnce({
   pid, code, refIds = [], targetIds = [], agentIds = [], request = '', taskExtra = '',
   materials = false, allFinals = false, talk = [], prev = '', next = '',
   signal = null, noCount = null, finalFirst = false, keepSeat = false,
-  extraTargets = [], modelPick = '', digests = null, reading = null, targetPart = null,
+  extraTargets = [], modelPick = '', digests = null, reading = null, targetPart = null, continueFrom = null,
 }) {
   // **막히는 것은 새 호출뿐이다** — 읽기·내보내기·되짚기는 이 문을 지나지 않는다.
   const missing = promptsMissing();
@@ -55,17 +55,18 @@ export async function callOnce({
   // 무엇을 어느 구획에 싣고 어느 모델로 부를지는 Core 의 계획이 정한다(core/reference/plan.mjs).
   const plan = planCall(project, {
     refIds, targetIds, agentIds, request, taskExtra, materials, allFinals, talk, prev, next,
-    noCount, finalFirst, keepSeat, extraTargets, modelPick, digests, reading, targetPart,
+    noCount, finalFirst, keepSeat, extraTargets, modelPick, digests, reading, targetPart, continueFrom,
   }, { pr: promptFor(project, code), slotModel: slotModel(project, code) });
 
   const r = await callModel({ systemPrompt: plan.systemPrompt, prompt: plan.userPrompt, code, signal, model: plan.model });
   // 사유(reason)와 한도(limit)를 떨어뜨리지 않는다 — 작업이 이것으로 «멈출까 실패할까»를 가른다.
   if (!r.ok) return { ok: false, error: r.error, reason: r.reason, limit: r.limit };
-  const text = cleanResponse(r.text);
-  if (!text) return { ok: false, error: '빈 응답', reason: 'empty', limit: r.limit };
+  // 이어 쓴 조각은 다듬지 않는다(잇는 자리) · 길이 한도에 닿은 응답은 끝을 다듬지 않는다(core/generation/continue.mjs)
+  const text = continueFrom ? cleanPart(r.text) : cleanResponse(r.text, { keepEnd: r.finishReason === 'length' });
+  if (!text.trim()) return { ok: false, error: '빈 응답', reason: 'empty', limit: r.limit };
   // planned — 무엇을 보고 만들었나(본문은 빼고 이름·길이만). 생성 기록(generation_runs)의 재료다.
   const planned = { model: plan.model, modelSource: plan.modelSource, inputs: plan.inputs.map(({ role, id, name, text: t }) => ({ role, id, name, chars: t.length })) };
-  return { ok: true, text, usage: r.usage, costUsd: r.costUsd, limit: r.limit, authSource: r.authSource, planned };
+  return { ok: true, text, usage: r.usage, costUsd: r.costUsd, limit: r.limit, authSource: r.authSource, planned, finishReason: r.finishReason || 'stop' };
 }
 
 // 다시 부를 값이 있을 때만 다시 부른다.

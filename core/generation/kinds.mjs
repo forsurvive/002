@@ -9,6 +9,7 @@
 
 import { runUpdate, runTalk, runThreadDoc, runStage } from './run.mjs';
 import { readingInParts } from './reading.mjs';
+import { continuing } from './continue.mjs';
 
 const pick = (v) => String(v || '');
 
@@ -29,6 +30,7 @@ export async function runKind(deps, kind, params, ctx) {
   const fn = JOB_KINDS[kind];
   if (!fn) return { ok: false, error: '모르는 작업 종류입니다: ' + kind };
   // 한 번에 실리지 않으면 나눠 읽고 모아 쓴다(reading.mjs) — 자르지 않는다. 자료 분석(agents)은 제 자리(runStudy)에서 같은 문을 지난다.
-  const d = kind === 'agents' || !deps.call || !deps.store ? deps : { ...deps, call: readingInParts(deps.call, deps.store) };
+  // 응답이 길이 한도에 닿아 끊기면 끊긴 자리부터 이어 쓴다(continue.mjs) — 나눠 읽는 조각 · 부분 · 모아 쓰기마다.
+  const d = kind === 'agents' || !deps.call || !deps.store ? deps : { ...deps, call: readingInParts(continuing(deps.call), deps.store) };
   return fn(d, ctx, params || {});
 }

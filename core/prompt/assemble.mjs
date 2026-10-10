@@ -52,6 +52,25 @@ export function partTask({ k, n, mode = 'rewrite', before = '', after = '' }) {
   return lines.join('\n');
 }
 
+// ---------------------------------------------------------------- 이어 쓰기(응답이 길이 한도에 닿아 끊겼을 때 — core/generation/continue.mjs)
+// 끊긴 응답(«이미 쓴 부분»)을 통째로 보여 주고, 끊긴 자리 바로 다음부터 이어 쓰게 한다. 할 일 · 요청사항 · 참조는 처음 부른 것 그대로다.
+export function continueTask({ n = 1, text = '' } = {}) {
+  const tail = s(text).slice(-400);
+  return [
+    `앞선 응답이 길이 한도에 닿아 끊겼다(이어 쓰기 ${n}번째). «이미 쓴 부분»이 지금까지 쓴 응답이다.`,
+    '끊긴 자리 바로 다음부터 이어 써라 — 이미 쓴 것을 되풀이하거나 처음부터 다시 쓰지 않는다. 문장이나 낱말 중간에서 끊겼으면 그 나머지부터 쓴다.',
+    '위의 할 일과 요청사항은 그대로다. 이어지는 글만 내놓는다(머리말 · 맺음말 없이). 끊긴 자리가 문단의 끝이면 빈 줄로 시작한다.',
+    '끊긴 자리(이미 쓴 부분의 마지막):',
+    neutralize(tail),
+  ].join('\n');
+}
+
+// 이미 쓴 부분 — 통째, 또는(통째로 실리지 않을 때) 끝쪽만. 앞이 있다는 것을 밝힌다.
+export const writtenOf = (text, tail = 0) => {
+  const t = s(text);
+  return tail > 0 && t.length > tail ? '(이미 쓴 부분이 길어 끝쪽 ' + tail.toLocaleString('en-US') + '자만 싣는다 — 그 앞도 이미 쓴 것이다)\n…' + t.slice(-tail) : t;
+};
+
 // 뽑아 옮긴 것을 원문 자리에 실을 때 붙이는 머리 — 읽는 쪽이 «원문 전체를 대신하는 것»임을 알게
 export const digestNote = (chars) => `(원문 ${Number(chars).toLocaleString('en-US')}자가 한 번에 실리지 않아, 나눠 읽으며 이번 일에 반영할 것을 빠짐없이 뽑아 옮긴 것이다)\n`;
 
@@ -113,7 +132,7 @@ export function specBlock(project, { capNote = true } = {}) {
  * 어느 구획도 자르지 않는다.
  */
 export function buildUser({
-  project, materials = [], refs = [], finals = [], targets = [], talk = [], reading = [],
+  project, materials = [], refs = [], finals = [], targets = [], talk = [], reading = [], written = '',
   request = '', task = '', noCount = true,
 } = {}) {
   // 한 문서가 여러 자격을 가지면 한 구획에만 남긴다(부르는 쪽에서 이미 갈라 놓지만 한 번 더 막는다).
@@ -132,6 +151,8 @@ export function buildUser({
     section('대상', itemsOf(targets)),
     section('대화', itemsOf(talk)),
     section('나눠 읽는 부분', itemsOf(reading)),
+    // 이어 쓰기 — 끊긴 응답 통째(자르지 않는다)
+    s(written) ? section('이미 쓴 부분(끊긴 응답)', [neutralize(written)]) : '',
     s(request).trim() ? section('이번 요청사항', [neutralize(request)]) : '',
     section('이번에 할 일', [s(task) + (noCount ? '\n세어 말하지 않는다.' : '')]),
   ];
@@ -139,12 +160,17 @@ export function buildUser({
 }
 
 // ---------------------------------------------------------------- 응답 후처리 (셋뿐)
+// keepEnd — 길이 한도에 닿아 끊긴 응답은 끝을 다듬지 않는다(이어 쓸 때 끊긴 자리 · 문단 경계가 그대로 남게).
 
-export function cleanResponse(text) {
-  let t = s(text).replace(/\r\n/g, '\n').trim();
+export function cleanResponse(text, { keepEnd = false } = {}) {
+  let t = s(text).replace(/\r\n/g, '\n');
+  t = keepEnd ? t.replace(/^\s+/, '') : t.trim();
   const fence = t.match(/^```[^\n]*\n([\s\S]*?)\n?```$/);
   if (fence) t = fence[1].trim();
   const lines = t.split('\n');
-  if (lines.length && /^#\s+/.test(lines[0])) { lines.shift(); t = lines.join('\n').trim(); }
+  if (lines.length && /^#\s+/.test(lines[0])) { lines.shift(); t = lines.join('\n'); t = keepEnd ? t.replace(/^\s+/, '') : t.trim(); }
   return t;
 }
+
+// 이어 쓴 조각 — 줄바꿈 꼴만 맞춘다(앞뒤를 다듬지 않는다 — 잇는 자리의 띄어쓰기 · 빈 줄이 그 조각에 있다)
+export const cleanPart = (text) => s(text).replace(/\r\n/g, '\n');

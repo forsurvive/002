@@ -12,6 +12,7 @@ import * as model from '../domain/model.mjs';
 import { buildSystem, buildUser, cleanResponse } from '../prompt/assemble.mjs';
 import { materialItems } from '../reference/plan.mjs';
 import { readingInParts } from './reading.mjs';
+import { continuing } from './continue.mjs';
 
 export const CRAFT_MIN = 2000; // 기획서가 못 박은 하한. 위쪽 상한은 두지 않는다.
 export const STUDY_TITLE = '자료 분석';
@@ -103,7 +104,9 @@ export function agentsReady(project, slots) {
 
 // request 는 이번 한 번만 싣는 작가의 말이다(«다시» 를 누르며 적은 것). 저장하지 않는다.
 export async function prepareAgents(deps, pid, ctx, request = '') {
-  const { store, raw, prompts } = deps;
+  const { store, prompts } = deps;
+  // 판정 · 짓기도 길이 한도에 닿아 끊기면 끊긴 자리부터 잇는다(continue.mjs — 지은 작법이 잘린 채 남지 않게)
+  const raw = continuing(deps.raw, { raw: true });
   const project = await store.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
   if (ctx) ctx.step('글의 종류 가리기');
@@ -190,7 +193,7 @@ export async function runStudy(deps, pid, ctx, request = '') {
 
   const delays = deps.retryDelays || RETRY_MS;
   // 자료가 한 번에 실리지 않으면(invalid — «입력이 너무 깁니다») 자르지 않고 나눠 읽어 모은다(reading.mjs, 2026-10-08 사용자 지시)
-  const readCall = readingInParts(call, store);
+  const readCall = readingInParts(continuing(call), store);   // 길이 한도에 닿아 끊기면 이어 쓴다(continue.mjs)
   const r = await persist(() => readCall({ pid, code: 'S02', materials: true, allFinals: true, request, signal: ctx && ctx.signal }, ctx), ctx, delays);
   if (!r.ok) return PASSING.has(r.reason || 'other') || r.reason === 'invalid' ? r : stopped(r);
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };

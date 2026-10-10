@@ -42,7 +42,7 @@ export function createSubscriptionProvider({ cli = '', run = runClaudeCall } = {
       const u = r.usage || {};
       // 구독은 호출마다 돈이 나가지 않는다 — CLI 가 주는 total_cost_usd 는 «API 였다면»의 값이라 비용으로 적지 않는다.
       return success({
-        ...common, text: r.text, finishReason: 'stop', costUsd: null, costSource: 'subscription',
+        ...common, text: r.text, finishReason: r.finishReason || 'stop', costUsd: null, costSource: 'subscription',
         usage: { inputTokens: u.input || 0, outputTokens: u.output || 0, cacheReadTokens: u.cacheRead || 0, cacheWriteTokens: u.cacheWrite || 0 },
       });
     },

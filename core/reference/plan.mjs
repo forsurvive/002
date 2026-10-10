@@ -4,7 +4,7 @@
 // tools/engine.mjs 의 callOnce 앞부분을 의미 그대로 옮겼다(온라인화 Phase 1 — Core 분리).
 // 계획이 «실은 것의 목록»(inputs)을 함께 돌려주므로, 생성 기록이 «이 결과는 무엇을 보고 만들었나»를 남길 수 있다.
 
-import { buildSystem, buildUser, readTask, partTask, digestNote } from '../prompt/assemble.mjs';
+import { buildSystem, buildUser, readTask, partTask, digestNote, continueTask, writtenOf } from '../prompt/assemble.mjs';
 import * as model from '../domain/model.mjs';
 
 const asItem = (d) => ({ id: d.id, name: d.title, text: model.bodyOf(d) });
@@ -33,6 +33,7 @@ export function materialItems(project) {
 
 /**
  * pr 은 그 자리의 프롬프트(작가 고침 > 지은 것 > 내장을 이미 고른 것), slotModel 은 그 자리에 정해 둔 모델(없으면 '').
+ * continueFrom = { text, n } — 앞선 응답이 길이 한도에 닿아 끊겼을 때: 같은 것을 싣고 «이미 쓴 부분»을 더해 끊긴 자리부터 이어 쓰게 한다(core/generation/continue.mjs).
  * 돌려주는 값: { systemPrompt, userPrompt, model, modelSource, inputs }
  *   inputs = [{ role: 'material'|'final'|'target'|'reference'|'extra'|'talk', id, name, text }] — 실린 차례 그대로
  */
@@ -40,7 +41,7 @@ export function planCall(project, {
   refIds = [], targetIds = [], agentIds = [], request = '', taskExtra = '',
   materials = false, allFinals = false, talk = [], prev = '', next = '',
   noCount = null, finalFirst = false, keepSeat = false,
-  extraTargets = [], modelPick = '', digests = null, reading = null, targetPart = null,
+  extraTargets = [], modelPick = '', digests = null, reading = null, targetPart = null, continueFrom = null,
 } = {}, { pr, slotModel = '' } = {}) {
   // 자료도 보통 문서다 — 참조로 걸면 참조로, 확정본이면 확정본으로 실린다.
   // 다만 에이전트 준비(materials)가 자료를 통째로 «■ 자료» 구획에 실을 때는 그 문서들을 다른 구획에 겹쳐 싣지 않는다.
@@ -78,7 +79,10 @@ export function planCall(project, {
   if (extraTargets.length) targets = [...targets, ...extraTargets];
 
   const task0 = [pr.task, taskExtra].filter((x) => String(x || '').trim()).join('\n');
-  const task = targetPart ? task0 + '\n\n' + partTask(targetPart) : task0;
+  // 이어 쓰기 — 할 일 끝에 «끊긴 자리부터»를 붙이고, 끊긴 응답 통째를 «이미 쓴 부분»에 싣는다
+  const goOn = (t) => (continueFrom ? t + '\n\n' + continueTask(continueFrom) : t);
+  const written = continueFrom ? writtenOf(continueFrom.text, Number(continueFrom.tail) || 0) : '';
+  const task = goOn(targetPart ? task0 + '\n\n' + partTask(targetPart) : task0);
   // 작가가 걸어 둔 사람들 — 있으면 이들이 «누가 쓰는가»를 대신한다.
   // keepSeat 이면 그 자리의 사람이 맨 앞에 그대로 남고 걸린 사람은 거기에 더해진다(논의 스레드).
   // 자리의 작법은 «■ 작법» 첫 덩이로 이미 실리므로 여기서는 이름과 역할만 세운다.
@@ -102,7 +106,7 @@ export function planCall(project, {
     const smallTalk = talk.reduce((n, m) => n + String(m.text || '').length, 0) <= 20000 ? talk : [];
     return {
       systemPrompt: buildSystem({ prompt: pr, crew, withFinalRule: false, withNoCount: false }),
-      userPrompt: buildUser({ project, reading: [part], talk: smallTalk, request, task: readTask({ ...reading, later }), noCount: false }),
+      userPrompt: buildUser({ project, reading: [part], talk: smallTalk, written, request, task: goOn(readTask({ ...reading, later })), noCount: false }),
       model: useModel, modelSource,
       inputs: [{ role: reading.role || 'reference', id: part.id, name: part.name, text: part.text }],
     };
@@ -114,7 +118,7 @@ export function planCall(project, {
     project,
     // 에이전트 준비만 자료를 통째로 싣는다. 손으로 여는 자리에서 고른 자료는 참조 · 확정본 구획으로 간다.
     materials: mSwap,
-    refs: rSwap, finals: fSwap, targets, talk, request, task, noCount: nc,
+    refs: rSwap, finals: fSwap, targets, talk, written, request, task, noCount: nc,
   });
 
   // 실린 것의 목록 — buildUser 의 구획 차례(자료 → 참조 → 확정본 → 대상 → 대화)대로.

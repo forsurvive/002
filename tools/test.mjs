@@ -864,6 +864,17 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   await eng.callWithRetry({ pid: rp.pid, code: 'F-UPDATE', request: '이어 써라' });
   eq('밀린 것이면 두 번 부른다', calls, 2);
 
+  // 개인판도 길이 한도에 닿으면 끊긴 자리부터 잇는다(실행기가 length 를 알리면 — tools/call.mjs) — 한 판으로, 잘린 글 없이
+  globalThis.__SE2_MOCK_FN = ({ mockKey, prompt }) => (mockKey !== 'F-UPDATE' ? MOCK_FN({ mockKey, prompt })
+    : String(prompt).includes('■ 이미 쓴 부분(끊긴 응답)') ? { text: ' 이어서 마친 글', finishReason: 'stop' } : { text: '개인판에서 길게 쓰다 끊긴 글', finishReason: 'length' });
+  const lm = await call.runClaudeCall({ prompt: '한 줄', mockKey: 'F-UPDATE' });
+  ok('실행기 결과가 길이 한도를 알린다(finishReason)', lm.ok && lm.finishReason === 'length');
+  const ld = await post('doc.create', { pid: rp.pid, title: '개인판 긴 글' });
+  await post('doc.update', { pid: rp.pid, id: ld.id });
+  await settle(rp.pid, 60000);
+  const ldoc = (await stateOf(rp.pid)).project.docs.find((x) => x.id === ld.id);
+  ok('**개인판 — 끊긴 응답을 이어 써서 한 판으로 남긴다**', ldoc && ldoc.body === '개인판에서 길게 쓰다 끊긴 글 이어서 마친 글', ldoc && ldoc.body);
+
   globalThis.__SE2_MOCK_FN = MOCK_FN;
   await post('project.delete', { pid: rp.pid });
   call.forgetLimit();
@@ -2345,6 +2356,89 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     ok('끝까지 실리지 않으면 invalid 와 사람 말 까닭을 돌려준다', never.ok === false && never.reason === 'invalid' && never.error === rd.TOO_LONG);
     ok('나눠 자르기는 경계에서 — 이어 붙이면 원문 그대로', rd.splitText(marked('A', 6), 60000).join('') === marked('A', 6) && rd.splitText(marked('A', 6), 60000).every((x) => x.length <= 60000));
     for (const d of [bigA, bigB, small, manu, bigM, chk]) model.docDelete(mem, d.id);
+  }
+  // 이어 쓰기 — 응답이 길이 한도에 닿아 끊기면 끊긴 자리부터 잇는다(core/generation/continue.mjs, docs/EBOOK_EDITION.md §5-1)
+  {
+    const plan = await import('../core/reference/plan.mjs');
+    const cont = await import('../core/generation/continue.mjs');
+    const PR = { task: '할 일', name: 'n', role: 'r', craft: '' };
+    const rep = '그 겨울 바다는 생각보다 훨씬 고요했고 차가웠다';   // 20자가 넘는 겹침
+    ok('잇는 자리 — 되풀이한 끝(20자 이상)은 걷고, 짧게 겹친 말은 그대로', cont.joinContinued('첫 문단이 끝나고 ' + rep, rep + '. 그리고 봄이 왔다') === '첫 문단이 끝나고 ' + rep + '. 그리고 봄이 왔다'
+      && cont.joinContinued('끝말', '끝말잇기') === '끝말끝말잇기' && cont.joinContinued('문단 끝.\n', '\n\n\n다음 문단') === '문단 끝.\n\n다음 문단');
+    const lw = model.docCreate(mem, { title: '긴 장', body: '' });
+    model.docWrite(mem, lw.id, { request: '길게 써라〈R〉' });
+    const seenC = []; const stepsC = [];
+    const pieces = ['첫 조각의 글이 여기서 끊', '긴다. 둘째 조각', '이 끝난다.'];
+    const fakeC = async (a) => {
+      const p0 = plan.planCall(mem, a, { pr: PR });
+      seenC.push({ n: a.continueFrom ? a.continueFrom.n : 0, prompt: p0.userPrompt });
+      const i = a.continueFrom ? a.continueFrom.n : 0;
+      return { ok: true, text: pieces[i], finishReason: i < pieces.length - 1 ? 'length' : 'stop' };
+    };
+    const gotC = await kinds.runKind({ store: memStore, call: fakeC }, 'update', { docId: lw.id }, { pid: mem.id, step: (t) => stepsC.push(t), addDoc() {} });
+    ok('**출력 상한에 닿아 끊긴 응답을 끊긴 자리부터 이어 붙여 한 판으로 남긴다**', gotC.ok && model.findDoc(mem, lw.id).body === '첫 조각의 글이 여기서 끊긴다. 둘째 조각이 끝난다.', model.findDoc(mem, lw.id).body);
+    ok('**이어 쓰는 부르기는 같은 요청사항 · 할 일에 «이미 쓴 부분» 통째와 끊긴 자리를 더한다**', seenC.length === 3 && seenC.slice(1).every((x) => x.prompt.includes('길게 써라〈R〉') && x.prompt.includes('■ 이미 쓴 부분(끊긴 응답)') && x.prompt.includes('이어 쓰기 ' + x.n + '번째'))
+      && seenC[2].prompt.includes('첫 조각의 글이 여기서 끊긴다. 둘째 조각') && !seenC[0].prompt.includes('이미 쓴 부분'));
+    ok('작업 줄에 «이어 쓰기 n»', stepsC.includes('이어 쓰기 1') && stepsC.includes('이어 쓰기 2'));
+    // 잘린 글을 결과로 내지 않는다(2026-10-10 «생성 결과가 잘려서도 안돼») — 끝나지 않고 맴돌면 실패, 기존 글은 그대로
+    let calls = 0;
+    model.docWrite(mem, lw.id, { body: '먼저 있던 글' });
+    const endless = async (a) => { calls += 1; return { ok: true, text: a.continueFrom ? '더 쓴 글 ' + calls + ' — 이어지는 문장이 계속된다' : '시작', finishReason: 'length' }; };
+    const gotE = await kinds.runKind({ store: memStore, call: endless }, 'update', { docId: lw.id }, { pid: mem.id, step() {}, addDoc() {} });
+    ok('**끝나지 않고 맴돌면(안전망) 실패로 — 잘린 글을 판으로 남기지 않고 기존 글은 그대로**', gotE.ok === false && calls === cont.CONTINUE_GUARD + 1 && model.findDoc(mem, lw.id).body === '먼저 있던 글', JSON.stringify(gotE));
+    ok('안전망은 횟수 제한이 아니라 맴돎 막이 — 출력 상한 12.8만 토큰이면 수백만 자', cont.CONTINUE_GUARD >= 16);
+    let stuckCalls = 0;
+    const stuckC = cont.continuing(async (a) => { stuckCalls += 1; return { ok: true, text: a.continueFrom ? '' + '가' : '처음 글', finishReason: 'length' }; }, { waits: [] });
+    const sr = await stuckC({ pid: mem.id, code: 'F-UPDATE' }, null);
+    ok('**나아가지 않고 같은 자리를 맴돌면 일찍 멈춘다(실패 — 잘린 글을 내지 않는다)**', sr.ok === false && stuckCalls === 4, JSON.stringify(sr) + ' ' + stuckCalls);
+    // 잇다가 잠깐 밀리면 다시 부르고, 끝내 안 되면 실패(잘린 글 대신)
+    let tries = 0;
+    const flaky = cont.continuing(async (a) => { if (!a.continueFrom) return { ok: true, text: '앞', finishReason: 'length' }; tries += 1; return tries < 3 ? { ok: false, reason: 'overloaded', error: '붐빔' } : { ok: true, text: '뒤', finishReason: 'stop' }; }, { waits: [0, 0, 0] });
+    const fr = await flaky({ pid: mem.id, code: 'F-UPDATE' }, null);
+    ok('**잇다가 잠깐 밀리면 사이를 두고 다시 부른다**', fr.ok && fr.text === '앞뒤' && fr.finishReason === 'stop' && tries === 3);
+    const dead = cont.continuing(async (a) => (a.continueFrom ? { ok: false, reason: 'auth', error: '키' } : { ok: true, text: '받은 데까지', finishReason: 'length' }), { waits: [0] });
+    const dr = await dead({ pid: mem.id, code: 'F-UPDATE' }, null);
+    ok('**끝내 잇지 못하면 잘린 글이 아니라 실패(까닭 그대로)**', dr.ok === false && dr.reason === 'auth' && !dr.text);
+    // 이미 쓴 부분까지 한 번에 실리지 않으면 끝쪽만 싣고 잇는다 — 그래도 안 되면 invalid 로(바깥의 나눠 읽기가 입력을 줄여 다시 쓴다)
+    const tailSeen = [];
+    const longFirst = '가'.repeat(60000);
+    const tailC = cont.continuing(async (a) => {
+      if (!a.continueFrom) return { ok: true, text: longFirst, finishReason: 'length' };
+      tailSeen.push(a.continueFrom.tail || 0);
+      return (a.continueFrom.tail || 0) === 0 || a.continueFrom.tail > 20000 ? { ok: false, reason: 'invalid', error: '깁니다' } : { ok: true, text: '끝', finishReason: 'stop' };
+    }, { waits: [], tails: [50000, 10000] });
+    const tr = await tailC({ pid: mem.id, code: 'F-UPDATE' }, null);
+    ok('**이미 쓴 부분이 통째로 안 실리면 끝쪽만 싣고 잇는다(통째 → 5만 → 1만)**', tr.ok && tr.text === longFirst + '끝' && tailSeen.join(',') === '0,50000,10000', tailSeen.join(','));
+    const planT = plan.planCall(mem, { pid: mem.id, code: 'F-UPDATE', continueFrom: { text: '앞'.repeat(1000) + '끝쪽', n: 2, tail: 5 } }, { pr: PR });
+    ok('끝쪽만 실을 때는 그 앞도 이미 쓴 것임을 밝힌다', planT.userPrompt.includes('끝쪽 5자만 싣는다') && planT.userPrompt.includes('…앞앞앞끝쪽') && !planT.userPrompt.includes('앞'.repeat(1000)));
+    const allInvalid = cont.continuing(async (a) => (a.continueFrom ? { ok: false, reason: 'invalid', error: '깁니다' } : { ok: true, text: '앞', finishReason: 'length' }), { waits: [] });
+    eq('끝쪽으로도 안 실리면 invalid 그대로 — 바깥의 나눠 읽기가 받는다', (await allInvalid({ pid: mem.id, code: 'F-UPDATE' }, null)).reason, 'invalid');
+    // 판정 · 짓기(이미 지은 프롬프트로 곧장 부르는 문)도 끊기면 잇는다 — 프롬프트 끝에 이미 쓴 부분과 이어 쓰기 할 일을 덧붙여
+    const rawSeen = [];
+    const rawC = cont.continuing(async (x) => { rawSeen.push(x); return x.continued ? { ok: true, text: '이어진 작법', finishReason: 'stop' } : { ok: true, text: '작법:\n앞부분 ', finishReason: 'length' }; }, { raw: true, waits: [] });
+    const rr = await rawC({ systemPrompt: '체계', prompt: '■ 이번에 할 일\n지어라', code: 'F-AGENT' }, null);
+    ok('**판정 · 짓기도 끊기면 이어 쓴다(짓는 작법이 잘린 채 남지 않게)**', rr.ok && rr.text === '작법:\n앞부분 이어진 작법' && rawSeen[1].prompt.includes('■ 이미 쓴 부분(끊긴 응답)') && rawSeen[1].prompt.includes('이어 쓰기 1번째') && rawSeen[1].systemPrompt === '체계');
+    const stopC = new AbortController();
+    const halted = cont.continuing(async () => { stopC.abort(); return { ok: true, text: '앞', finishReason: 'length' }; });
+    eq('사람이 세우면 잇지 않고 멈춘다', (await halted({ pid: mem.id, code: 'F-UPDATE' }, { signal: stopC.signal })).reason, 'stopped');
+    const stopD = new AbortController();
+    const halted2 = cont.continuing(async (a) => { if (a.continueFrom) stopD.abort(); return { ok: true, text: '조각', finishReason: 'length' }; });
+    eq('잇는 도중에 세우면 stopped', (await halted2({ pid: mem.id, code: 'F-UPDATE' }, { signal: stopD.signal, step() {} })).reason, 'stopped');
+    // 체크포인트 — 이은 데까지를 남기고, 다시 걸면(같은 부르기) 처음 부르기를 건너뛰고 그 자리부터 잇는다
+    const saved = [];
+    const cpArgs = { pid: mem.id, code: 'F-UPDATE', request: '같은 부르기' };
+    let firstCalls = 0;
+    const cp = cont.continuing(async (a) => { if (!a.continueFrom) { firstCalls += 1; return { ok: true, text: '앞', finishReason: 'length' }; } return { ok: true, text: '뒤', finishReason: 'stop' }; });
+    await cp(cpArgs, { save: async (x) => { saved.push(JSON.parse(JSON.stringify(x))); }, step() {} });
+    ok('이은 데까지를 체크포인트(cont)에 남기고 다 이으면 비운다', saved.some((x) => x.cont && x.cont.text === '앞') && saved[saved.length - 1].cont === null);
+    const keyNow = saved.find((x) => x.cont).cont.key;
+    firstCalls = 0;
+    const re = await cp(cpArgs, { resume: { cont: { key: keyNow, text: '남긴 앞' } }, save: async () => {}, step() {} });
+    ok('**다시 걸면 남긴 자리부터 잇는다(처음 부르기를 다시 하지 않는다)**', re.ok && re.text === '남긴 앞뒤' && firstCalls === 0);
+    firstCalls = 0;
+    await cp({ ...cpArgs, request: '바뀐 요청' }, { resume: { cont: { key: keyNow, text: '남긴 앞' } }, save: async () => {}, step() {} });
+    eq('부르기가 바뀌었으면(요청사항 등) 처음부터', firstCalls, 1);
+    model.docDelete(mem, lw.id);
   }
   // 이미 저장된 말에 답하기(온라인판 — 말을 작업 앞에 저장한다) — 말이 두 번 얹히지 않고 그 말 밑에 답이 붙는다
   const tAsk = model.threadCreate(mem, { title: '먼저 저장' });

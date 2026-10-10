@@ -198,15 +198,21 @@ export async function run({ pool, ok, eq }) {
       ok('온라인 — 다시 읽은 시각이면 conflict 없음', !(await op('doc.write', { pid, id: doc, body: '이어서', baseAt: now.updatedAt })).conflict);
     }
 
-    // ---------------- 출력 상한에 닿은 결과 — 저장하되 «잘렸을 수 있음» 표
-    behave = async () => success({ text: '길게 쓰다 만 글', finishReason: 'length' });
+    // ---------------- 출력 상한에 닿은 결과 — 끊긴 자리부터 이어 써서 한 판으로(잘린 글을 판으로 남기지 않는다 — 2026-10-10 «생성 결과가 잘려서도 안돼»)
+    let cuts = 0;
+    behave = async (input) => { cuts += 1; return input.userPrompt.includes('■ 이미 쓴 부분(끊긴 응답)') ? success({ text: ' 이어서 끝난 글', finishReason: 'stop' }) : success({ text: '길게 쓰다 만 글', finishReason: 'length' }); };
     const jl = (await op('doc.update', { pid, id: doc })).jobId;
     await until(pid, jl, (j) => j.status === 'done');
     let tdoc = (await state(pid)).docs.find((x) => x.id === doc);
-    ok('**상한에 닿은 결과도 새 판으로 저장되고 «잘렸을 수 있음» 표가 선다**', tdoc.body === '길게 쓰다 만 글' && tdoc.truncated === true);
+    ok('**상한에 닿으면 끊긴 자리부터 이어 써서 한 판으로 — «잘렸을 수 있음» 표 없이**', tdoc.body === '길게 쓰다 만 글 이어서 끝난 글' && !tdoc.truncated && cuts === 2, JSON.stringify([tdoc.body, tdoc.truncated, cuts]));
+    const lrun = (await pool.query(`SELECT finish_reason, status FROM generation_runs WHERE job_id = $1 ORDER BY started_at, id`, [jl])).rows;
+    ok('생성 기록에 끊긴 부르기와 이어 쓴 부르기가 차례로 남는다', lrun.map((x) => x.finish_reason).join(',') === 'length,stop' && lrun.every((x) => x.status === 'succeeded'), JSON.stringify(lrun));
+    // 끝내 다 잇지 못하면(맴돎) 실패 — 기존 글은 그대로, 자동 재시도 없음
+    behave = async (input) => success({ text: '맴도는 글 ' + input.userPrompt.length, finishReason: 'length' });
+    const jr = (await op('doc.update', { pid, id: doc })).jobId;
+    const jrv = await until(pid, jr, (j) => j.status === 'failed', 15000);
+    ok('**끝내 다 잇지 못하면 실패로 — 잘린 글을 판으로 남기지 않고 기존 글은 그대로**', jrv.status === 'failed' && (await state(pid)).docs.find((x) => x.id === doc).body === '길게 쓰다 만 글 이어서 끝난 글', JSON.stringify(jrv));
     await op('doc.write', { pid, id: doc, body: '내가 이어 쓴 글' });
-    tdoc = (await state(pid)).docs.find((x) => x.id === doc);
-    ok('사람이 고쳐 새 판이 되면 표는 내려간다', !tdoc.truncated);
     behave = async () => success({ text: '지은 글', usage: { input_tokens: 10, output_tokens: 5 } });
 
     // ---------------- 작품 통째로 내려받기 · 가져오기(온라인 ↔ 개인판)

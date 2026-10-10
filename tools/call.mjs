@@ -169,7 +169,7 @@ export function classify({ limitInfo = null, finalResult = null, stderr = '', ab
 
 // 가짜 응답 — 시험이 자동 집필을 끝까지 돌 수 있도록 단계별 구조를 흉내낸다.
 // globalThis.__SE2_MOCK_FN 을 두면 시험이 단계별 응답을 직접 정한다.
-// 문자열이 아니라 { text, reason, limit } 를 돌려주면 실패와 한도까지 흉내낼 수 있다.
+// 문자열이 아니라 { text, reason, limit, finishReason } 를 돌려주면 실패 · 한도 · 길이 한도(length — 이어 쓰기)까지 흉내낼 수 있다.
 export function mockResponse({ mockKey, prompt, systemPrompt, model }) {
   if (typeof globalThis.__SE2_MOCK_FN === 'function') {
     const r = globalThis.__SE2_MOCK_FN({ mockKey, prompt, systemPrompt, model });
@@ -214,7 +214,7 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
       if (m.reason) return fail(m.error || '', m.reason, m.limit || null);
       return {
         ok: true, text: String(m.text || ''), error: null, reason: null,
-        elapsedMs: Date.now() - started, usage: null, limit: m.limit || null, authSource: 'mock',
+        elapsedMs: Date.now() - started, usage: null, limit: m.limit || null, authSource: 'mock', finishReason: m.finishReason === 'length' ? 'length' : 'stop',
       };
     }
     return {
@@ -252,6 +252,9 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
     let finalResult = null;
     let limitInfo = null;
     let authSource = '';
+    // 응답 메시지 — 끝이 길이 한도(max_tokens · 문맥 초과)였는지 보고, 그때까지 쓴 글을 버리지 않으려고 모아 둔다(이어 쓰기)
+    let said = '';
+    let lastStop = '';
     p.stdout.setEncoding('utf8');
     p.stdout.on('data', (chunk) => {
       buf += chunk;
@@ -263,6 +266,11 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
         let ev;
         try { ev = JSON.parse(line); } catch { continue; }
         if (ev.type === 'result') finalResult = ev;
+        else if (ev.type === 'assistant' && ev.message) {
+          const t = (ev.message.content || []).filter((c) => c && c.type === 'text').map((c) => c.text || '').join('');
+          if (t) said += t;
+          if (ev.message.stop_reason) lastStop = String(ev.message.stop_reason);
+        }
         // 한도는 제 이벤트로 온다 — 성공한 호출에도 흐른다.
         else if (ev.type === 'rate_limit_event' && ev.rate_limit_info) {
           limitInfo = ev.rate_limit_info;
@@ -290,10 +298,14 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
 
     const why = () => classify({ limitInfo, finalResult, stderr, aborted, timedOut });
 
+    // 길이 한도에 닿아 끊긴 응답 — 받은 글이 있으면 실패로 버리지 않고 잘림(length)으로 돌려준다(Core 가 이어 쓴다)
+    const partial = (usage) => ({ ok: true, text: said, error: null, reason: null, elapsedMs: Date.now() - started, usage, limit: limitInfo, authSource, finishReason: 'length' });
+    const capped = (t) => /output token maximum|max_tokens|maximum output tokens|model_context_window_exceeded/i.test(String(t || ''));
     if (aborted) return fail('', 'stopped', limitInfo);
-    if (timedOut) return fail(Math.round(CALL_TIMEOUT_MS / 60000) + '분 초과로 끊었습니다', 'timeout', limitInfo);
-    if (!finalResult) return fail(String(stderr || '결과 없음').slice(0, 600), why(), limitInfo);
+    if (timedOut) return said.trim() ? partial(null) : fail(Math.round(CALL_TIMEOUT_MS / 60000) + '분 초과로 끊었습니다', 'timeout', limitInfo);
+    if (!finalResult) return said.trim() && capped(stderr) ? partial(null) : fail(String(stderr || '결과 없음').slice(0, 600), why(), limitInfo);
     if (finalResult.is_error) {
+      if (said.trim() && (capped(finalResult.result) || capped(lastStop))) return partial(null);
       return fail(String(finalResult.result || stderr || '').slice(0, 600), why(), limitInfo);
     }
 
@@ -314,6 +326,8 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
       },
       limit: limitInfo,
       authSource,
+      // 다 썼는가 — 마지막 응답 메시지가 길이 한도로 끝났으면 length(실행기가 result 에 stop_reason 을 실으면 그것도 본다)
+      finishReason: ['max_tokens', 'model_context_window_exceeded'].includes(String(finalResult.stop_reason || lastStop)) ? 'length' : 'stop',
     };
   } catch (e) {
     return fail((stderr ? stderr + ' | ' : '') + String((e && e.message) || e), 'other');
