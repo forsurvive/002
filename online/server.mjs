@@ -30,7 +30,8 @@ import { createTenancy, SAY } from './tenancy.mjs';
 import { createEdu } from './edu.mjs';
 import { editionOf } from './edition.mjs';
 import { purposeOf, purposeName, purposeTemplate } from './purpose.mjs';
-import { createBilling, passActive } from './billing/service.mjs';
+import { createBilling, passActive, rulesOf } from './billing/service.mjs';
+import { deleteAccount } from './account.mjs';
 import { googleConfig, freshStart, authorizeUrl, exchangeCode, readIdToken, loginIdFrom, STATE_MINUTES, CALLBACK_PATH } from './google.mjs';
 import { createWorkflowSource } from './workflow.mjs';
 import { createWorker } from './worker.mjs';
@@ -192,11 +193,13 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
   const site = plan.exposed ? plan.allowedHosts.find((h) => !LOCAL_NAMES.includes(h)) : '';
   const bill = billing !== undefined ? billing : edition === 'open'
     ? createBilling({ pool, secrets: () => [process.env.GROBLE_WEBHOOK_SECRET, process.env.GROBLE_WEBHOOK_SECRET_PREVIOUS], log: (m) => console.log('  [billing] ' + m),
-      siteUrl: site ? 'https://' + site : '' }) : null;
+      siteUrl: site ? 'https://' + site : '', app: purposeName(purpose) }) : null;
   const tenancy = createTenancy(pool, { edition });
   const wfs = createWorkflowSource(pool, { defaultKey: templateKey });
   const edu = createEdu({ pool, credentials, wfs, keyTester, subscription, codeKeys, recoveryCode: plan.recoveryCode || '', edition, billing: bill, google: !!gcfg, purpose });
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
+  // 접속 IP · 브라우저 정보를 남기나(auth.keepsIp) — 자유 가입판은 운영자의 것만. 고삐는 남기든 말든 ipOf(req) 로 센다.
+  const keepIp = (admin) => auth.keepsIp(edition, admin);
 
   // 화면은 제 자리의 파일만 부른다 — 스크립트는 외부 파일만, 꾸밈은 style 속성을 쓰므로 인라인 꾸밈만 허락
   const csp = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" + (denyFrames ? "; frame-ancestors 'none'" : '');
@@ -346,13 +349,13 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
     f.push(now);
     return true;
   };
-  // 구글로 처음 온 사람의 새 계정 — 아이디는 이메일 앞부분(겹치면 -2 · -3 …, 그래도 겹치면 무작위), 이름은 구글의 이름, 이메일은 구글이 확인한 것.
+  // 구글로 처음 온 사람의 새 계정 — 아이디는 이메일 앞부분(겹치면 -2 · -3 …, 그래도 겹치면 무작위), 이메일은 구글이 확인한 것(이름은 받지 않는다).
   // 비밀번호는 없다(auth.NO_PASSWORD). 같은 구글 계정이 그새 다른 탭에서 먼저 이어졌으면 만든 계정을 거두고 null.
   async function googleSignup(id) {
     const base = loginIdFrom(id.email);
     for (let i = 0; i < 6; i++) {
       const loginId = i === 0 ? base : base.slice(0, 40) + '-' + (i < 4 ? String(i + 1) : randomBytes(3).toString('hex'));
-      const made = await auth.createUser(pool, { loginId, noPassword: true, displayName: id.name || loginId, email: id.email || null });
+      const made = await auth.createUser(pool, { loginId, noPassword: true, email: id.email || null });
       if (!made.ok) { if (made.code === 'conflict') continue; return null; }
       try {
         await pool.query(`INSERT INTO user_identities (provider, subject, user_id, email, last_login_at) VALUES ('google', $1, $2, $3, now())`, [id.sub, made.user.id, id.email]);
@@ -364,6 +367,14 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       }
     }
     return null;
+  }
+
+  // 계정 지우기(docs/OPEN_EDITION.md §4-11) — 지운 뒤(커밋 뒤) 저절로 접수한 구독 취소마다 운영자에게 메일.
+  // 메일이 가지 않아도 요청은 운영 화면 [결제 기록]에 남는다(그로블 해지 대기).
+  async function removeAccount(user) {
+    const r = await deleteAccount(pool, user.id);
+    if (r.ok && bill) for (const id of r.cancels) await bill.notify('cancel', id).catch(() => {});
+    return r;
   }
 
   async function handle(req, res) {
@@ -406,12 +417,12 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
 
       // ---------------- 로그인 · 로그아웃
       if (req.method === 'POST' && url.pathname === '/api/auth/login') {
-        const r = await auth.login(pool, { loginId: body.loginId, password: body.password, ip: ipOf(req), userAgent: req.headers['user-agent'] || '' });
+        const r = await auth.login(pool, { loginId: body.loginId, password: body.password, ip: ipOf(req), userAgent: req.headers['user-agent'] || '', keepIp });
         if (!r.ok) return json(res, r.code === 'rate_limited' ? 429 : 401, bad(r.error, r.code));
         return json(res, 200, ok(), { 'set-cookie': auth.sessionCookie(r.token, { secure }) });
       }
       // ---------------- 자유 가입 — 자유 가입판에만 있는 길(docs/OPEN_EDITION.md §4-2). 교육기관판에는 없다(로그인 전 401 · 뒤 404 — 시험).
-      // 아이디 · 이름 · 비밀번호만 받는다(이메일 확인은 결정 뒤). 만들면 곧바로 들어간다.
+      // 아이디 · 비밀번호만 받는다(2026-10-11 사용자 지시 — 이름은 받지 않는다. 보내 와도 쓰지 않는다). 만들면 곧바로 들어간다.
       if (edition === 'open' && req.method === 'POST' && url.pathname === '/api/auth/signup') {
         const ip = ipOf(req);
         const slot = signupTake(ip);
@@ -421,11 +432,11 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
           signupGiveBack(slot);
           return json(res, 403, bad('아직 가입을 받지 않습니다 — 운영자가 처음 설정을 마친 뒤에 다시 와 주세요', 'setup_needed'));
         }
-        const made = await auth.createUser(pool, { loginId: body.loginId, password: body.password, displayName: String(body.displayName || '').trim().slice(0, 60) });
+        const made = await auth.createUser(pool, { loginId: body.loginId, password: body.password });
         if (!made.ok) { signupGiveBack(slot); return json(res, made.code === 'conflict' ? 409 : 422, bad(made.error, made.code)); }
-        await auth.audit(pool, { actor: made.user.id, action: 'auth.signup', targetType: 'user', targetId: made.user.id, ip });
-        if (bill) await bill.grantTrial(made.user.id);   // 이용 규칙의 무료 체험(기본 0일 — 없음)
-        const li = await auth.login(pool, { loginId: body.loginId, password: body.password, ip, userAgent: req.headers['user-agent'] || '' });
+        await auth.audit(pool, { actor: made.user.id, action: 'auth.signup', targetType: 'user', targetId: made.user.id, ip: keepIp(false) ? ip : '' });
+        if (bill) await bill.grantTrial(made.user.id);   // 이용 규칙의 무료 체험(기본 2일)
+        const li = await auth.login(pool, { loginId: body.loginId, password: body.password, ip, userAgent: req.headers['user-agent'] || '', keepIp });
         return json(res, 200, ok(), li.ok ? { 'set-cookie': auth.sessionCookie(li.token, { secure }) } : {});
       }
       // ---------------- 처음 설정 — 계정이 하나도 없을 때 한 번만. 운영자 계정(+ 그 계정의 AI 키)을 화면에서 만든다.
@@ -435,7 +446,10 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const empty = (await pool.query('SELECT count(*)::int AS n FROM users')).rows[0].n === 0;
         // 바깥에 열었으면(플랫폼 앞단을 거치면 소켓 주소가 루프백일 수 있다) 출입 열쇠만 믿는다
         const trusted = !!plan.gate || (!plan.exposed && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || ''));
-        if (req.method === 'GET') return json(res, 200, ok({ needed: empty && (trusted || !!setupCode), code: empty && !trusted && !!setupCode, ai: !!credentials, edition, google: !!gcfg, purpose, name: purposeName(purpose) }));
+        // 자유 가입판 — 무료 체험 · 환불 기간(이용약관 쪽이 지금 값으로 채운다 — 운영 화면 «이용 규칙»)
+        const days = bill && req.method === 'GET' ? await rulesOf(pool) : null;
+        if (req.method === 'GET') return json(res, 200, ok({ needed: empty && (trusted || !!setupCode), code: empty && !trusted && !!setupCode, ai: !!credentials, edition, google: !!gcfg, purpose, name: purposeName(purpose),
+          ...(days ? { trialDays: days.trialDays, refundDays: days.refundDays } : {}) }));
         if (req.method !== 'POST') return json(res, 405, bad('POST 만 받습니다'));
         if (!empty) return json(res, 409, bad('이미 설정을 마쳤습니다 — 로그인해 주세요'));
         if (!trusted) {
@@ -457,7 +471,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
           if (k.ok) await auth.audit(pool, { actor: made.user.id, action: 'credential.set', targetType: 'user', targetId: made.user.id, details: { provider: 'anthropic', ownerType: 'user', credentialId: k.credential.id } });
           else keyNote = 'AI 키를 저장하지 못했습니다 — 나중에 다시 넣어 주세요';
         }
-        const r = await auth.login(pool, { loginId: body.loginId, password: body.password, ip: ipOf(req), userAgent: req.headers['user-agent'] || '' });
+        const r = await auth.login(pool, { loginId: body.loginId, password: body.password, ip: ipOf(req), userAgent: req.headers['user-agent'] || '', keepIp });
         return json(res, 200, ok({ note: keyNote }), r.ok ? { 'set-cookie': auth.sessionCookie(r.token, { secure }) } : {});
       }
 
@@ -497,16 +511,29 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       };
 
       // ---------------- 구글 로그인 — 시작. login: 로그인 전(이은 계정이면 들어가고, 처음이면 새 계정) · link: 로그인한 뒤 «내 계정»에서 잇기
+      // 한 번용 값을 서버 표와 쿠키에 두고 구글 주소를 돌려준다(delete — 아래 POST 길 — 도 같은 값을 쓴다)
+      const googleBegin = async (mode, userId) => {
+        await pool.query('DELETE FROM oauth_states WHERE created_at < now() - make_interval(mins => $1)', [STATE_MINUTES]);
+        const s = freshStart();
+        await pool.query('INSERT INTO oauth_states (state, nonce, verifier, mode, user_id) VALUES ($1, $2, $3, $4, $5)', [s.state, s.nonce, s.verifier, mode, userId]);
+        return { url: authorizeUrl(gcfg, { redirectUri: callbackUrl(host), state: s.state, nonce: s.nonce, challenge: s.challenge }), cookie: oauthCookie(s.state) };
+      };
       if (gcfg && req.method === 'GET' && url.pathname === '/api/auth/google/start') {
         const mode = url.searchParams.get('mode') === 'link' ? 'link' : 'login';
         if (mode === 'link' && !user) return go(res, '/login');
         if (mode === 'login' && user) return go(res, '/');
         if (!googleTake(ipOf(req))) return go(res, (mode === 'link' ? '/account.html' : '/login') + '?google=busy');
-        await pool.query('DELETE FROM oauth_states WHERE created_at < now() - make_interval(mins => $1)', [STATE_MINUTES]);
-        const s = freshStart();
-        await pool.query('INSERT INTO oauth_states (state, nonce, verifier, mode, user_id) VALUES ($1, $2, $3, $4, $5)',
-          [s.state, s.nonce, s.verifier, mode, mode === 'link' ? user.id : null]);
-        return go(res, authorizeUrl(gcfg, { redirectUri: callbackUrl(host), state: s.state, nonce: s.nonce, challenge: s.challenge }), [oauthCookie(s.state)]);
+        const b = await googleBegin(mode, mode === 'link' ? user.id : null);
+        return go(res, b.url, [b.cookie]);
+      }
+      // 비밀번호 없는 계정(구글로 만든 계정)을 지우기 전의 구글 확인(§4-11) — 시작은 이 화면의 POST 로만(JSON · 같은 자리 — 남의 페이지가 링크 하나로
+      // 지우기 확인을 시작하지 못하게). 돌려준 구글 주소로 화면이 가고, 돌아온 구글이 이 계정에 이은 그것이면 지운다(아래 돌아옴).
+      if (gcfg && req.method === 'POST' && url.pathname === '/api/auth/google/delete') {
+        if (!user) return json(res, 401, bad('로그인이 필요합니다', 'login'));
+        if (user.isPlatformAdmin) return json(res, 403, bad('운영자 계정은 지울 수 없습니다', 'operator'));
+        if (!googleTake(ipOf(req))) return json(res, 429, bad('잠시 뒤에 다시 시도해 주세요', 'rate_limited'));
+        const b = await googleBegin('delete', user.id);
+        return json(res, 200, ok({ url: b.url }), { 'set-cookie': b.cookie });
       }
       // ---------------- 구글 로그인 — 돌아옴. 무엇이 틀렸는지는 화면에 이름(?google=…)으로만 알린다.
       if (gcfg && req.method === 'GET' && url.pathname === CALLBACK_PATH) {
@@ -516,7 +543,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const row = state && state.length <= 100 ? (await pool.query(
           `DELETE FROM oauth_states WHERE state = $1 RETURNING mode, user_id, nonce, verifier, created_at > now() - make_interval(mins => $2) AS fresh`, [state, STATE_MINUTES])).rows[0] : null;
         const mode = row ? row.mode : 'login';
-        const fail = (why) => go(res, (mode === 'link' ? '/account.html' : '/login') + '?google=' + why, [clear]);
+        const fail = (why) => go(res, (mode === 'login' ? '/login' : '/account.html') + '?google=' + why, [clear]);
         if (!row || !sameText(state, auth.readCookie(req, OAUTH_COOKIE))) return fail('state');
         if (!row.fresh) return fail('expired');
         if (url.searchParams.get('error')) return fail('cancel');   // 구글 화면에서 그만뒀다(access_denied 등)
@@ -529,7 +556,15 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         if (!id.ok) { console.log('  [google] id_token ' + id.reason); return fail('failed'); }
         const ip = ipOf(req); const userAgent = req.headers['user-agent'] || '';
         const known = (await pool.query(
-          `SELECT i.user_id, u.status FROM user_identities i JOIN users u ON u.id = i.user_id WHERE i.provider = 'google' AND i.subject = $1`, [id.sub])).rows[0];
+          `SELECT i.user_id, u.status, u.is_platform_admin FROM user_identities i JOIN users u ON u.id = i.user_id WHERE i.provider = 'google' AND i.subject = $1`, [id.sub])).rows[0];
+        // 계정 지우기의 확인 — 시작한 그 사람이 지금도 들어와 있고, 돌아온 구글이 이 계정에 이은 바로 그 구글일 때만
+        if (mode === 'delete') {
+          if (!user || user.id !== row.user_id) return fail('state');
+          if (!known || known.user_id !== user.id) return fail('mismatch');
+          const gone = await removeAccount(user);
+          if (!gone.ok) return fail(gone.code === 'operator' ? 'operator' : 'failed');
+          return go(res, '/login?deleted=1', [clear, auth.sessionCookie('', { secure, clear: true })]);
+        }
         if (mode === 'link') {
           // 잇기는 시작한 그 사람이 지금도 이 브라우저로 들어와 있을 때만. 구글 계정 하나는 우리 계정 하나에, 우리 계정 하나에는 구글 하나.
           if (!user || user.id !== row.user_id) return fail('state');
@@ -541,18 +576,18 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
             if (e && e.code === '23505') return fail('taken');
             throw e;
           }
-          await auth.audit(pool, { actor: user.id, action: 'auth.google_link', targetType: 'user', targetId: user.id, ip });
+          await auth.audit(pool, { actor: user.id, action: 'auth.google_link', targetType: 'user', targetId: user.id, ip: keepIp(user.isPlatformAdmin) ? ip : '' });
           return go(res, '/account.html?google=linked', [clear]);
         }
         // 이은 계정이면 그 계정으로(멈춘 계정은 들이지 않는다). 다른 계정으로 들어와 있었으면 그 세션은 닫는다.
         if (known) {
           if (known.status !== 'active') {
-            await auth.audit(pool, { actor: known.user_id, action: 'auth.login_failed', targetType: 'user', targetId: known.user_id, ip, details: { via: 'google' } });
+            await auth.audit(pool, { actor: known.user_id, action: 'auth.login_failed', targetType: 'user', targetId: known.user_id, ip: keepIp(known.is_platform_admin) ? ip : '', details: { via: 'google' } });
             return fail('disabled');
           }
           await pool.query(`UPDATE user_identities SET last_login_at = now() WHERE provider = 'google' AND subject = $1`, [id.sub]);
           if (user) await auth.logout(pool, token);
-          const t = await auth.openSession(pool, known.user_id, { ip, userAgent, action: 'auth.google_login' });
+          const t = await auth.openSession(pool, known.user_id, { ...(keepIp(known.is_platform_admin) ? { ip, userAgent } : {}), action: 'auth.google_login' });
           return go(res, '/', [clear, auth.sessionCookie(t, { secure })]);
         }
         // 처음 — 새 계정. 자유 가입과 같은 고삐 · 처음 설정 전에는 받지 않는다. 이메일이 같은 계정이 있어도 저절로 잇지 않는다.
@@ -561,10 +596,10 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         if (!slot) return fail('busy');
         const made = await googleSignup(id);
         if (!made) { signupGiveBack(slot); return fail('retry'); }
-        await auth.audit(pool, { actor: made.id, action: 'auth.signup', targetType: 'user', targetId: made.id, ip, details: { via: 'google' } });
+        await auth.audit(pool, { actor: made.id, action: 'auth.signup', targetType: 'user', targetId: made.id, ip: keepIp(false) ? ip : '', details: { via: 'google' } });
         if (bill) await bill.grantTrial(made.id);   // 이용 규칙의 무료 체험 — 자유 가입과 같다
         if (user) await auth.logout(pool, token);
-        const t = await auth.openSession(pool, made.id, { ip, userAgent, action: 'auth.google_login' });
+        const t = await auth.openSession(pool, made.id, { ...(keepIp(false) ? { ip, userAgent } : {}), action: 'auth.google_login' });
         return go(res, '/account.html?google=new', [clear, auth.sessionCookie(t, { secure })]);
       }
 
@@ -581,7 +616,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       if (req.method === 'POST' && url.pathname === '/api/edu') {
         const r = await edu.handle(user, body, ipOf(req));
         if (r.newUser) {
-          const li = await auth.login(pool, { loginId: r.loginId || body.loginId, password: body.password, ip: ipOf(req), userAgent: req.headers['user-agent'] || '' });
+          const li = await auth.login(pool, { loginId: r.loginId || body.loginId, password: body.password, ip: ipOf(req), userAgent: req.headers['user-agent'] || '', keepIp });
           if (li.ok) return json(res, r.status, r.body, { 'set-cookie': auth.sessionCookie(li.token, { secure }) });
         }
         return json(res, r.status, r.body);
@@ -604,8 +639,18 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
       if (req.method === 'POST' && url.pathname === '/api/auth/password') {
         const r = await auth.changePassword(pool, user.id, { current: body.current, next: body.next });
         if (!r.ok) return json(res, r.code === 'validation' ? 422 : 403, bad(r.error, r.code));
-        const li = await auth.login(pool, { loginId: user.loginId, password: body.next, ip: ipOf(req), userAgent: req.headers['user-agent'] || '' });
+        const li = await auth.login(pool, { loginId: user.loginId, password: body.next, ip: ipOf(req), userAgent: req.headers['user-agent'] || '', keepIp });
         return json(res, 200, ok(), li.ok ? { 'set-cookie': auth.sessionCookie(li.token, { secure }) } : {});
+      }
+      // 계정 지우기 — 자유 가입판에서 본인이(§4-11). 비밀번호 계정은 지금 비밀번호로 확인하고, 비밀번호 없는 계정(구글로 만든 계정)은
+      // 구글로 다시 확인한다(/api/auth/google/start?mode=delete). 지우면 이 브라우저의 로그인도 끝난다. 교육기관판에는 없는 길(404).
+      if (edition === 'open' && req.method === 'POST' && url.pathname === '/api/auth/delete') {
+        if (user.isPlatformAdmin) return json(res, 403, bad('운영자 계정은 지울 수 없습니다', 'operator'));
+        const chk = await auth.checkPassword(pool, user.id, { password: body.password, ip: ipOf(req) });
+        if (!chk.ok) return json(res, chk.code === 'rate_limited' ? 429 : chk.code === 'no_password' ? 422 : 403, bad(chk.error, chk.code));
+        const r = await removeAccount(user);
+        if (!r.ok) return json(res, r.code === 'operator' ? 403 : 404, bad(r.code === 'operator' ? '운영자 계정은 지울 수 없습니다' : '찾을 수 없습니다', r.code));
+        return json(res, 200, ok({ cancels: r.cancels.length }), { 'set-cookie': auth.sessionCookie('', { secure, clear: true }) });
       }
 
       // ---------------- 문 하나 — 개인판과 같은 op 와 같은 응답 꼴
@@ -631,7 +676,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         let out;
         try { out = await fn(body); } catch (e) { out = bad((e && e.message) || e); }
         if (out && out.ok !== false && (op === 'project.create' || op === 'project.delete')) {
-          await auth.audit(pool, { actor: user.id, action: op, targetType: 'project', targetId: op === 'project.create' ? out.pid : body.pid, ip: ipOf(req) });
+          await auth.audit(pool, { actor: user.id, action: op, targetType: 'project', targetId: op === 'project.create' ? out.pid : body.pid, ip: keepIp(user.isPlatformAdmin) ? ipOf(req) : '' });
         }
         return json(res, 200, out || ok());
       }

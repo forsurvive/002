@@ -16,10 +16,10 @@ export function billingOps({ pool, billing, log = async () => {} }) {
   const FORBIDDEN = no(403, '권한이 없습니다', 'forbidden');
   const NOT_FOUND = no(404, '찾을 수 없습니다');
   const why = (b) => String(b.reason || '').trim().slice(0, 200);
-  // 운영자만 — 대상은 있는 사람이어야 한다
+  // 운영자만 — 대상은 있는 사람이어야 한다(지운 계정은 없는 사람과 같다 — §4-11)
   const target = async (user, b) => {
     if (!user.isPlatformAdmin) return { err: FORBIDDEN };
-    const u = isUuid(b.userId) ? (await pool.query('SELECT id, login_id FROM users WHERE id = $1', [b.userId])).rows[0] : null;
+    const u = isUuid(b.userId) ? (await pool.query('SELECT id, login_id FROM users WHERE id = $1 AND deleted_at IS NULL', [b.userId])).rows[0] : null;
     return u ? { u } : { err: NOT_FOUND };
   };
 
@@ -112,8 +112,8 @@ export function billingOps({ pool, billing, log = async () => {} }) {
     async 'billing.link'(user, b, ip) {
       if (!user.isPlatformAdmin) return FORBIDDEN;
       const login = String(b.loginId || '').trim().toLowerCase();
-      const u = isUuid(b.userId) ? (await pool.query('SELECT id, login_id FROM users WHERE id = $1', [b.userId])).rows[0]
-        : login ? (await pool.query('SELECT id, login_id FROM users WHERE login_id = $1', [login])).rows[0] : null;
+      const u = isUuid(b.userId) ? (await pool.query('SELECT id, login_id FROM users WHERE id = $1 AND deleted_at IS NULL', [b.userId])).rows[0]
+        : login ? (await pool.query('SELECT id, login_id FROM users WHERE login_id = $1 AND deleted_at IS NULL', [login])).rows[0] : null;
       if (!u) return no(404, '그 아이디의 계정이 없습니다', 'missing');
       const r = await admin.link(b.eventId, u.id, user.id);
       if (!r.ok) {

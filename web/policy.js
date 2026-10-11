@@ -12,4 +12,11 @@
   // 용도마다 다른 한 단락(전자책 오토 · 스토리 엔진) — 모르면 둘 다 보인다
   const purpose = st && st.purpose ? String(st.purpose) : '';
   if (purpose) for (const el of document.querySelectorAll('[data-purpose]')) el.hidden = el.dataset.purpose !== purpose;
+  // 무료 체험 · 환불 기간 — 운영 화면 «이용 규칙»의 지금 값(자유 가입판). 0일이면 그 문장을 감춘다. 못 받으면 글에 적힌 기본값 그대로.
+  for (const [key, mark] of [['trialDays', 'trial'], ['refundDays', 'refund']]) {
+    const n = st ? st[key] : undefined;
+    if (!Number.isInteger(n)) continue;
+    for (const el of document.querySelectorAll('[data-' + mark + ']')) el.textContent = String(n);
+    for (const el of document.querySelectorAll('[data-if-' + mark + ']')) el.hidden = n === 0;
+  }
 })();

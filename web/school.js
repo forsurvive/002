@@ -79,7 +79,9 @@ const GOOGLE_SAY = {
   already: [true, '이미 이 계정에 이어진 구글 계정입니다'],
   taken: [false, '그 구글 계정은 다른 계정에 이어져 있습니다 — 그 계정으로 들어가려면 로그아웃한 뒤 [Google 계정으로 계속하기]'],
   one: [false, '이 계정에는 이미 다른 구글 계정이 이어져 있습니다'],
-  cancel: [false, '구글 연결을 그만뒀습니다'],
+  cancel: [false, '구글에서 그만뒀습니다'],
+  mismatch: [false, '이 계정에 이어진 구글 계정으로 확인해 주세요 — 지우지 않았습니다'],
+  operator: [false, '운영자 계정은 지울 수 없습니다'],
   state: [false, '다시 시도해 주세요 — 시작한 이 브라우저에서 10분 안에 돌아와야 합니다'],
   expired: [false, '시간이 지났습니다 — 다시 시도해 주세요'],
   failed: [false, '구글과 확인을 마치지 못했습니다 — 잠시 뒤 다시 시도해 주세요'],
@@ -587,7 +589,7 @@ const ACT = {
   'license.limits': '쓸 수 있는 AI 바꿈', 'class.create': '수업 만듦', 'class.dates': '수업 기간', 'class.archive': '수업 닫음', 'class.reopen': '수업 다시 엶', 'class.assign': '강사 맡김', 'class.unassign': '강사 뺌', 'invite.create': '초대 코드',
   'invite.revoke': '초대 코드 거둠', 'invite.accept': '초대로 들어옴', 'credential.set': 'AI 키 넣음', 'credential.revoke': 'AI 키 지움', 'member.create': '계정 만듦',
   'member.remove': '사용자 뺌', 'member.reset_password': '비밀번호 재설정', 'workflow.save': '단계 고침', 'project.create': '작품 만듦', 'project.delete': '작품 지움',
-  'project.copy_personal': '개인 작품으로 복사', 'project.import': '작품 가져옴', 'ai.choose': 'AI 회사 고름', 'auth.login': '로그인', 'auth.login_failed': '로그인 실패', 'auth.google_login': '구글로 로그인', 'auth.google_link': '구글 계정 연결', 'billing.cancel_request': '구독 취소', 'billing.mail_test': '시험 메일', 'billing.mail_resend': '알림 메일 다시 보냄',
+  'project.copy_personal': '개인 작품으로 복사', 'project.import': '작품 가져옴', 'ai.choose': 'AI 회사 고름', 'auth.login': '로그인', 'auth.login_failed': '로그인 실패', 'auth.google_login': '구글로 로그인', 'auth.google_link': '구글 계정 연결', 'auth.account_delete': '계정 지움', 'billing.cancel_request': '구독 취소', 'billing.mail_test': '시험 메일', 'billing.mail_resend': '알림 메일 다시 보냄',
   'auth.password_changed': '비밀번호 바꿈', 'user.status': '계정 상태', 'admin.password_reset': '비밀번호 재설정(도구)', 'admin.user_created': '계정 만듦(도구)', 'setup.first_admin': '첫 관리자 만듦',
   'auth.signup': '가입', 'user.reset_code': '비밀번호 재설정 코드', 'billing.extend': '이용 기간 연장', 'billing.end': '이용권 끝냄', 'billing.free': '무료 이용', 'billing.memo': '고객 메모',
   'billing.link': '결제 연결', 'billing.ignore': '결제 무시', 'billing.plan_create': '결제 옵션 넣음', 'billing.plan_update': '결제 옵션 고침', 'billing.rules': '이용 규칙',
@@ -1049,6 +1051,45 @@ function googleBox() {
         h('button', { class: 'btn-line', text: '구글 계정 연결', onclick: () => { location.href = '/api/auth/google/start?mode=link'; } })));
 }
 
+// ---------------------------------------------------------------- 계정 지우기(자유 가입판, docs/OPEN_EDITION.md §4-11)
+// 본인만(운영자 계정은 없다). 비밀번호 계정은 지금 비밀번호로, 비밀번호 없는 계정(구글로 만든 계정)은 구글로 다시 확인하고 지운다.
+// 구독 중이면 구독 취소가 저절로 접수된다(해지는 운영자가 그로블에서). 환불 기간이면 지우기 전에 [환불 요청]을 하도록 한 줄.
+function deleteBox() {
+  if (S.edition !== 'open' || !S.me || S.me.platformAdmin) return null;
+  const k = 'delbox';
+  const close = () => h('button', { class: 'btn-text', text: '닫기', onclick: () => { S.open[k] = false; render(); } });
+  if (!S.open[k]) return section('계정 지우기', h('button', { class: 'btn-text red', text: '계정 지우기', onclick: () => { S.open[k] = true; render(); } }));
+  const v = S.pass || {};
+  const live = v.provider === 'groble' && ['active', 'past_due'].includes(v.status);
+  const g = S.me.google || {};
+  const go = async () => {
+    if (!confirm('계정을 지울까요?\n\n작품 · 문서 · AI 키가 모두 지워지고 되돌릴 수 없습니다.' + (live ? '\n구독은 저절로 취소 접수됩니다.' : ''))) return;
+    // 비밀번호 없는 계정 — 이은 구글로 한 번 더 확인(시작은 POST 로만 — 남의 페이지의 링크로는 시작하지 못한다)
+    if (S.me.noPassword) {
+      const g2 = await fetch('/api/auth/google/delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+        .then((x) => x.json()).catch(() => ({ ok: false, error: '연결되지 않습니다' }));
+      if (!g2.ok) return tell(g2.error);
+      location.href = g2.url;
+      return;
+    }
+    const r = await fetch('/api/auth/delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: $('del-pw') ? $('del-pw').value : '' }) })   // 비밀번호는 다듬지 않는다(가입 때 그대로)
+      .then((x) => x.json()).catch(() => ({ ok: false, error: '연결되지 않습니다' }));
+    if (!r.ok) return tell(r.error);
+    location.href = '/login?deleted=1';
+  };
+  return section('계정 지우기',
+    h('div', { class: 'notice', text: '작품 · 문서 · AI 키 · 구글 연결이 바로 지워지고 되돌릴 수 없습니다. 작품은 먼저 내려받아 두세요.' + (live ? ' 구독은 저절로 취소 접수되고 이용권도 함께 끝납니다.' : '') }),
+    v.refund && v.refund.eligible ? h('div', { class: 'when', style: 'margin-top:8px', text: '환불을 받으려면 지우기 전에 «이용권»의 [환불 요청]을 먼저 해 주세요' }) : null,
+    S.me.noPassword
+      ? h('div', { class: 'line', style: 'margin-top:10px;align-items:center' },
+        g.on ? h('button', { class: 'btn-red', text: '구글로 확인하고 지우기', onclick: go }) : h('div', { class: 'when', style: 'flex:1', text: '구글 로그인이 꺼져 있어 확인할 수 없습니다 — 운영자에게 문의해 주세요' }),
+        close())
+      : h('div', { class: 'line', style: 'margin-top:10px;align-items:flex-end' },
+        field('지금 비밀번호', 'del-pw', 'password', { autocomplete: 'current-password' }),
+        h('button', { class: 'btn-red', text: '지우기', onclick: go }),
+        close()));
+}
+
 // ---------------------------------------------------------------- 단계 · 강의 카드 고쳐 쓰기
 // 운영자는 «전체 기본»을, 기관 관리자는 «제 기관»을 고친다. 원문(설정 파일)은 남고, 비우면 원래대로 돌아간다.
 // 고칠 수 있는 칸: 이름 · 할 일 · 추천 참조(앞 단계만) · 끌 수 있음 · 카드(무엇인가 · 볼 점 · 질문) · 강사 메모.
@@ -1150,6 +1191,8 @@ const TYPE_SAY = {
 const RESULT_SAY = { applied: '반영', stale: '늦게 온 소식(기록만)', recorded: '기록만', unlinked: '연결 안 됨', amount_mismatch: '금액 · 상품 다름', unreadable: '읽지 못함', pending: '처리 중' };
 const won = (n) => (n == null ? '' : Number(n).toLocaleString('ko-KR') + '원');
 const REFUND_SAY = { open: '처리 중', done: '끝남', withdrawn: '되돌림' };
+// 결제 기록의 사람 — 지운 계정(§4-11)은 아이디 없이
+const userSay = (u) => (u.deleted ? '지운 계정' : u.name && u.name !== u.loginId ? u.name + ' · ' + u.loginId : u.loginId);
 
 // 환불 건 한 줄 — 그때의 판정과 할 일 둘(① 그로블에서 이 결제 환불 ② 그로블에서 정기결제 해지)의 확인. 둘은 웹훅이 오면 저절로 «됨».
 function refundRow(r, after) {
@@ -1162,7 +1205,7 @@ function refundRow(r, after) {
   };
   return h('div', { style: 'padding:8px 0;border-bottom:1px solid var(--line-soft)' },
     h('div', { class: 'line' },
-      h('div', { class: 'name', style: 'flex:1', text: (r.user.name || r.user.loginId) + ' · ' + r.user.loginId + (r.amount ? ' · ' + won(r.amount) : '') }),
+      h('div', { class: 'name', style: 'flex:1', text: userSay(r.user) + (r.amount ? ' · ' + won(r.amount) : '') }),
       h('span', { class: 'mark', style: r.status === 'open' ? 'color:var(--red)' : '', text: REFUND_SAY[r.status] || r.status }),
       h('span', { class: 'mark', text: r.source === 'groble' ? '그로블에서 먼저' : '사용자 요청' }),
       h('div', { class: 'when', text: when(r.createdAt) })),
@@ -1183,7 +1226,7 @@ function cancelRow(x, after) {
   const late = x.status === 'open' && x.nextBilling && x.nextBilling <= kday(Date.now());
   return h('div', { style: 'padding:8px 0;border-bottom:1px solid var(--line-soft)' },
     h('div', { class: 'line' },
-      h('div', { class: 'name', style: 'flex:1', text: (x.user.name || x.user.loginId) + ' · ' + x.user.loginId }),
+      h('div', { class: 'name', style: 'flex:1', text: userSay(x.user) + (x.merchantUid ? ' · 결제 건 ' + x.merchantUid : '') }),
       h('span', { class: 'mark', style: x.status === 'open' ? 'color:var(--red)' : '', text: CANCEL_SAY[x.status] || x.status }),
       h('div', { class: 'when', text: when(x.createdAt) })),
     h('div', { class: 'when', style: 'white-space:normal', text: '이유: ' + x.reasonSay + (x.detail ? ' — ' + x.detail : '') + ' · 다음 결제일 ' + (x.nextBilling || '모름') }),
@@ -1340,7 +1383,7 @@ function eventRow(e, actions) {
     h('div', { class: 'line' },
       h('div', { class: 'name', style: 'flex:1', text: (TYPE_SAY[e.type] || e.type || '?') + (e.amount ? ' · ' + won(e.amount) : '') }),
       h('span', { class: 'mark', style: e.review ? 'color:var(--red)' : '', text: RESULT_SAY[e.result] || e.result }),
-      e.user ? h('span', { class: 'mark', text: e.user.loginId }) : null,
+      e.user ? h('span', { class: 'mark', text: userSay(e.user) }) : null,
       h('div', { class: 'when', text: when(e.occurredAt || e.receivedAt) })),
     h('div', { class: 'when', style: 'white-space:normal', text: [e.note, e.buyer.name, e.buyer.email, e.buyer.phone, e.contentId ? '상품 ' + e.contentId : '', e.merchantUid ? '결제 건 ' + e.merchantUid : '', e.ref ? '참조 ' + e.ref : ''].filter(Boolean).join(' · ') }),
     actions || null);
@@ -1386,7 +1429,7 @@ function eventsTab() {
     E.cancels && E.cancels.length ? E.cancels.map((x) => cancelRow(x)) : h('div', { class: 'when', text: '없음' }),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '확인 필요 ' + E.review.length + '건' }),
     E.review.length ? E.review.map((e) => eventRow(e, h('div', { class: 'line', style: 'margin-top:6px;align-items:center' },
-      h('input', { id: 'lk-' + e.id, type: 'text', placeholder: '연결할 아이디', autocapitalize: 'none', spellcheck: 'false', style: 'width:150px', value: e.user ? e.user.loginId : '' }),
+      h('input', { id: 'lk-' + e.id, type: 'text', placeholder: '연결할 아이디', autocapitalize: 'none', spellcheck: 'false', style: 'width:150px', value: e.user && !e.user.deleted ? e.user.loginId : '' }),
       h('button', { class: 'btn-line', text: '이 계정에 연결', onclick: () => link(e) }),
       h('input', { id: 'lk-why-' + e.id, type: 'text', placeholder: '왜(감사 기록)', style: 'flex:1;min-width:120px' }),
       h('button', { class: 'btn-text', text: '무시', onclick: () => ignore(e) })))) : h('div', { class: 'when', text: '없음' }),
@@ -1671,7 +1714,7 @@ function paint() {
   }
   if (PAGE === 'account') {
     $('root').replaceChildren(h('div', { class: 'body' }, head('내 계정'), notice,
-      S.loggedIn ? [S.edition === 'open' ? passBox() : joinBox(), myKeyBox(), subBox(), googleBox(), passwordBox(), themeBox()] : h('div', { class: 'when', text: '로그인이 필요합니다' })));
+      S.loggedIn ? [S.edition === 'open' ? passBox() : joinBox(), myKeyBox(), subBox(), googleBox(), passwordBox(), themeBox(), deleteBox()] : h('div', { class: 'when', text: '로그인이 필요합니다' })));
     return;
   }
   $('root').replaceChildren(h('div', { class: 'body' }, head('내 수업'), notice,

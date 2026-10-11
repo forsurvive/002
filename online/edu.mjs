@@ -74,7 +74,10 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     `SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2 AND status = 'active'`, [orgId, userId])).rows.map((r) => r.role));
   const isAdmin = async (user, orgId) => user.isPlatformAdmin || (await rolesIn(user.id, orgId)).has('organization_admin');
   const teaches = async (userId, classId) => !!(await one(`SELECT 1 FROM class_members WHERE class_id = $1 AND user_id = $2 AND role = 'instructor'`, [classId, userId]));
-  const log = (user, orgId, action, targetType, targetId, details = {}, ip = '') => auth.audit(pool, { actor: user ? user.id : null, organizationId: orgId, action, targetType, targetId, details, ip });
+  // 감사 기록의 IP — 자유 가입판은 운영자의 것만 남긴다(auth.keepsIp — 받는 정보는 아이디 · 비밀번호 · 이메일뿐)
+  const keepIp = (admin) => auth.keepsIp(edition, admin);
+  const log = (user, orgId, action, targetType, targetId, details = {}, ip = '') => auth.audit(pool, { actor: user ? user.id : null, organizationId: orgId, action, targetType, targetId, details,
+    ip: keepIp(!!(user && user.isPlatformAdmin)) ? ip : '' });
 
   // 지금 유효한 라이선스(가장 늦게 끝나는 것)
   const liveLicense = (orgId) => one(
@@ -185,7 +188,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     // 비밀번호 재설정 코드 — 최상위 운영자가 운영자 아닌 계정 누구에게나(7일 · 한 번). 자유 가입판에는 «윗사람»이 없다(docs/OPEN_EDITION.md §4-5).
     async 'user.reset_code'(user, b, ip) {
       if (!user.isPlatformAdmin) return FORBIDDEN;
-      const u = isUuid(b.userId) ? await one('SELECT id, login_id, is_platform_admin FROM users WHERE id = $1', [b.userId]) : null;
+      const u = isUuid(b.userId) ? await one('SELECT id, login_id, is_platform_admin FROM users WHERE id = $1 AND deleted_at IS NULL', [b.userId]) : null;
       if (!u) return NOT_FOUND;
       if (u.is_platform_admin) return no(422, '운영자 계정은 Secrets 의 SE2_RECOVERY_CODE 로 되찾습니다', 'validation');
       const code = await issueResetCode(u.id);
@@ -197,7 +200,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     async 'user.status'(user, b, ip) {
       if (!user.isPlatformAdmin) return FORBIDDEN;
       if (!['active', 'disabled'].includes(b.status)) return no(422, '상태가 맞지 않습니다', 'validation');
-      const u = await one('SELECT id, login_id FROM users WHERE lower(login_id) = lower($1)', [String(b.loginId || '').trim()]);
+      const u = await one('SELECT id, login_id FROM users WHERE lower(login_id) = lower($1) AND deleted_at IS NULL', [String(b.loginId || '').trim()]);
       if (!u) return NOT_FOUND;
       if (u.id === user.id) return no(422, '자기 계정은 멈출 수 없습니다', 'validation');
       await pool.query('UPDATE users SET status = $2, updated_at = now() WHERE id = $1', [u.id, b.status]);
@@ -776,7 +779,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
     await pool.query('UPDATE users SET password_hash = $2, reset_code_hash = NULL, reset_code_sealed = NULL, reset_expires_at = NULL, known_password_sealed = NULL, updated_at = now() WHERE id = $1', [u.id, await auth.hashPassword(b.password)]);
     await pool.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [u.id]);
     tries.delete(key);
-    await auth.audit(pool, { actor: u.id, action: byRecovery ? 'auth.recover' : 'auth.password_reset', targetType: 'user', targetId: u.id, ip });
+    await auth.audit(pool, { actor: u.id, action: byRecovery ? 'auth.recover' : 'auth.password_reset', targetType: 'user', targetId: u.id, ip: keepIp(u.is_platform_admin) ? ip : '' });
     return { status: 200, body: { ok: true }, newUser: true, loginId: u.login_id };
   }
 
@@ -858,7 +861,7 @@ export function createEdu({ pool, credentials = null, wfs = null, keyTester = nu
         ON CONFLICT (class_id, user_id) DO NOTHING`, [inv.class_id, inv.organization_id, who.id, inv.role]);
     }
     tries.delete(String(ip || ''));
-    await auth.audit(pool, { actor: who.id, organizationId: inv.organization_id, action: 'invite.accept', targetType: 'invite', targetId: inv.id, details: { role: inv.role, newAccount: made }, ip });
+    await auth.audit(pool, { actor: who.id, organizationId: inv.organization_id, action: 'invite.accept', targetType: 'invite', targetId: inv.id, details: { role: inv.role, newAccount: made }, ip: keepIp(false) ? ip : '' });
     return { status: 200, body: { ok: true, role: inv.role, organizationId: inv.organization_id, classId: inv.class_id }, newUser: made ? who : null };
   }
 

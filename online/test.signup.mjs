@@ -37,17 +37,21 @@ export async function run({ pool, ok, eq }) {
     const one = await signup({ loginId: 'SU-One', displayName: '  하나  ', password: 'long-enough-one' });
     ok('가입한다(아이디는 소문자로) · 쿠키', one.status === 200 && one.ok && /^se_session=./.test(one.cookie), JSON.stringify(one));
     const me = await signup('me', one.cookie);
-    ok('그 쿠키로 바로 들어와 있다', me.ok && me.me.loginId === 'su-one' && me.me.displayName === '하나' && me.me.edition === 'open');
+    // 받는 정보는 아이디 · 비밀번호뿐(2026-10-11) — 이름을 보내 와도 받지 않는다(보이는 이름은 아이디)
+    ok('그 쿠키로 바로 들어와 있다 — 보내 온 이름은 받지 않는다(보이는 이름은 아이디)', me.ok && me.me.loginId === 'su-one' && me.me.displayName === 'su-one' && me.me.edition === 'open', JSON.stringify(me.me));
     const row = (await pool.query("SELECT is_platform_admin, status FROM users WHERE login_id = 'su-one'")).rows[0];
     ok('**가입한 계정은 보통 계정이다(운영자가 아니다)**', row.is_platform_admin === false && row.status === 'active');
     const act = (await pool.query("SELECT a.ip, a.details FROM audit_logs a JOIN users u ON u.id = a.actor_user_id WHERE u.login_id = 'su-one' AND a.action = 'auth.signup'")).rows;
     ok('가입은 감사 기록에 남는다(비밀번호 없이)', act.length === 1 && !JSON.stringify(act).includes('long-enough-one'));
+    // 사용자의 접속 IP · 브라우저 정보는 남기지 않는다(감사 기록 · 세션 모두) — 받는 정보가 아니다
+    const sess = (await pool.query("SELECT s.ip, s.user_agent FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.login_id = 'su-one'")).rows;
+    ok('**가입 · 로그인한 사용자의 IP · 브라우저 정보를 남기지 않는다(감사 기록 · 세션)**', act[0].ip === '' && sess.length >= 1 && sess.every((x) => x.ip === '' && x.user_agent === ''), JSON.stringify({ act, sess }));
     eq('같은 아이디(대소문자만 다른 것도)는 409', (await signup({ loginId: 'su-one', password: 'long-enough-two' })).status, 409);
     eq('짧은 비밀번호는 422', (await signup({ loginId: 'su-short', password: 'short' })).status, 422);
     eq('이상한 아이디는 422', (await signup({ loginId: 'su one!', password: 'long-enough-x' })).status, 422);
     ok('실패한 가입으로는 계정이 생기지 않는다', !(await has('su-short')));
     await signup({ loginId: 'su-long', displayName: '가'.repeat(200), password: 'long-enough-long' });
-    eq('이름은 60자까지', (await pool.query("SELECT length(display_name) AS n FROM users WHERE login_id = 'su-long'")).rows[0].n, 60);
+    eq('**이름은 받지 않는다 — 길게 보내 와도 저장되는 것은 아이디뿐**', (await pool.query("SELECT display_name FROM users WHERE login_id = 'su-long'")).rows[0].display_name, 'su-long');
 
     // ---------------- 고삐 — 같은 곳에서 1시간에 새 계정 5개 · 15분에 시도 20번
     {

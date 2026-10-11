@@ -2,7 +2,8 @@
 // 판정(운영자인가)과 감사 기록은 문(./ops.mjs)이 하고, 여기는 읽고 고치는 일만 한다.
 //
 // 지키는 것
-//   · 결제 기록의 이름 · 전화 · 이메일은 가려서 내보낸다(원문은 DB 에만). 금액 · 매출은 이 화면에만.
+//   · 결제 기록의 이메일은 가려서 내보낸다(원문은 DB 에만). 구매자 이름 · 전화는 받을 때 걷어 남기지 않는다(2026-10-11 — 그 전에 받은 줄만 가려서 보인다).
+//     금액 · 매출은 이 화면에만. 지운 계정(§4-11)은 아이디 대신 «지운 계정»(deleted)으로 — 고객 목록에는 없다.
 //   · 손으로 바꾸는 것(연장 · 끝내기 · 무료 이용)은 이용권 줄만 고친다 — 그로블 쪽 카드 청구는 여기서 끊지 않는다(그로블 판매 관리에서).
 //   · [이 계정에 연결]은 그 결제를 그 사람에게 반영하고(금액 검사 없이 — 운영자가 확인했다), 참조값(없으면 구매자 이메일)을 기억해 다음 소식부터 저절로 잇는다.
 
@@ -28,36 +29,41 @@ function eventView(r) {
     id: Number(r.id), receivedAt: r.received_at, occurredAt: r.occurred_at, type: r.type, result: r.result, note: r.note, review: r.review,
     amount: r.amount, ref: shortRef(r.ref), merchantUid: r.merchant_uid, contentId: String((o.content && o.content.id) || ''),
     buyer: { name: maskName(b.displayName || b.name), email: maskEmail(b.email), phone: maskPhone(b.phoneNumber || b.phone) },
-    user: r.user_id ? { userId: r.user_id, loginId: r.login_id || '' } : null,
+    user: r.user_id ? { userId: r.user_id, loginId: r.user_deleted ? '' : r.login_id || '', deleted: !!r.user_deleted } : null,
     resolved: !!r.resolved_at,
   };
 }
-const EVENT_COLS = `e.id, e.received_at, e.occurred_at, e.type, e.result, e.note, e.review, e.amount, e.ref, e.merchant_uid, e.raw, e.user_id, e.resolved_at, u.login_id`;
+const EVENT_COLS = `e.id, e.received_at, e.occurred_at, e.type, e.result, e.note, e.review, e.amount, e.ref, e.merchant_uid, e.raw, e.user_id, e.resolved_at, u.login_id, u.deleted_at AS user_deleted`;
+// 화면에 보일 사람 — 지운 계정은 아이디 · 이름 없이
+const userOf = (r) => (r.user_deleted ? { userId: r.user_id, loginId: '', name: '', deleted: true } : { userId: r.user_id, loginId: r.login_id || '', name: r.display_name || '', deleted: false });
 
 // 환불 건 한 줄 → 화면 — 그때의 판정(결제 때 · 기한 · AI 작업 수 · 규정 안)과 할 일 둘(그로블 환불 · 그로블 해지)의 확인
 function refundView(r) {
   return {
-    id: r.id, user: { userId: r.user_id, loginId: r.login_id || '', name: r.display_name || '' }, source: r.source, status: r.status,
+    id: r.id, user: userOf(r), source: r.source, status: r.status,
     merchantUid: r.merchant_uid, amount: r.amount, paidAt: r.paid_at, until: kstDay(new Date(r.deadline).getTime() - 1), aiRuns: r.ai_runs, inPolicy: r.in_policy,
     createdAt: r.created_at, refundedAt: r.refunded_at, cancelledAt: r.cancelled_at, resolvedAt: r.resolved_at,
     reason: r.reason || '', reasonSay: r.reason ? reasonSay(r.reason) : '', detail: r.detail || '', mailedAt: r.mailed_at, mailError: r.mail_error || '',
     mailErrorSay: r.mail_error ? mailSay(r.mail_error) : '',
   };
 }
-const REFUND_COLS = `r.id, r.user_id, u.login_id, u.display_name, r.source, r.status, r.merchant_uid, r.amount, r.paid_at, r.deadline, r.ai_runs, r.in_policy,
+const REFUND_COLS = `r.id, r.user_id, u.login_id, u.display_name, u.deleted_at AS user_deleted, r.source, r.status, r.merchant_uid, r.amount, r.paid_at, r.deadline, r.ai_runs, r.in_policy,
   r.created_at, r.refunded_at, r.cancelled_at, r.resolved_at, r.reason, r.detail, r.mailed_at, r.mail_error`;
 
 // 구독 취소 한 줄 → 화면 — 이유 · 다음 결제일(이 날 전에 그로블에서 해지) · 그로블 해지 확인 · 취소 뒤 다시 결제됐나 · 알림 메일
 function cancelView(r) {
   return {
-    id: r.id, user: { userId: r.user_id, loginId: r.login_id || '', name: r.display_name || '' }, status: r.status,
-    reason: r.reason, reasonSay: reasonSay(r.reason), detail: r.detail, nextBilling: r.next_billing || '',
+    id: r.id, user: userOf(r), status: r.status,
+    reason: r.reason, reasonSay: reasonSay(r.reason), detail: r.detail, nextBilling: r.next_billing || '', merchantUid: r.last_merchant_uid || '',
     createdAt: r.created_at, confirmedAt: r.confirmed_at, chargedAt: r.charged_at, mailedAt: r.mailed_at, mailError: r.mail_error || '', resolvedAt: r.resolved_at,
     mailErrorSay: r.mail_error ? mailSay(r.mail_error) : '',
   };
 }
-const CANCEL_COLS = `x.id, x.user_id, u.login_id, u.display_name, x.status, x.reason, x.detail, x.next_billing::text AS next_billing,
-  x.created_at, x.confirmed_at, x.charged_at, x.mailed_at, x.mail_error, x.resolved_at`;
+// last_merchant_uid — 그 정기결제의 마지막 결제 건 번호(그로블 판매 관리에서 이 번호로 찾는다 — 지운 계정은 아이디가 없으니 이것뿐)
+const CANCEL_COLS = `x.id, x.user_id, u.login_id, u.display_name, u.deleted_at AS user_deleted, x.status, x.reason, x.detail, x.next_billing::text AS next_billing,
+  x.created_at, x.confirmed_at, x.charged_at, x.mailed_at, x.mail_error, x.resolved_at,
+  (SELECT e.merchant_uid FROM billing_events e WHERE e.subscription_id = x.subscription_id AND e.type = 'subscription_payment.completed' AND e.result = 'applied'
+    ORDER BY coalesce(e.occurred_at, e.received_at) DESC, e.id DESC LIMIT 1) AS last_merchant_uid`;
 
 export function createBillingAdmin({ pool, billing }) {
   const one = async (sql, args) => (await pool.query(sql, args)).rows[0] || null;
@@ -73,7 +79,7 @@ export function createBillingAdmin({ pool, billing }) {
                 min(s.next_billing_date) FILTER (WHERE s.provider = 'groble' AND s.paid_until > now() AND s.status IN ('active', 'past_due'))::text AS next_billing,
                 max(s.last_paid_at) AS last_paid_at, count(*) OVER () AS total
            FROM users u LEFT JOIN billing_customers c ON c.user_id = u.id LEFT JOIN subscriptions s ON s.user_id = u.id
-          WHERE ($1 = '%%' OR u.login_id ILIKE $1 OR u.display_name ILIKE $1)
+          WHERE u.deleted_at IS NULL AND ($1 = '%%' OR u.login_id ILIKE $1 OR u.display_name ILIKE $1)
           GROUP BY u.id, c.free, c.memo
          HAVING $2 = '' OR ($2 = 'free' AND coalesce(c.free, false)) OR ($2 <> 'free' AND ${STATUS_SQL} = $2)
           ORDER BY u.created_at DESC LIMIT $3 OFFSET $4`,
@@ -89,7 +95,7 @@ export function createBillingAdmin({ pool, billing }) {
     async customer(userId) {
       if (!isUuid(userId)) return null;
       // 구글 로그인 — 이은 구글(이메일은 가려서) · 비밀번호가 없는 계정인가(구글로 만든 계정 — 비밀번호를 정하려면 재설정 코드)
-      const u = await one(`SELECT u.id, u.login_id, u.display_name, u.created_at, u.last_login_at, u.status, u.is_platform_admin, coalesce(c.free, false) AS free, coalesce(c.memo, '') AS memo,
+      const u = await one(`SELECT u.id, u.login_id, u.display_name, u.created_at, u.last_login_at, u.status, u.is_platform_admin, u.deleted_at, coalesce(c.free, false) AS free, coalesce(c.memo, '') AS memo,
           u.password_hash = $2 AS no_password, (SELECT i.email FROM user_identities i WHERE i.provider = 'google' AND i.user_id = u.id LIMIT 1) AS google_email,
           EXISTS (SELECT 1 FROM user_identities i WHERE i.provider = 'google' AND i.user_id = u.id) AS google
         FROM users u LEFT JOIN billing_customers c ON c.user_id = u.id WHERE u.id = $1`, [userId, NO_PASSWORD]);
@@ -101,8 +107,8 @@ export function createBillingAdmin({ pool, billing }) {
       const refunds = (await pool.query(`SELECT ${REFUND_COLS} FROM refund_requests r JOIN users u ON u.id = r.user_id WHERE r.user_id = $1 ORDER BY r.created_at DESC LIMIT 20`, [userId])).rows;
       const cancels = (await pool.query(`SELECT ${CANCEL_COLS} FROM cancel_requests x JOIN users u ON u.id = x.user_id WHERE x.user_id = $1 ORDER BY x.created_at DESC LIMIT 20`, [userId])).rows;
       return {
-        user: { userId: u.id, loginId: u.login_id, name: u.display_name, createdAt: u.created_at, lastLoginAt: u.last_login_at, accountStatus: u.status, operator: u.is_platform_admin, free: u.free, memo: u.memo,
-          google: u.google ? { email: maskEmail(u.google_email) } : null, noPassword: !!u.no_password },
+        user: { userId: u.id, loginId: u.deleted_at ? '' : u.login_id, name: u.deleted_at ? '' : u.display_name, createdAt: u.created_at, lastLoginAt: u.last_login_at, accountStatus: u.status, operator: u.is_platform_admin, free: u.free, memo: u.memo,
+          google: u.google ? { email: maskEmail(u.google_email) } : null, noPassword: !!u.no_password && !u.deleted_at, deleted: !!u.deleted_at, deletedAt: u.deleted_at },
         pass: summarize(subs, { free: u.free, operator: u.is_platform_admin }),
         subscriptions: subs.map((s) => ({ provider: s.provider, ref: shortRef(s.ref), status: s.status, paidUntil: s.paid_until, nextBillingDate: s.next_billing_date || '', serviceEndsAt: s.service_ends_at,
           finalFailure: s.final_failure, lastPaidAt: s.last_paid_at, lastAmount: s.last_amount, plan: s.plan_name || '', createdAt: s.created_at })),

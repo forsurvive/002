@@ -242,6 +242,10 @@ export async function run({ pool, ok, eq }) {
     ok('내 이용권 — 이용 중 · 다음 결제일', pass1.active && pass1.status === 'active' && pass1.nextBillingDate === nbd1);
     ok('**이제 새 AI 작업이 선다**', (await api('bl-buyer', 'doc.update', { pid, id: doc })).ok);
     ok('받은 웹훅이 남는다(원문 · 연결된 사람)', (await pool.query(`SELECT user_id, result, raw FROM billing_events WHERE idem_key = 'idem-first'`)).rows.some((x) => x.user_id === buyer.id && x.result === 'applied' && x.raw.data.object.buyer.email === 'Buyer@Example.com'));
+    // 받는 정보는 아이디 · 비밀번호 · 이메일뿐(2026-10-11) — 그로블이 함께 보낸 구매자 이름 · 전화 · 결제창 질문의 답은 걷고 남긴다
+    const kept = (await pool.query(`SELECT raw FROM billing_events WHERE idem_key = 'idem-first'`)).rows[0].raw.data.object;
+    ok('**구매자 이름 · 전화 · 결제창 질문의 답은 남기지 않는다(구매자는 이메일만 · 결제 소식은 그대로)**', JSON.stringify(kept.buyer) === JSON.stringify({ email: 'Buyer@Example.com' })
+      && !('questionAnswers' in kept) && kept.merchantUid === 'M-1' && kept.pricing.finalAmount === 5000 && kept.subscription.nextBillingDate === nbd1, JSON.stringify(kept));
     const n1 = await count();
     const again = await hook(JSON.stringify(first), { headers: firstHeaders });
     ok('**같은 Idempotency-Key 는 두 번 처리하지 않는다(그대로 200)**', again.status === 200 && again.duplicate === true && (await count()) === n1);
@@ -313,6 +317,9 @@ export async function run({ pool, ok, eq }) {
     const junk = await hook('this is not json');
     codes.add(junk.status);
     ok('**읽지 못한 꼴도 200 으로 받고 «확인 필요»**', junk.status === 200 && (await lastEvent()).result === 'unreadable' && (await lastEvent()).review);
+    // 무엇이 들었는지 모르는 원문은 남기지 않는다(구매자 이름 · 전화가 섞였을 수 있다) — 크기와 지문만(그로블 쪽 기록과 맞춰 보는 데)
+    const junkRaw = (await pool.query('SELECT raw FROM billing_events ORDER BY id DESC LIMIT 1')).rows[0].raw;
+    ok('**읽지 못한 꼴은 원문 없이 크기 · 지문만 남긴다**', junkRaw.unreadable === true && !('text' in junkRaw) && junkRaw.bytes === 'this is not json'.length && /^[0-9a-f]{64}$/.test(junkRaw.sha256), JSON.stringify(junkRaw));
     await hook(sample({ type: 'subscription.paused' }));
     eq('모르는 종류도 200 · 확인 필요', (await lastEvent()).result, 'unreadable');
     await hook(sample({ type: 'payment.completed' }, { content: { id: 'BOOK-1', paymentType: 'ONE_TIME' }, sellerReference: '' }));
@@ -548,8 +555,9 @@ export async function run({ pool, ok, eq }) {
       ok('상태로 거르기 — 무료 이용', (await edu('bl-root', 'billing.customers', { q: 'bl-', status: 'free' })).customers.every((c) => c.free) && (await edu('bl-root', 'billing.customers', { q: 'bl-', status: 'free' })).total >= 1);
       ok('상태로 거르기 — 없음', (await edu('bl-root', 'billing.customers', { q: 'bl-', status: 'none' })).customers.every((c) => c.status === 'none'));
       const one = (await edu('bl-root', 'billing.customer', { userId: buyer.id })).customer;
-      ok('**한 사람 — 이용권 줄 · 결제 기록(이름 · 전화 · 이메일은 가려서)**', one.subscriptions.length >= 3 && one.events.length >= 3 && one.events.some((e) => e.buyer.name === '홍*동' && e.buyer.email === 'Bu***@Example.com' && e.buyer.phone === '***-****-5678')
-        && !JSON.stringify(one).includes('010-1234-5678') && !JSON.stringify(one).includes('Buyer@Example.com'));
+      ok('**한 사람 — 이용권 줄 · 결제 기록(이메일은 가려서 · 이름 · 전화는 남기지 않아 없다)**', one.subscriptions.length >= 3 && one.events.length >= 3 && one.events.some((e) => e.buyer.email === 'Bu***@Example.com')
+        && one.events.every((e) => !e.buyer.name && !e.buyer.phone) && !JSON.stringify(one).includes('010-1234-5678') && !JSON.stringify(one).includes('Buyer@Example.com')
+        && !JSON.stringify(one).includes('홍길동') && !JSON.stringify(one).includes('홍*동'));
 
       // ---------------- 손으로 바꾸기 — 연장 · 끝내기 · 무료 이용 · 메모(모두 감사 기록)
       const audits = async (action) => ((await pool.query('SELECT details FROM audit_logs WHERE action = $1 ORDER BY id DESC LIMIT 1', [action])).rows[0] || {}).details || {};
@@ -634,12 +642,15 @@ export async function run({ pool, ok, eq }) {
     const good = await hook(sample({}, { sellerReference: '' , buyer: { email: 'nobody2@example.com' } }));
     eq('**틀린 서명이 쏟아지는 중에도 맞는 서명의 웹훅은 200**', good.status, 200);
 
-    // ---------------- 구매자가 넣은 글자 — 이스케이프된 «\\u0000» 도, 진짜 NUL 글자도 원문을 남긴다(저장이 막혀 503 이 되풀이되지 않게)
+    // ---------------- 넣은 글자 — 이스케이프된 «\\u0000» 도, 진짜 NUL 글자도 원문을 남긴다(저장이 막혀 503 이 되풀이되지 않게)
+    // 구매자 이름은 걷으므로(2026-10-11) 남기는 칸(상품 이름)에 싣는다 — 같은 규칙을 남는 자리에서 본다
     {
-      const r1 = await hook(sample({}, { sellerReference: '', buyer: { displayName: 'a\\u0000b', email: 'nul1@example.com' } }));
-      const r2 = await hook(sample({}, { sellerReference: '', buyer: { displayName: 'c\u0000d', email: 'nul2@example.com' } }));
-      const names = (await pool.query(`SELECT raw->'data'->'object'->'buyer'->>'displayName' AS n FROM billing_events WHERE raw->'data'->'object'->'buyer'->>'email' IN ('nul1@example.com', 'nul2@example.com') ORDER BY id`)).rows.map((r) => r.n);
-      ok('**이름에 글자 «\\u0000» 이 있어도 · 진짜 NUL 이 있어도 200 으로 남긴다**', r1.status === 200 && r2.status === 200 && names[0] === 'a\\u0000b' && names[1] === 'cd', JSON.stringify([r1.status, r2.status, names]));
+      const r1 = await hook(sample({}, { sellerReference: '', buyer: { displayName: 'a\\u0000b', email: 'nul1@example.com' }, content: { id: 'C-77', paymentType: 'SUBSCRIPTION', title: 'a\\u0000b' } }));
+      const r2 = await hook(sample({}, { sellerReference: '', buyer: { displayName: 'c\u0000d', email: 'nul2@example.com' }, content: { id: 'C-77', paymentType: 'SUBSCRIPTION', title: 'c\u0000d' } }));
+      const rows = (await pool.query(`SELECT raw->'data'->'object'->'content'->>'title' AS t, raw->'data'->'object'->'buyer' AS b FROM billing_events
+        WHERE raw->'data'->'object'->'buyer'->>'email' IN ('nul1@example.com', 'nul2@example.com') ORDER BY id`)).rows;
+      ok('**글자 «\\u0000» 이 있어도 · 진짜 NUL 이 있어도 200 으로 남긴다(구매자 이름은 걷는다)**', r1.status === 200 && r2.status === 200 && rows.length === 2 && rows[0].t === 'a\\u0000b' && rows[1].t === 'cd'
+        && rows.every((x) => !('displayName' in x.b)), JSON.stringify([r1.status, r2.status, rows]));
     }
 
     // ---------------- 해지 예고 — 끝나는 날 + 하루에 저절로 끝나게 · 즉시 해지(예고와 완료가 같은 때)도 «해지 완료»를 잃지 않는다

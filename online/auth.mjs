@@ -83,6 +83,11 @@ export function resetThrottle() { fails.clear(); }   // 시험이 쓴다
 
 const tokenHash = (token) => createHash('sha256').update(String(token)).digest();
 
+// 접속 IP · 브라우저 정보를 남기나 — 자유 가입판은 받는 정보가 아이디 · 비밀번호 · 이메일뿐이라(2026-10-11 사용자 지시)
+// 사용자의 것은 남기지 않고, 운영자(개인정보를 다루는 사람)의 것만 접속 기록으로 남긴다. 교육기관판은 지금처럼 모두.
+// 고삐(같은 곳의 거듭된 실패)는 남기지 않고 메모리에서만 IP 를 쓴다.
+export const keepsIp = (edition, admin) => edition !== 'open' || !!admin;
+
 export async function audit(db, { actor = null, organizationId = null, action, targetType = '', targetId = '', ip = '', details = {} }) {
   await db.query(
     'INSERT INTO audit_logs (actor_user_id, organization_id, action, target_type, target_id, ip, details) VALUES ($1,$2,$3,$4,$5,$6,$7)',
@@ -91,22 +96,40 @@ export async function audit(db, { actor = null, organizationId = null, action, t
 
 const SAME_FAILURE = { ok: false, code: 'unauthenticated', error: '아이디 또는 비밀번호가 맞지 않습니다' };
 
-export async function login(db, { loginId, password, ip = '', userAgent = '' }) {
+// keepIp(운영자인가) — 접속 IP · 브라우저 정보를 남길지(위 keepsIp). 고삐는 남기든 말든 ip 로 센다.
+export async function login(db, { loginId, password, ip = '', userAgent = '', keepIp = () => true }) {
   const login = String(loginId || '').trim().toLowerCase();
   const key = ip + '|' + login;
   if (throttled(key)) return { ok: false, code: 'rate_limited', error: '잠시 뒤에 다시 시도해 주세요' };
-  const { rows } = await db.query('SELECT id, password_hash, status FROM users WHERE login_id = $1', [login]);
+  const { rows } = await db.query('SELECT id, password_hash, status, is_platform_admin, deleted_at FROM users WHERE login_id = $1', [login]);
   const u = rows[0];
-  // 비밀번호가 없는 계정(구글로만)도 없는 계정처럼 — 같은 시간 · 같은 문구
-  const real = !!u && u.password_hash !== NO_PASSWORD;
+  // 비밀번호가 없는 계정(구글로만) · 지운 계정도 없는 계정처럼 — 같은 시간 · 같은 문구
+  const real = !!u && u.password_hash !== NO_PASSWORD && !u.deleted_at;
   const good = await verifyPassword(password, real ? u.password_hash : await dummy());
+  const keep = keepIp(!!(u && u.is_platform_admin));
   if (!real || !good || u.status !== 'active') {
     noteFail(key);
-    await audit(db, { actor: u ? u.id : null, action: 'auth.login_failed', targetType: 'user', targetId: login, ip });
+    await audit(db, { actor: u ? u.id : null, action: 'auth.login_failed', targetType: 'user', targetId: login, ip: keep ? ip : '' });
     return SAME_FAILURE;
   }
   fails.delete(key);
-  return { ok: true, token: await openSession(db, u.id, { ip, userAgent }) };
+  return { ok: true, token: await openSession(db, u.id, keep ? { ip, userAgent } : {}) };
+}
+
+// 지금 비밀번호 확인 — 계정 지우기처럼 되돌릴 수 없는 일 앞에서. 로그인과 같은 고삐(같은 곳 · 같은 계정의 거듭된 실패는 잠시 막는다).
+// 돌려주는 값: { ok } 또는 { ok:false, code: rate_limited | no_password | unauthenticated, error }
+export async function checkPassword(db, userId, { password, ip = '' }) {
+  const { rows } = await db.query('SELECT login_id, password_hash FROM users WHERE id = $1 AND deleted_at IS NULL', [userId]);
+  const u = rows[0];
+  const key = ip + '|' + (u ? u.login_id : '');
+  if (throttled(key)) return { ok: false, code: 'rate_limited', error: '잠시 뒤에 다시 시도해 주세요' };
+  if (u && u.password_hash === NO_PASSWORD) return { ok: false, code: 'no_password', error: '비밀번호가 없는 계정입니다 — 구글로 확인해 주세요' };
+  if (!u || !(await verifyPassword(password, u.password_hash))) {
+    noteFail(key);
+    return { ok: false, code: 'unauthenticated', error: '비밀번호가 맞지 않습니다' };
+  }
+  fails.delete(key);
+  return { ok: true };
 }
 
 // 세션 열기 — 원문 토큰은 쿠키로만 돌려주고 DB 에는 SHA-256 만 남긴다. 마지막 로그인 시각 · 감사 기록까지.
@@ -126,7 +149,7 @@ export async function sessionUser(db, token) {
   const { rows } = await db.query(
     `SELECT s.id AS session_id, s.last_seen_at, u.id, u.login_id, u.display_name, u.is_platform_admin
        FROM sessions s JOIN users u ON u.id = s.user_id
-      WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.status = 'active'`,
+      WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.status = 'active' AND u.deleted_at IS NULL`,
     [tokenHash(token)]);
   const r = rows[0];
   if (!r) return null;

@@ -116,14 +116,14 @@ async function join(e) {
   tell(out.error || '계정을 만들지 못했습니다');
 }
 
-// 자유 가입판 — 아이디 · 이름 · 비밀번호로 가입하고 곧바로 «내 계정»(키 넣기 · 이용권)으로 간다
+// 자유 가입판 — 아이디 · 비밀번호만으로 가입하고(이름은 받지 않는다) 곧바로 «내 계정»(키 넣기 · 이용권)으로 간다
 async function signup(e) {
   e.preventDefault();
   tell('');
   if (!v('su-id') || !$('su-pw').value) return tell('아이디와 비밀번호를 정해 넣어 주세요');
   if ($('su-pw').value !== $('su-pw2').value) return tell('비밀번호가 서로 다릅니다');
   if (!(await passGate())) return;
-  const out = await post('/api/auth/signup', { loginId: v('su-id'), displayName: v('su-name'), password: $('su-pw').value });
+  const out = await post('/api/auth/signup', { loginId: v('su-id'), password: $('su-pw').value });
   if (out.ok) { location.href = '/account.html'; return; }
   if (out.code === 'gate') { location.reload(); return; }
   tell(out.error || '가입하지 못했습니다');
@@ -235,7 +235,6 @@ const signupBox = () => h('div', { style: 'margin-top:18px;padding-top:18px;bord
   S.signup ? h('form', { onsubmit: signup },
     h('div', { class: 'top-name', style: 'font-size:19px;margin-top:6px', text: '가입하기' }),
     field('아이디(영문 소문자 · 숫자, 3자 이상)', 'su-id', 'text', { autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' }),
-    field('이름', 'su-name', 'text'),
     field('비밀번호(10자 이상)', 'su-pw', 'password', { autocomplete: 'new-password' }),
     field('비밀번호 한 번 더', 'su-pw2', 'password', { autocomplete: 'new-password' }),
     h('div', { class: 'line', style: 'margin-top:14px' },
@@ -325,6 +324,7 @@ function draw(form) {
     $('iv-code').value = linkInvite;
     await checkCode({ preventDefault() {} });   // 맞으면 곧바로 «계정 만들기» 칸이 열린다
   } else if (GOOGLE_SAY[googleBack]) tell(GOOGLE_SAY[googleBack]);
+  else if (q.has('deleted')) { history.replaceState(null, '', '/login'); tell('계정을 지웠습니다'); }
   const boot = $('boot');
   if (boot) boot.remove();
 })();

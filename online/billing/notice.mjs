@@ -1,6 +1,6 @@
 // 구독 취소 · 환불의 «이유»와 운영자 알림 메일의 글(순수) — docs/OPEN_EDITION.md §4-8. 보내기는 ../mail.mjs, 언제 보낼지는 ./service.mjs.
-// 메일에는 아이디 · 앱에 적은 이름 · 결제 건 번호 · 금액 · 때만 싣는다(구매자 이름 · 전화 · 이메일 원문 · 키는 싣지 않는다 —
-// 그로블 판매 관리에서는 결제 건 번호로 찾는다).
+// 메일에는 아이디 · 결제 건 번호 · 금액 · 때만 싣는다(이메일 · 키는 싣지 않는다 — 그로블 판매 관리에서는 결제 건 번호로 찾는다).
+// 지운 계정(§4-11)은 아이디도 싣지 않는다 — «지운 계정»과 결제 건 번호만. 제목 머리는 앱 이름(전자책 오토 · 스토리 엔진).
 
 // 이유 — 화면은 이 목록을 서버(me.pass)에서 받아 그린다(한 곳에만 둔다)
 export const CANCEL_REASONS = [
@@ -12,7 +12,9 @@ export const CANCEL_REASONS = [
   { code: 'switch', say: '다른 서비스를 쓰기로 했어요' },
   { code: 'other', say: '기타' },
 ];
-export const reasonSay = (code) => (CANCEL_REASONS.find((r) => r.code === code) || { say: String(code || '') }).say;
+// 사람이 고르지 않는 이유 — 계정을 지우면 서버가 구독 취소를 저절로 접수한다(§4-11). 목록(화면)에는 없다.
+export const SYSTEM_REASONS = [{ code: 'account_deleted', say: '계정을 지움' }];
+export const reasonSay = (code) => ([...CANCEL_REASONS, ...SYSTEM_REASONS].find((r) => r.code === code) || { say: String(code || '') }).say;
 export const DETAIL_MAX = 500;
 
 // 이유 받기 — 고른 것은 목록 안에서만, 적은 말은 500자(제어 글자는 걷는다). «기타»는 적은 말이 있어야 한다.
@@ -39,15 +41,17 @@ export const mailSay = (reason) => MAIL_SAY[reason] || ('보내지 못했습니�
 const kst = (d) => (d ? new Date(d).toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(0, 16) : '');
 const kday = (d) => (d ? new Date(d).toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' }) : '');
 const won = (n) => (n == null ? '' : Number(n).toLocaleString('ko-KR') + '원');
-const who = (u) => (u.name && u.name !== u.loginId ? u.name + '(' + u.loginId + ')' : u.loginId);
+const idOf = (u) => (u.deleted || !u.loginId ? '지운 계정' : u.loginId);   // 제목에는 아이디만
+const who = (u) => (u.deleted || !u.loginId ? '지운 계정' : u.name && u.name !== u.loginId ? u.name + '(' + u.loginId + ')' : u.loginId);
+const head = (app) => '[' + (app || '스토리 엔진') + '] ';
 const why = (reason, detail) => '· 이유: ' + reasonSay(reason) + (detail ? ' — ' + detail : '');
 const payLine = (p) => [p.merchantUid ? '결제 건 번호 ' + p.merchantUid : '', won(p.amount), p.paidAt ? kst(p.paidAt) + ' 결제' : ''].filter(Boolean).join(' · ');
 const tail = (site) => ['', '운영 화면: ' + (site ? site + '/manage.html → ' : '') + '관리 → 운영 → [결제 기록]'];
 
 // 환불 요청 — 구독 시작 7일 안에 고객이 [환불 요청]을 눌렀다. 이용권은 요청과 함께 멈췄다.
-export function refundMail({ user, at, start, until, inPolicy, payment, aiRuns, prevRefunds = 0, reason, detail, site = '' }) {
+export function refundMail({ user, at, start, until, inPolicy, payment, aiRuns, prevRefunds = 0, reason, detail, site = '', app = '' }) {
   return {
-    subject: '[스토리 엔진] 환불 요청 — ' + user.loginId,
+    subject: head(app) + '환불 요청 — ' + idOf(user),
     text: [
       who(user) + ' 님이 환불을 요청했습니다.', '',
       '· 요청: ' + kst(at),
@@ -68,9 +72,9 @@ export function refundMail({ user, at, start, until, inPolicy, payment, aiRuns, 
 }
 
 // 구독 취소 — 환불 기간이 지난 고객이 [구독 취소]를 눌렀다. 이용권은 다음 결제일까지 그대로.
-export function cancelMail({ user, at, nextBilling, lastPayment = null, reason, detail, site = '' }) {
+export function cancelMail({ user, at, nextBilling, lastPayment = null, reason, detail, site = '', app = '' }) {
   return {
-    subject: '[스토리 엔진] 구독 취소 — ' + user.loginId,
+    subject: head(app) + '구독 취소 — ' + idOf(user),
     text: [
       who(user) + ' 님이 구독 취소를 눌렀습니다.', '',
       '· 요청: ' + kst(at),
@@ -85,12 +89,30 @@ export function cancelMail({ user, at, nextBilling, lastPayment = null, reason, 
   };
 }
 
-// 취소를 접수한 정기결제에서 다시 결제됐다 — 그로블 해지가 늦었다
-export function chargedMail({ user, requestedAt, at, payment, site = '' }) {
+// 계정을 지워 구독 취소를 저절로 접수했다(§4-11) — 아이디 · 이메일은 이미 지웠다. 그로블에서는 결제 건 번호로 찾는다.
+export function deletedMail({ at, nextBilling, lastPayment = null, site = '', app = '' }) {
   return {
-    subject: '[스토리 엔진] 확인 필요 — 구독을 취소한 고객에게 다시 결제됨 — ' + user.loginId,
+    subject: head(app) + '구독 취소(계정 삭제) — ' + (lastPayment && lastPayment.merchantUid ? '결제 건 번호 ' + lastPayment.merchantUid : '지운 계정'),
     text: [
-      who(user) + ' 님은 ' + kst(requestedAt) + '에 구독 취소를 눌렀는데 ' + kst(at) + '에 갱신 결제가 됐습니다.', '',
+      '고객이 계정을 지워 구독 취소를 저절로 접수했습니다(아이디 · 이메일 · 작품은 지웠습니다).', '',
+      '· 요청: ' + kst(at),
+      '· 다음 결제일: ' + (nextBilling || '모름') + ' — 이 날 전에 그로블에서 정기결제를 해지해 주세요(놓치면 다시 청구됩니다)',
+      ...(lastPayment ? ['· 마지막 결제: ' + payLine(lastPayment) + ' — 그로블 판매 관리에서 이 결제 건 번호로 찾습니다'] : ['· 마지막 결제: 기록 없음 — [결제 기록]에서 «지운 계정»의 줄을 봐 주세요']),
+      '· 이용권: 계정과 함께 끝났습니다', '',
+      '할 일(그로블 판매 관리): 이 정기결제 해지',
+      '그로블에서 해지되면 [결제 기록]의 이 요청에 «해지 확인»이 저절로 찍힙니다.',
+      ...tail(site),
+    ].join('\n'),
+  };
+}
+
+// 취소를 접수한 정기결제에서 다시 결제됐다 — 그로블 해지가 늦었다
+export function chargedMail({ user, requestedAt, at, payment, site = '', app = '' }) {
+  return {
+    subject: head(app) + '확인 필요 — 구독을 취소한 고객에게 다시 결제됨 — ' + idOf(user),
+    text: [
+      user.deleted ? '계정을 지운 고객(구독 취소 자동 접수 ' + kst(requestedAt) + ')에게 ' + kst(at) + '에 갱신 결제가 됐습니다.'
+        : who(user) + ' 님은 ' + kst(requestedAt) + '에 구독 취소를 눌렀는데 ' + kst(at) + '에 갱신 결제가 됐습니다.', '',
       '· 결제: ' + payLine(payment), '',
       '할 일(그로블 판매 관리): 1. 이 결제 환불  2. 정기결제 해지',
       ...tail(site),
@@ -98,9 +120,9 @@ export function chargedMail({ user, requestedAt, at, payment, site = '' }) {
   };
 }
 
-export function testMail({ site = '' } = {}) {
+export function testMail({ site = '', app = '' } = {}) {
   return {
-    subject: '[스토리 엔진] 알림 메일 시험',
+    subject: head(app) + '알림 메일 시험',
     text: ['이 메일이 보이면 환불 요청 · 구독 취소 알림이 이 주소로 옵니다.', ...tail(site)].join('\n'),
   };
 }

@@ -24,13 +24,14 @@ export async function run({ pool, ok, eq }) {
     ok('시작마다 state · nonce · verifier 가 새로', s.state !== s2.state && s.nonce !== s2.nonce && s.verifier !== s2.verifier && s.state !== s.nonce);
     const u = new URL(authorizeUrl({ ...CLIENT, authUrl: 'https://accounts.google.com/o/oauth2/v2/auth' }, { redirectUri: 'https://x.example/api/auth/google/callback', ...s }));
     const q = u.searchParams;
-    ok('구글로 보내는 주소 — 코드 · S256 · openid email profile 만', q.get('response_type') === 'code' && q.get('code_challenge_method') === 'S256' && q.get('scope') === 'openid email profile'
+    // 받는 정보는 아이디 · 비밀번호 · 이메일뿐(2026-10-11) — 이름 · 사진(profile)은 묻지 않는다
+    ok('**구글로 보내는 주소 — 코드 · S256 · openid email 만(profile 없음)**', q.get('response_type') === 'code' && q.get('code_challenge_method') === 'S256' && q.get('scope') === 'openid email'
       && q.get('code_challenge') === s.challenge && q.get('state') === s.state && q.get('nonce') === s.nonce && q.get('client_id') === CLIENT.clientId);
     ok('**구글로 보내는 주소에 시크릿 · verifier 원문이 없다**', !u.toString().includes(CLIENT.clientSecret) && !u.toString().includes(s.verifier));
 
     const n = 'nonce-1';
     const good = readIdToken(jwt(claimsOf({ nonce: n, email: ' Writer@Gmail.com ', name: '  구글   작가 ' })), { clientId: CLIENT.clientId, nonce: n });
-    ok('id_token — 맞으면 sub · 확인된 이메일(소문자) · 이름', good.ok && good.sub === '1000001' && good.email === 'writer@gmail.com' && good.name === '구글 작가', JSON.stringify(good));
+    ok('**id_token — 맞으면 sub · 확인된 이메일(소문자)만 — 이름이 실려 와도 꺼내지 않는다**', good.ok && good.sub === '1000001' && good.email === 'writer@gmail.com' && !('name' in good), JSON.stringify(good));
     eq('id_token — 발급자가 구글이 아니면', readIdToken(jwt(claimsOf({ nonce: n, iss: 'https://evil.example' })), { clientId: CLIENT.clientId, nonce: n }).reason, 'issuer');
     eq('id_token — 받는 쪽이 이 앱이 아니면', readIdToken(jwt(claimsOf({ nonce: n, aud: 'other-app' })), { clientId: CLIENT.clientId, nonce: n }).reason, 'audience');
     ok('id_token — 받는 쪽이 여럿이어도 이 앱이 들어 있으면', readIdToken(jwt(claimsOf({ nonce: n, aud: ['other', CLIENT.clientId] })), { clientId: CLIENT.clientId, nonce: n }).ok);
@@ -137,7 +138,7 @@ export async function run({ pool, ok, eq }) {
     ok('처음 — «내 계정»으로(가입했다는 알림과 함께) · 세션 쿠키 · state 쿠키는 지운다', first.cb.status === 302 && first.location === '/account.html?google=new' && /^se_session=./.test(first.session)
       && first.cookies.some((c) => /^se_oauth=;/.test(c) && /Max-Age=0/.test(c)), first.location + ' ' + first.cookies.join(' | '));
     const nu = await userOf('novel.writer');
-    ok('새 계정 — 아이디는 이메일 앞부분 · 이름은 구글의 이름 · 이메일은 구글이 확인한 것', nu && nu.display_name === '김 작가' && nu.email === 'novel.writer@gmail.com', JSON.stringify(nu));
+    ok('**새 계정 — 아이디는 이메일 앞부분 · 이메일은 구글이 확인한 것 · 이름은 받지 않는다(보이는 이름은 아이디)**', nu && nu.display_name === 'novel.writer' && nu.email === 'novel.writer@gmail.com', JSON.stringify(nu));
     ok('**새 계정 — 비밀번호가 없다(어떤 비밀번호로도 들어오지 못한다)**', nu && nu.password_hash === NO_PASSWORD);
     const l1 = await linkOf('g-new-1');
     ok('새 계정 — 구글 계정과 이어졌다', l1 && l1.user_id === nu.id && l1.email === 'novel.writer@gmail.com' && !!l1.last_login_at);

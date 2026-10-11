@@ -2251,8 +2251,15 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const pages = ['about', 'privacy', 'terms'].map((n) => src(join(ROOT, 'web', n + '.html')));
   ok('**읽기 쪽 세 쪽이 있고 서로 · 로그인으로 잇는다**', pages.every((t) => t.includes('href="/about"') && t.includes('href="/privacy"') && t.includes('href="/terms"') && t.includes('href="/login"') && t.includes('<script src="policy.js"></script>')));
   ok('운영자 · 연락처가 적혀 있다', pages.every((t) => t.includes('oldtowerstudio') && t.includes('oldtowerstudio@gmail.com')));
-  ok('개인정보처리방침은 실제로 받는 것 · 맡기는 곳 · 보유 기간 · 권리 · 책임자를 적는다', ['그로블', 'Replit', 'Resend', '구글 계정의 고유 번호', '암호화', '5년', '만 14세 미만', '개인정보 보호책임자'].every((w) => pages[1].includes(w)));
-  ok('이용약관은 이용권 · 환불(7일) · 작성물 권리 · AI 결과물 책임을 적는다', ['7일 안', '[구독 취소]', '권리는 회원에게', 'AI 결과물'].every((w) => pages[2].includes(w)));
+  // 받는 정보는 아이디 · 비밀번호 · 이메일뿐 · AI 는 고른 회사의 본인 키로 · 계정은 «내 계정»에서 직접 지운다(2026-10-11 사용자 지시)
+  ok('개인정보처리방침은 실제로 받는 것 · 맡기는 곳 · 보유 기간 · 권리 · 책임자를 적는다', ['아이디 · 비밀번호 · 이메일', '그로블', 'Replit', 'Resend', '구글 계정 번호', '암호화', '5년', '만 14세 미만', '개인정보 보호책임자', '계정 지우기',
+    '이용자가 넣은 API 키'].every((w) => pages[1].includes(w)) && !pages[1].includes('표시 이름') && !pages[1].includes('접속 IP, 브라우저 정보'));
+  ok('이용약관은 이용권 · 체험 · 환불(7일) · 작성물 권리 · AI 결과물 책임 · 계정 지우기를 적는다', ['<span data-refund>7</span>일 안', '<span data-trial>2</span>일', '[구독 취소]', '권리는 회원에게', 'AI 결과물',
+    '«내 계정 → 계정 지우기»', '구독 취소가 저절로'].every((w) => pages[2].includes(w)));
+  ok('체험 · 환불 일수는 policy.js 가 서버의 지금 값으로 채운다(0일이면 그 문장을 감춘다)', ['trialDays', 'refundDays', "'[data-if-' + mark + ']'"].every((w) => src(join(ROOT, 'web', 'policy.js')).includes(w)));
+  ok('**가입 칸은 아이디 · 비밀번호만(이름 칸이 없다)**', !login.includes("'su-name'") && login.includes("post('/api/auth/signup', { loginId: v('su-id'), password: $('su-pw').value })"));
+  ok('**«내 계정»에 계정 지우기 — 비밀번호로, 비밀번호 없는 계정은 구글로 확인**', school.includes('function deleteBox()') && school.includes("fetch('/api/auth/delete'") && school.includes("fetch('/api/auth/google/delete'") && !school.includes('mode=delete')
+    && school.includes('themeBox(), deleteBox()]') && login.includes("q.has('deleted')"));
   ok('읽기 쪽 이름은 서버가 준다(박지 않는다)', src(join(ROOT, 'web', 'policy.js')).includes("fetch('/api/setup')") && !pages.some((t) => /(['"`])[^'"`\n]*전자책 오토[^'"`\n]*\1/.test(t)));
   ok('로그인 화면 아래 세 링크 — 자유 가입판에서만', login.includes("S.edition === 'open' ? h('div', { class: 'login-foot' }"));
 }

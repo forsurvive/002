@@ -1,7 +1,8 @@
 // 구글 로그인(OpenID Connect · 인가 코드 + PKCE) — 설계: docs/OPEN_EDITION.md §4-9. 자유 가입판에만, 구글 클라이언트가 Secrets 에 있을 때만.
 //
 // 지키는 것
-//   · state(무작위 · 10분 · 한 번만 — 서버 표와 쿠키 둘 다 맞아야) · nonce · PKCE(S256). 받는 것은 openid email profile 만.
+//   · state(무작위 · 10분 · 한 번만 — 서버 표와 쿠키 둘 다 맞아야) · nonce · PKCE(S256). 받는 것은 openid email 만 —
+//     구글 계정 번호(sub)와 확인된 이메일. 이름 · 사진(profile)은 묻지 않는다(받는 정보는 아이디 · 비밀번호 · 이메일뿐 — 2026-10-11 사용자 지시).
 //   · 코드 교환은 서버가 구글과 직접(HTTPS · 클라이언트 시크릿) — 그렇게 받은 id_token 은 서명 대신 iss · aud · exp · nonce 를 본다
 //     (구글 OpenID Connect 안내: 중간자 없는 HTTPS 로 구글에서 곧장 받은 토큰). 이메일은 email_verified 일 때만 쓴다.
 //   · 클라이언트 시크릿은 Secrets(GOOGLE_CLIENT_SECRET)에만 — 화면 · 로그 · 오류 문구에 싣지 않는다. 오류는 이름만.
@@ -31,7 +32,7 @@ export function freshStart() {
 export function authorizeUrl(cfg, { redirectUri, state, nonce, challenge }) {
   const u = new URL(cfg.authUrl || AUTH_URL);
   u.search = new URLSearchParams({
-    client_id: cfg.clientId, redirect_uri: redirectUri, response_type: 'code', scope: 'openid email profile',
+    client_id: cfg.clientId, redirect_uri: redirectUri, response_type: 'code', scope: 'openid email',
     state, nonce, code_challenge: challenge, code_challenge_method: 'S256', prompt: 'select_account',
   }).toString();
   return u.toString();
@@ -62,7 +63,8 @@ export async function exchangeCode(cfg, { code, verifier, redirectUri, fetchImpl
 
 /**
  * id_token 읽기 — 구글에서 곧장 받은 것만 넘긴다(위 exchangeCode). 서명 대신 발급자 · 받는 쪽 · 기한 · nonce 를 본다.
- * 돌려주는 값: { ok, sub, email(확인된 것만, 소문자), name } 또는 { ok:false, reason: malformed | issuer | audience | expired | nonce | subject }
+ * 돌려주는 값: { ok, sub, email(확인된 것만, 소문자) } 또는 { ok:false, reason: malformed | issuer | audience | expired | nonce | subject }
+ * 토큰에 이름이 실려 와도 꺼내지 않는다.
  */
 export function readIdToken(idToken, { clientId, nonce, now = Date.now() }) {
   const parts = String(idToken || '').split('.');
@@ -77,7 +79,7 @@ export function readIdToken(idToken, { clientId, nonce, now = Date.now() }) {
   if (!p.sub || typeof p.sub !== 'string' || p.sub.length > 255) return { ok: false, reason: 'subject' };
   const verified = p.email_verified === true || p.email_verified === 'true';
   const email = verified ? String(p.email || '').trim().toLowerCase() : '';
-  return { ok: true, sub: p.sub, email: /^[^\s@]+@[^\s@]+$/.test(email) ? email.slice(0, 200) : '', name: String(p.name || '').replace(/\s+/g, ' ').trim().slice(0, 60) };
+  return { ok: true, sub: p.sub, email: /^[^\s@]+@[^\s@]+$/.test(email) ? email.slice(0, 200) : '' };
 }
 
 // 구글로 처음 가입한 사람의 아이디 후보 — 이메일 앞부분을 아이디 규칙(LOGIN_RE)에 맞게. 비면 g- + 무작위.
