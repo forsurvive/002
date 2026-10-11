@@ -593,7 +593,7 @@ const ACT = {
   'auth.password_changed': '비밀번호 바꿈', 'user.status': '계정 상태', 'admin.password_reset': '비밀번호 재설정(도구)', 'admin.user_created': '계정 만듦(도구)', 'setup.first_admin': '첫 관리자 만듦',
   'auth.signup': '가입', 'user.reset_code': '비밀번호 재설정 코드', 'billing.extend': '이용 기간 연장', 'billing.end': '이용권 끝냄', 'billing.free': '무료 이용', 'billing.memo': '고객 메모',
   'billing.link': '결제 연결', 'billing.ignore': '결제 무시', 'billing.plan_create': '결제 옵션 넣음', 'billing.plan_update': '결제 옵션 고침', 'billing.rules': '이용 규칙',
-  'billing.refund_request': '환불 요청', 'billing.refund_withdraw': '환불 요청 되돌림',
+  'billing.refund_request': '환불 요청', 'billing.refund_withdraw': '환불 요청 되돌림', 'billing.request_done': '처리함 표시',
 };
 const when = (t) => (t ? new Date(t).toLocaleString() : '');
 async function toggleAudit(key, orgId) {
@@ -1215,9 +1215,19 @@ function refundRow(r, after) {
     h('div', { class: 'line', style: 'margin-top:4px' }, [['① 그로블 환불', r.refundedAt], ['② 그로블 정기결제 해지', r.cancelledAt]].map(([n, at]) =>
       h('span', { class: 'mark', style: at ? '' : 'color:var(--red)', text: n + (at ? ' — 됨' : ' — 아직') }))),
     r.status === 'open' && r.refundedAt && !r.cancelledAt ? h('div', { class: 'notice', style: 'margin-top:6px', text: '환불은 됐는데 정기결제가 살아 있습니다 — 그로블에서 해지하지 않으면 다음 결제일에 다시 청구됩니다' }) : null,
-    r.status === 'open' && !r.refundedAt ? h('div', { class: 'line', style: 'margin-top:6px;align-items:center' },
-      h('input', { id: 'rf-why-' + r.id, type: 'text', placeholder: '되돌리는 까닭(감사 기록)', style: 'flex:1;min-width:120px' }),
-      h('button', { class: 'btn-text', text: '요청 되돌리기', onclick: withdraw })) : null);
+    r.status === 'open' ? h('div', { class: 'line', style: 'margin-top:6px;align-items:center' },
+      h('input', { id: 'rf-why-' + r.id, type: 'text', placeholder: '까닭(감사 기록)', style: 'flex:1;min-width:120px' }),
+      r.refundedAt ? null : h('button', { class: 'btn-text', text: '요청 되돌리기', onclick: withdraw }),
+      h('button', { class: 'btn-text', text: '처리함', onclick: () => markDone('refund', r.id, 'rf-why-' + r.id, after) })) : null);
+}
+// [처리함] — 그로블에서 처리했는데 확인 웹훅이 오지 않은 건을 닫는다(날마다 오던 다시 알림이 멈춘다, §4-12)
+async function markDone(kind, id, whyId, after) {
+  if (!confirm('그로블에서 처리했나요?\n\n처리함으로 닫으면 다시 알림 메일이 멈춥니다.')) return;
+  const r = await edu('billing.request.done', { kind, id, reason: val(whyId) });
+  if (!r.ok) return tell(r.error);
+  S.bill.events = null; S.bill.cust.list = null;
+  if (after) await after();
+  done('처리함으로 닫았습니다 — 다시 알림이 멈춥니다');
 }
 
 // 구독 취소 한 줄 — 이유 · 다음 결제일(이 날 전에 그로블에서 해지) · 그로블 해지 확인(웹훅이 오면 저절로) · 취소 뒤 다시 결제됐나 · 알림 메일
@@ -1234,7 +1244,10 @@ function cancelRow(x, after) {
       ? '다음 결제일이 지났는데 그로블 해지 확인이 없습니다 — 그로블에서 해지됐는지, 다시 청구되지 않았는지 확인해 주세요'
       : '그로블 판매 관리에서 이 정기결제를 해지하면 «해지 확인»이 저절로 찍힙니다' }) : null,
     x.chargedAt ? h('div', { class: 'notice', text: '취소를 접수한 뒤 ' + when(x.chargedAt) + ' 다시 결제됐습니다 — 그로블에서 이 결제 환불 · 정기결제 해지' }) : null,
-    mailMark('cancel', x, after));
+    mailMark('cancel', x, after),
+    x.status === 'open' ? h('div', { class: 'line', style: 'margin-top:6px;align-items:center' },
+      h('input', { id: 'cr-why-' + x.id, type: 'text', placeholder: '까닭(감사 기록)', style: 'flex:1;min-width:120px' }),
+      h('button', { class: 'btn-text', text: '처리함', onclick: () => markDone('cancel', x.id, 'cr-why-' + x.id, after) })) : null);
 }
 // 알림 메일 — 보냈으면 그때, 못 보냈으면 까닭과 [메일 다시 보내기]
 function mailMark(kind, x, after) {
@@ -1404,7 +1417,7 @@ function eventsTab() {
   const ignore = async (e) => {
     const r = await edu('billing.ignore', { eventId: e.id, reason: val('lk-why-' + e.id) });
     if (!r.ok) return tell(r.error);
-    S.bill.events = null; done('확인 필요에서 내렸습니다(기록은 그대로)');
+    S.bill.events = null; done(e.type === 'payment.cancel_requested' ? '처리함으로 닫았습니다 — 다시 알림이 멈춥니다' : '확인 필요에서 내렸습니다(기록은 그대로)');
   };
   const hookUrl = location.origin + '/api/billing/groble';
   const lastAgo = H && H.lastReceivedAt ? (Date.now() - new Date(H.lastReceivedAt).getTime()) / 86400000 : null;
@@ -1425,14 +1438,19 @@ function eventsTab() {
       h('div', { class: 'when', text: '이번 달 반영된 결제 ' + E.month.count + '건 · ' + won(E.month.total) })) : null,
     h('div', { class: 'lab', text: '환불 — 처리 중 ' + (E.refunds || []).filter((r) => r.status === 'open').length + '건 · 할 일 둘(그로블에서 이 결제 환불 · 정기결제 해지)은 웹훅이 오면 저절로 «됨»' }),
     E.refunds && E.refunds.length ? E.refunds.map((r) => refundRow(r)) : h('div', { class: 'when', text: '없음' }),
-    h('div', { class: 'lab', style: 'margin-top:16px', text: '구독 취소 — 그로블 해지 대기 ' + (E.cancels || []).filter((x) => x.status === 'open').length + '건 · 그로블에서 해지하면 저절로 «해지 확인»' }),
+    h('div', { class: 'lab', style: 'margin-top:16px', text: '구독 취소 — 그로블 해지 대기 ' + (E.cancels || []).filter((x) => x.status === 'open').length + '건 · 그로블에서 해지하면 저절로 «해지 확인»(그 전까지 날마다 다시 알림)' }),
     E.cancels && E.cancels.length ? E.cancels.map((x) => cancelRow(x)) : h('div', { class: 'when', text: '없음' }),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '확인 필요 ' + E.review.length + '건' }),
-    E.review.length ? E.review.map((e) => eventRow(e, h('div', { class: 'line', style: 'margin-top:6px;align-items:center' },
-      h('input', { id: 'lk-' + e.id, type: 'text', placeholder: '연결할 아이디', autocapitalize: 'none', spellcheck: 'false', style: 'width:150px', value: e.user && !e.user.deleted ? e.user.loginId : '' }),
-      h('button', { class: 'btn-line', text: '이 계정에 연결', onclick: () => link(e) }),
-      h('input', { id: 'lk-why-' + e.id, type: 'text', placeholder: '왜(감사 기록)', style: 'flex:1;min-width:120px' }),
-      h('button', { class: 'btn-text', text: '무시', onclick: () => ignore(e) })))) : h('div', { class: 'when', text: '없음' }),
+    // 구매자가 그로블에서 낸 취소(환불) 요청 — 승인 · 반려는 그로블에서, 여기서는 [처리함]으로 닫는다(닫기 전까지 날마다 다시 알림)
+    E.review.length ? E.review.map((e) => eventRow(e, e.type === 'payment.cancel_requested'
+      ? h('div', { class: 'line', style: 'margin-top:6px;align-items:center' },
+        h('input', { id: 'lk-why-' + e.id, type: 'text', placeholder: '까닭(감사 기록)', style: 'flex:1;min-width:120px' }),
+        h('button', { class: 'btn-text', text: '처리함', onclick: () => ignore(e) }))
+      : h('div', { class: 'line', style: 'margin-top:6px;align-items:center' },
+        h('input', { id: 'lk-' + e.id, type: 'text', placeholder: '연결할 아이디', autocapitalize: 'none', spellcheck: 'false', style: 'width:150px', value: e.user && !e.user.deleted ? e.user.loginId : '' }),
+        h('button', { class: 'btn-line', text: '이 계정에 연결', onclick: () => link(e) }),
+        h('input', { id: 'lk-why-' + e.id, type: 'text', placeholder: '왜(감사 기록)', style: 'flex:1;min-width:120px' }),
+        h('button', { class: 'btn-text', text: '무시', onclick: () => ignore(e) })))) : h('div', { class: 'when', text: '없음' }),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '받은 웹훅(최근 100)' }),
     E.recent.length ? E.recent.map((e) => eventRow(e)) : h('div', { class: 'when', text: '아직 없습니다' }),
     h('button', { class: 'btn-text', style: 'margin-top:8px', text: '다시 불러오기', onclick: () => { S.bill.events = null; render(); } }));

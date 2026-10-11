@@ -770,6 +770,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
   const server = createServer((req, res) => { handle(req, res); });
   server.setupCode = setupCode;   // main() 이 (계정이 없을 때) 콘솔에 찍는다 — 사람이 정한 코드(SE2_SETUP_CODE)는 찍지 않는다
   server.setupFixed = !!(setupCode && plan.setupCode);
+  server.billing = bill;          // main() 이 다시 알림 시계를 건다(시험은 remindDue 를 직접 부른다)
   return server;
 }
 
@@ -813,7 +814,11 @@ export async function main(env = process.env) {
   if (!users) console.log('  [NOTE] No account yet - open the app in a browser to finish the first-run setup');
   if (!users && srv.setupFixed) console.log('  [SETUP] First-run setup code: the SE2_SETUP_CODE value from Secrets');
   else if (!users && srv.setupCode) console.log('  [SETUP] First-run setup code: ' + srv.setupCode + '  (type it on the setup screen; a new one each start)');
-  const bye = async () => { srv.close(); await hub.stop(); if (worker) await worker.stop(); pool.end().finally(() => process.exit(0)); };
+  // 구독 취소 · 환불 다시 알림(자유 가입판, §4-12) — 10분마다 «오늘 아직 알리지 않은 것»을 본다(하루 한 번 · 한국 시각 아침부터). Reserved VM 이라 늘 돈다.
+  const remind = () => { srv.billing.remindDue().catch((e) => console.log('  [billing] reminder check failed (' + ((e && (e.code || e.name)) || 'error') + ')')); };
+  const remindTimer = srv.billing ? setInterval(remind, 10 * 60 * 1000) : null;
+  if (remindTimer) setTimeout(remind, 30 * 1000).unref();
+  const bye = async () => { if (remindTimer) clearInterval(remindTimer); srv.close(); await hub.stop(); if (worker) await worker.stop(); pool.end().finally(() => process.exit(0)); };
   process.on('SIGINT', bye); process.on('SIGTERM', bye);
   return srv;
 }

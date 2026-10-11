@@ -138,6 +138,14 @@ export function billingOps({ pool, billing, log = async () => {} }) {
       await log(user, null, 'billing.refund_withdraw', 'refund_request', String(b.requestId), { reason: why(b) }, ip);
       return ok();
     },
+    // [처리함] — 그로블에서 처리했는데 확인 웹훅이 오지 않은 구독 취소 · 환불 건을 닫는다(날마다 오던 다시 알림이 멈춘다 — §4-12). 왜 · 감사 기록
+    async 'billing.request.done'(user, b, ip) {
+      if (!user.isPlatformAdmin) return FORBIDDEN;
+      const r = await billing.resolveRequest(b.kind, b.id, user.id);
+      if (!r.ok) return r.code === 'missing' ? NOT_FOUND : no(409, '이미 끝난 건입니다', 'conflict');
+      await log(user, null, 'billing.request_done', (b.kind === 'refund' ? 'refund' : 'cancel') + '_request', String(b.id), { reason: why(b) }, ip);
+      return ok();
+    },
     async 'billing.health'(user) {
       if (!user.isPlatformAdmin) return FORBIDDEN;
       return ok({ health: await admin.health() });

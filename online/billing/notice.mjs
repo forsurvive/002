@@ -1,4 +1,4 @@
-// 구독 취소 · 환불의 «이유»와 운영자 알림 메일의 글(순수) — docs/OPEN_EDITION.md §4-8. 보내기는 ../mail.mjs, 언제 보낼지는 ./service.mjs.
+// 구독 취소 · 환불의 «이유»와 운영자 알림 메일의 글(순수) — docs/OPEN_EDITION.md §4-8 · §4-12(그로블 쪽 해지 · 다시 알림). 보내기는 ../mail.mjs, 언제 보낼지는 ./service.mjs.
 // 메일에는 아이디 · 결제 건 번호 · 금액 · 때만 싣는다(이메일 · 키는 싣지 않는다 — 그로블 판매 관리에서는 결제 건 번호로 찾는다).
 // 지운 계정(§4-11)은 아이디도 싣지 않는다 — «지운 계정»과 결제 건 번호만. 제목 머리는 앱 이름(전자책 오토 · 스토리 엔진).
 
@@ -48,12 +48,21 @@ const why = (reason, detail) => '· 이유: ' + reasonSay(reason) + (detail ? ' 
 const payLine = (p) => [p.merchantUid ? '결제 건 번호 ' + p.merchantUid : '', won(p.amount), p.paidAt ? kst(p.paidAt) + ' 결제' : ''].filter(Boolean).join(' · ');
 const tail = (site) => ['', '운영 화면: ' + (site ? site + '/manage.html → ' : '') + '관리 → 운영 → [결제 기록]'];
 
+// 다시 알림(§4-12) — 처리되지 않은 요청을 다음 날부터 하루 한 번. day 는 요청한 날부터 센 날(요청한 날 = 1일째)
+export function again(msg, day, app = '') {
+  if (!(day > 1)) return msg;
+  const h = head(app);
+  return { subject: h + '다시 알림(' + day + '일째) — ' + (msg.subject.startsWith(h) ? msg.subject.slice(h.length) : msg.subject),
+    text: '아직 처리되지 않아 다시 알립니다 — 요청 ' + day + '일째. 처리될 때까지 날마다 한 번 보냅니다.\n\n' + msg.text };
+}
+
 // 환불 요청 — 구독 시작 7일 안에 고객이 [환불 요청]을 눌렀다. 이용권은 요청과 함께 멈췄다.
-export function refundMail({ user, at, start, until, inPolicy, payment, aiRuns, prevRefunds = 0, reason, detail, site = '', app = '' }) {
+export function refundMail({ user, at, start, until, inPolicy, payment, aiRuns, prevRefunds = 0, reason, detail, site = '', app = '', done = null }) {
   return {
     subject: head(app) + '환불 요청 — ' + idOf(user),
     text: [
       who(user) + ' 님이 환불을 요청했습니다.', '',
+      ...(done ? ['· 남은 일: ' + leftOf(done), ''] : []),
       '· 요청: ' + kst(at),
       '· 구독 시작(첫 결제): ' + kday(start) + ' · 환불 기한 ' + until + '까지 → ' + (inPolicy ? '기한 안' : '기한 밖'),
       '· 환불할 결제: ' + payLine(payment),
@@ -84,6 +93,70 @@ export function cancelMail({ user, at, nextBilling, lastPayment = null, reason, 
       why(reason, detail), '',
       '할 일(그로블 판매 관리): 이 정기결제 해지',
       '그로블에서 해지되면 [결제 기록]의 이 요청에 «해지 확인»이 저절로 찍힙니다.',
+      ...tail(site),
+    ].join('\n'),
+  };
+}
+
+// 환불 건의 남은 일 — ① 그로블 환불 ② 정기결제 해지 가운데 아직인 것
+const leftOf = (d) => [d.refunded ? '' : '① 그로블에서 이 결제 환불', d.cancelled ? '' : '② 그로블에서 정기결제 해지'].filter(Boolean).join(' · ') || '없음';
+
+// 그로블에서 먼저 환불됐다(이번 회차) — 정기결제 해지가 아직이면 할 일이 있다(다음 결제일에 다시 청구된다)
+export function grobleRefundMail({ user, at, payment, verdict = '', cancelled = false, site = '', app = '' }) {
+  return {
+    subject: head(app) + (cancelled ? '그로블에서 환불됨 — ' : '확인 필요 — 그로블에서 환불됨 · 정기결제 해지가 아직 — ') + idOf(user),
+    text: [
+      who(user) + ' 님의 이번 회차 결제가 그로블에서 환불되었습니다.', '',
+      '· 때: ' + kst(at),
+      '· 환불된 결제: ' + payLine(payment),
+      ...(verdict ? ['· 판정: ' + verdict] : []),
+      '· 이용권: 환불과 함께 끝났습니다', '',
+      cancelled ? '할 일 없음 — 정기결제도 해지되어 있습니다.' : '할 일(그로블 판매 관리): 이 정기결제 해지 — 끊지 않으면 다음 결제일에 다시 청구됩니다.',
+      ...(cancelled ? [] : ['해지되면 [결제 기록]의 이 환불 건에 «해지됨»이 저절로 찍힙니다. 그 전까지 날마다 다시 알립니다.']),
+      ...tail(site),
+    ].join('\n'),
+  };
+}
+
+// 구매자가 그로블에서 결제 취소(환불)를 요청했다 — 승인 · 반려는 판매자가 그로블에서
+export function buyerCancelMail({ user, at, payment, verdict = '', site = '', app = '' }) {
+  return {
+    subject: head(app) + '확인 필요 — 구매자가 그로블에서 취소(환불) 요청 — ' + idOf(user),
+    text: [
+      who(user) + ' 님이 그로블에서 결제 취소(환불)를 요청했습니다.', '',
+      '· 때: ' + kst(at),
+      '· 결제: ' + payLine(payment),
+      ...(verdict ? ['· 판정: ' + verdict] : []), '',
+      '할 일(그로블 판매 관리): 이 취소 요청 승인 또는 반려 — 승인하면 정기결제도 해지해 주세요.',
+      '처리했으면 [결제 기록]의 이 줄을 [처리함]으로 닫아 주세요(환불되면 저절로 닫힙니다). 그 전까지 날마다 다시 알립니다.',
+      ...tail(site),
+    ].join('\n'),
+  };
+}
+
+// 그로블 쪽에서 해지됐다(우리에게 낸 요청이 없던 해지 — 고객이 그로블에서 직접 했거나 판매 관리에서) — 알림만, 할 일 없음
+export function grobleCancelMail({ user, at, endsAt = null, site = '', app = '' }) {
+  return {
+    subject: head(app) + '구독 해지(그로블에서) — ' + idOf(user),
+    text: [
+      who(user) + ' 님의 정기결제가 그로블에서 해지되었습니다(해지 예고).', '',
+      '· 때: ' + kst(at),
+      '· 이용: ' + (endsAt ? kday(endsAt) + '까지' : '지금 결제 기간 끝까지') + ' 쓰고 끝납니다 — 다음 결제는 청구되지 않습니다', '',
+      '할 일 없음(알림만).',
+      ...tail(site),
+    ].join('\n'),
+  };
+}
+
+// 해지 예고 없이 정기결제가 끝났다(결제 실패가 이어졌거나 그로블에서 바로 해지) — 알림만
+export function endedMail({ user, at, site = '', app = '' }) {
+  return {
+    subject: head(app) + '구독 끝남 — ' + idOf(user),
+    text: [
+      who(user) + ' 님의 정기결제가 해지 완료되었습니다(해지 예고 없이 — 결제 실패가 이어졌거나 그로블에서 바로 해지).', '',
+      '· 때: ' + kst(at),
+      '· 이용권: 끝났습니다', '',
+      '할 일 없음(알림만).',
       ...tail(site),
     ].join('\n'),
   };
