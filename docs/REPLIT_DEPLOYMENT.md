@@ -231,8 +231,11 @@ Secrets 에 두 값이 없으면 구글 단추가 서지 않을 뿐 나머지는
 코드는 같다 — 같은 GitHub 브랜치를 **App 하나 더**로 띄우고 Secrets 에 `SE_EDITION=open` · `SE_PURPOSE=ebook`.
 DB · AI 키 봉인 열쇠 · 구글 로그인(구글 클라우드 «ebook auto» 프로젝트) · 그로블 상품이 모두 따로다(다른 두 앱의 계정 · 작품과 섞이지 않는다).
 
-1. **App 하나 더**: replit.com/import → 같은 저장소(`forsurvive/002`)로 새 App → Git 창에서 브랜치 `claude/charming-keller-12p0c5`.
-2. **데이터베이스**: 그 App 의 Database 에서 PostgreSQL 을 새로 만든다(`DATABASE_URL` 이 저절로).
+1. **App 하나 더**: replit.com/import → **GitHub** → 저장소 `forsurvive/002` → **Import**. 실행 설정은 저장소의 `.replit` 을 그대로 쓴다(Agent 가 설정 · 고치기를 권하면 쓰지 않는다).
+   브랜치는 고를 것이 없다 — 저장소의 기본 브랜치가 `claude/charming-keller-12p0c5` 다(2026-10-11 확인). Shell 에서 `git branch --show-current` 로 확인하고,
+   다른 이름이면 `git fetch origin claude/charming-keller-12p0c5 && git checkout -B claude/charming-keller-12p0c5 origin/claude/charming-keller-12p0c5`.
+2. **데이터베이스**: 지금 Replit 은 App 을 만들면 개발 DB(PostgreSQL)가 저절로 생긴다(docs.replit.com «Development and production databases») — Tools → **Database** 에 «Development Database» 가 보이면 그대로 둔다.
+   비어 있으면 **Create a database**. `DATABASE_URL` 은 Replit 이 앱에 넣는다(Secrets 에 손으로 넣지 않는다). 운영 DB 는 게시할 때 생긴다. Database 의 Agent 단추로 표를 짓지 않는다 — 표는 서버가 켤 때 스스로 짓는다.
 3. **Secrets**: `SE_EDITION` = `open` · `SE_PURPOSE` = `ebook` · `CREDENTIALS_KEY_V1` = Shell 에서 `npm run key` 로 만든 44자(**다른 두 앱과 다른 값** — 한 번 넣으면 바꾸지 않는다 · 비밀번호 관리자에 따로 · 채팅 · 문서 · 깃에 붙이지 않는다).
 4. ▶ 실행 → Console 에 `Edition : open (open sign-up)` 과 `Purpose : ebook (e-book auto)` 가 찍히는지 → 미리보기를 새 탭으로 → 로그인 화면 이름이 **«전자책 오토»**인지 → **처음 설정**(운영자 계정 — Console 의 설정 코드).
 5. **첫 게시**: 예약된 VM · Deployment secrets 에 위 셋이 보이는지 → **처음 한 번만** 개발 DB 를 운영 DB 로 복사해서 게시(§4-4 의 4 와 같은 까닭 · 같은 화면) → 게시한 주소(`https://….replit.app`)를 적어 둔다.
