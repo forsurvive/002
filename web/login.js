@@ -124,7 +124,8 @@ async function signup(e) {
   if ($('su-pw').value !== $('su-pw2').value) return tell('비밀번호가 서로 다릅니다');
   if (!(await passGate())) return;
   const out = await post('/api/auth/signup', { loginId: v('su-id'), password: $('su-pw').value });
-  if (out.ok) { location.href = '/account.html'; return; }
+  // 무료 체험은 한 사람에게 한 번 — 이 브라우저가 이미 받았으면 «내 계정»이 그 까닭을 한 줄로 보인다
+  if (out.ok) { location.href = out.trialUsed ? '/account.html?trial=used' : '/account.html'; return; }
   if (out.code === 'gate') { location.reload(); return; }
   tell(out.error || '가입하지 못했습니다');
 }

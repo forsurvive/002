@@ -10,7 +10,7 @@
 // 실행: DATABASE_URL=… SE2_HOST=0.0.0.0 node online/server.mjs   (docs/REPLIT_DEPLOYMENT.md · 콘솔은 ASCII 만)
 
 import { createServer } from 'node:http';
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, extname, normalize } from 'node:path';
@@ -191,15 +191,22 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
   // 이용권(자유 가입판만) — 웹훅 시크릿은 Secrets 의 GROBLE_WEBHOOK_SECRET(교체 중이면 GROBLE_WEBHOOK_SECRET_PREVIOUS 도). 코드 · Git · 로그 · 응답에 두지 않는다.
   // 운영자 알림 메일(환불 요청 · 구독 취소)은 Secrets 의 RESEND_API_KEY 로(online/mail.mjs) — 메일에는 게시한 주소의 운영 화면을 싣는다.
   const site = plan.exposed ? plan.allowedHosts.find((h) => !LOCAL_NAMES.includes(h)) : '';
+  // 체험 표시의 열쇠 — 마스터 키(CREDENTIALS_KEY_V*) 가운데 가장 이른 판에서 끌어낸다(키를 갈아도 같은 값 — 옛 판을 남겨 두는 동안)
+  const firstKey = codeKeys && codeKeys.keys && codeKeys.keys.size ? codeKeys.keys.get(Math.min(...codeKeys.keys.keys())) : null;
+  const markKey = firstKey ? createHmac('sha256', firstKey).update('trial-mark-v1').digest() : null;
   const bill = billing !== undefined ? billing : edition === 'open'
     ? createBilling({ pool, secrets: () => [process.env.GROBLE_WEBHOOK_SECRET, process.env.GROBLE_WEBHOOK_SECRET_PREVIOUS], log: (m) => console.log('  [billing] ' + m),
-      siteUrl: site ? 'https://' + site : '', app: purposeName(purpose) }) : null;
+      siteUrl: site ? 'https://' + site : '', app: purposeName(purpose), markKey }) : null;
   const tenancy = createTenancy(pool, { edition });
   const wfs = createWorkflowSource(pool, { defaultKey: templateKey });
   const edu = createEdu({ pool, credentials, wfs, keyTester, subscription, codeKeys, recoveryCode: plan.recoveryCode || '', edition, billing: bill, google: !!gcfg, purpose });
   const secure = plan.exposed;   // 바깥에 열면 https 앞단 뒤 — 쿠키에 Secure 를 단다
   // 접속 IP · 브라우저 정보를 남기나(auth.keepsIp) — 자유 가입판은 운영자의 것만. 고삐는 남기든 말든 ipOf(req) 로 센다.
   const keepIp = (admin) => auth.keepsIp(edition, admin);
+  // 무료 체험을 받은 브라우저의 표시(§4-13) — 같은 브라우저로 새 계정을 만들어 체험을 또 받지 못하게(1년). 값은 뜻이 없다(있느냐만 본다).
+  const TRIAL_COOKIE = 'se_trial';
+  const trialCookie = () => [TRIAL_COOKIE + '=1', 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=' + 365 * 86400, ...(secure ? ['Secure'] : [])].join('; ');
+  const trialOf = async (req, userId, google = '') => (bill ? bill.grantTrial(userId, { device: !!auth.readCookie(req, TRIAL_COOKIE), google }) : { days: 0, refused: '' });
 
   // 화면은 제 자리의 파일만 부른다 — 스크립트는 외부 파일만, 꾸밈은 style 속성을 쓰므로 인라인 꾸밈만 허락
   const csp = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" + (denyFrames ? "; frame-ancestors 'none'" : '');
@@ -435,9 +442,10 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const made = await auth.createUser(pool, { loginId: body.loginId, password: body.password });
         if (!made.ok) { signupGiveBack(slot); return json(res, made.code === 'conflict' ? 409 : 422, bad(made.error, made.code)); }
         await auth.audit(pool, { actor: made.user.id, action: 'auth.signup', targetType: 'user', targetId: made.user.id, ip: keepIp(false) ? ip : '' });
-        if (bill) await bill.grantTrial(made.user.id);   // 이용 규칙의 무료 체험(기본 2일)
+        const trial = await trialOf(req, made.user.id);   // 이용 규칙의 무료 체험(기본 2일) — 한 사람에게 한 번
         const li = await auth.login(pool, { loginId: body.loginId, password: body.password, ip, userAgent: req.headers['user-agent'] || '', keepIp });
-        return json(res, 200, ok(), li.ok ? { 'set-cookie': auth.sessionCookie(li.token, { secure }) } : {});
+        const cookies = [...(li.ok ? [auth.sessionCookie(li.token, { secure })] : []), ...(trial.days ? [trialCookie()] : [])];
+        return json(res, 200, ok({ trial: trial.days, ...(trial.refused ? { trialUsed: true } : {}) }), cookies.length ? { 'set-cookie': cookies } : {});
       }
       // ---------------- 처음 설정 — 계정이 하나도 없을 때 한 번만. 운영자 계정(+ 그 계정의 AI 키)을 화면에서 만든다.
       // 이 컴퓨터 안(루프백)의 요청 · 출입 열쇠를 지나온 요청 · 서버 콘솔에 찍힌 «설정 코드»를 넣은 요청만 받는다
@@ -597,10 +605,10 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         const made = await googleSignup(id);
         if (!made) { signupGiveBack(slot); return fail('retry'); }
         await auth.audit(pool, { actor: made.id, action: 'auth.signup', targetType: 'user', targetId: made.id, ip: keepIp(false) ? ip : '', details: { via: 'google' } });
-        if (bill) await bill.grantTrial(made.id);   // 이용 규칙의 무료 체험 — 자유 가입과 같다
+        const trial = await trialOf(req, made.id, id.sub);   // 이용 규칙의 무료 체험 — 자유 가입과 같다(같은 구글 계정은 지웠다 다시 와도 한 번)
         if (user) await auth.logout(pool, token);
         const t = await auth.openSession(pool, made.id, { ...(keepIp(false) ? { ip, userAgent } : {}), action: 'auth.google_login' });
-        return go(res, '/account.html?google=new', [clear, auth.sessionCookie(t, { secure })]);
+        return go(res, '/account.html?google=new' + (trial.refused ? '&trial=used' : ''), [clear, auth.sessionCookie(t, { secure }), ...(trial.days ? [trialCookie()] : [])]);
       }
 
       // 읽기 쪽 — 소개 · 개인정보처리방침 · 이용약관은 로그인 없이 연다(구글 동의 화면 · 결제창이 가리키는 주소, OPEN_EDITION §4-10)

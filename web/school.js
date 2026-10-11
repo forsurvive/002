@@ -70,7 +70,9 @@ const done = (text) => tell(text, true);
   if (PAGE === 'account' && q.has('paid')) { history.replaceState(null, '', location.pathname); S.paidPoll = true; }
   // 구글에서 돌아왔으면(?google=…, 잇기 · 구글로 가입) 알린다 — 주소창에서는 지운다
   S.googleBack = PAGE === 'account' ? q.get('google') || '' : '';
-  if (S.googleBack) history.replaceState(null, '', location.pathname);
+  // 무료 체험을 이미 받은 브라우저 · 구글 계정으로 가입했다(?trial=used — §4-13)
+  S.trialUsed = PAGE === 'account' && q.get('trial') === 'used';
+  if (S.googleBack || S.trialUsed) history.replaceState(null, '', location.pathname);
 }
 // 구글에서 돌아온 까닭(서버의 ?google=…) → 알림. [잘 됐는가, 문구]
 const GOOGLE_SAY = {
@@ -98,6 +100,8 @@ async function load() {
   const gb = S.me && GOOGLE_SAY[S.googleBack];
   if (gb) { S.say = gb[1] + (S.googleBack === 'new' ? ' — 아이디 ' + S.me.loginId + ' · 비밀번호 없이 구글로 들어옵니다' : ''); S.sayGood = gb[0]; S.fresh = gb[0]; }
   S.googleBack = '';
+  if (S.me && S.trialUsed) { S.say = (S.say ? S.say + '. ' : '') + '무료 체험은 한 사람에게 한 번만 드립니다 — 이 브라우저나 구글 계정은 이미 받았습니다'; S.sayGood = false; }
+  S.trialUsed = false;
   if (S.me && PAGE === 'account') S.myKeys = (await edu('me.key.list')).credentials || [];
   if (S.me && PAGE === 'account' && S.edition === 'open') await loadPass();
   if (S.me && S.me.platformAdmin && PAGE === 'account') { const v = await edu('me.sub.view'); S.sub = v.ok ? v : null; }

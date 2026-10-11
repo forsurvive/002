@@ -15,7 +15,7 @@
 //     구매자 이메일은 참조값 없이 온 결제를 사람에게 잇는 데만 쓰고, 지운 계정(§4-11)의 결제 기록에서는 그것도 걷는다.
 
 import * as groble from './groble.mjs';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { CANCEL_REASONS, refundMail, cancelMail, deletedMail, chargedMail, testMail, again, grobleRefundMail, buyerCancelMail, grobleCancelMail, endedMail } from './notice.mjs';
 import { envMailer, transient } from '../mail.mjs';
 
@@ -211,9 +211,10 @@ export async function cancelForDeletion(c, userId) {
 
 /**
  * mailer — 운영자 알림 메일({ on(), send({ to, subject, text }) }, 기본은 Secrets 의 RESEND_API_KEY) · siteUrl — 메일에 실을 운영 화면 주소 ·
- * retryMs — 잠깐의 실패면 한 번 더 보낼 때까지(0 이면 다시 보내지 않는다) · app — 메일 제목 머리의 앱 이름(전자책 오토 · 스토리 엔진)
+ * retryMs — 잠깐의 실패면 한 번 더 보낼 때까지(0 이면 다시 보내지 않는다) · app — 메일 제목 머리의 앱 이름(전자책 오토 · 스토리 엔진) ·
+ * markKey — 체험 표시(구글 계정 번호의 HMAC)의 열쇠(서버가 마스터 키에서 끌어 준다 — 없으면 고정 값)
  */
-export function createBilling({ pool, adapter = groble, secrets = () => [], log = () => {}, mailer = envMailer, siteUrl = '', retryMs = 30000, app = '' }) {
+export function createBilling({ pool, adapter = groble, secrets = () => [], log = () => {}, mailer = envMailer, siteUrl = '', retryMs = 30000, app = '', markKey = null }) {
   const fails = new Map();   // ip → { n, until } — 서명이 거듭 틀리는 곳
   const FAIL_LIMIT = 30; const FAIL_WINDOW = 15 * 60 * 1000;
   const health = { rejected: 0, rejectedAt: 0, noSecret: 0, noSecretAt: 0 };   // 운영 화면 «웹훅 상태»(남기지 않은 것의 수만)
@@ -701,13 +702,19 @@ export function createBilling({ pool, adapter = groble, secrets = () => [], log 
     return { ok: true, url };
   }
 
-  // 가입 직후 무료 체험(이용 규칙의 일수가 0 이면 없다)
-  async function grantTrial(userId) {
+  // 가입 직후 무료 체험(이용 규칙의 일수가 0 이면 없다). **한 사람에게 한 번** — 최소한의 막음(§4-13): 이 브라우저가 이미 받았거나(device —
+  // 표시 쿠키 se_trial) 이 구글 계정이 이미 받았으면(google — 계정 번호의 HMAC, 계정을 지워도 남는다) 주지 않는다. 돌려주는 값: { days, refused: '' | device | google }
+  const markOf = (kind, value) => createHmac('sha256', markKey || 'se-trial-mark').update(kind + ':' + String(value)).digest('hex');
+  async function grantTrial(userId, { device = false, google = '' } = {}) {
     const { trialDays } = await rulesOf(pool);
-    if (!trialDays) return 0;
+    if (!trialDays) return { days: 0, refused: '' };
+    if (device) return { days: 0, refused: 'device' };
+    if (google && !(await pool.query(`INSERT INTO trial_marks (kind, mark) VALUES ('google', $1) ON CONFLICT DO NOTHING RETURNING mark`, [markOf('google', google)])).rowCount) {
+      return { days: 0, refused: 'google' };
+    }
     await pool.query(`INSERT INTO subscriptions (user_id, provider, ref, status, paid_until, occurred_at)
       VALUES ($1, 'trial', '', 'active', now() + make_interval(days => $2), now()) ON CONFLICT (user_id, provider, ref) DO NOTHING`, [userId, trialDays]);
-    return trialDays;
+    return { days: trialDays, refused: '' };
   }
 
   // 웹훅 시크릿이 서버에 있는가(값은 내주지 않는다)

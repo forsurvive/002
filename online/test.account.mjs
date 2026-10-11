@@ -3,7 +3,7 @@
 // 구독 자동 취소는 서명한 그로블 웹훅 · 가짜 우편함으로, 비밀번호 없는 계정의 확인은 가짜 구글(토큰 주소)로 본다.
 
 import { createServer } from 'node:http';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { createOnlineServer, onlinePlan } from './server.mjs';
 import { createUser, resetThrottle, NO_PASSWORD, LOGIN_RE } from './auth.mjs';
 import { createBilling, DEFAULT_RULES, kstDay } from './billing/service.mjs';
@@ -260,6 +260,11 @@ export async function run({ pool, ok, eq }) {
       const g1 = await round({ claims: { sub: 'acc-g-1', email: 'Acc.Google@gmail.com', name: '구글 이름' } });
       const gu = await one(`SELECT id, display_name, email, password_hash FROM users WHERE login_id = 'acc.google'`);
       ok('구글로 만든 계정 — 비밀번호 없음 · 이름은 받지 않는다', g1.location === '/account.html?google=new' && gu && gu.password_hash === NO_PASSWORD && gu.display_name === 'acc.google' && gu.email === 'acc.google@gmail.com', JSON.stringify(gu));
+      const trialOf = async (uid) => (await pool.query(`SELECT 1 FROM subscriptions WHERE user_id = $1 AND provider = 'trial'`, [uid])).rowCount > 0;
+      const marks = (await pool.query(`SELECT mark FROM trial_marks WHERE kind = 'google'`)).rows.map((r) => r.mark);
+      const myMark = createHmac('sha256', 'se-trial-mark').update('google:acc-g-1').digest('hex');   // 이 시험의 billing 은 열쇠 없이(고정 값)
+      ok('**구글로 처음 가입 — 무료 체험 · 그 구글 계정의 표시는 되돌릴 수 없는 값으로만(번호 원문 없음)**', await trialOf(gu.id) && g1.cookies.some((c) => /^se_trial=1;/.test(c) && /HttpOnly/.test(c))
+        && marks.includes(myMark) && marks.every((m) => /^[0-9a-f]{64}$/.test(m)) && !marks.some((m) => m.includes('acc-g-1')), JSON.stringify(marks));
       const np = await post(base, '/api/auth/delete', g1.session, { password: 'anything-long-enough' });
       ok('**비밀번호 없는 계정은 비밀번호로 지우지 못한다(422 — 구글로 확인)**', np.status === 422 && np.code === 'no_password' && !(await userRow(gu.id)).deleted_at);
       const mis = await round({ cookie: g1.session, mode: 'delete', claims: { sub: 'acc-g-OTHER', email: 'someone@gmail.com' } });
@@ -274,7 +279,28 @@ export async function run({ pool, ok, eq }) {
       ok('**이어진 그 구글로 확인하면 지운다 — 로그인 화면(지웠다는 알림) · 쿠키 지움 · 구글 연결 없음**', gd.location === '/login?deleted=1' && gd.cookies.some((c) => /^se_session=;/.test(c) && /Max-Age=0/.test(c))
         && !!gg.deleted_at && gg.email === null && (await n('SELECT count(*)::int AS n FROM user_identities WHERE user_id = $1', [gu.id])) === 0, gd.location);
       const back = await round({ claims: { sub: 'acc-g-1', email: 'acc.google@gmail.com' } });
-      ok('그 구글로 다시 오면 새 계정(옛 것과 잇지 않는다)', back.location === '/account.html?google=new' && (await one(`SELECT id FROM users WHERE login_id = 'acc.google'`)).id !== gu.id);
+      const again = (await one(`SELECT id FROM users WHERE login_id = 'acc.google'`)).id;
+      ok('그 구글로 다시 오면 새 계정(옛 것과 잇지 않는다)', back.location.startsWith('/account.html?google=new') && again !== gu.id);
+      ok('**지우고 같은 구글로 다시 가입해도 무료 체험은 다시 없다(표시는 계정을 지워도 남는다) — «내 계정»에 까닭 한 줄**', back.location === '/account.html?google=new&trial=used'
+        && !(await trialOf(again)) && (await pool.query(`SELECT count(*)::int AS n FROM trial_marks WHERE kind = 'google'`)).rows[0].n === marks.length, back.location);
+    }
+
+    // ---------------- 무료 체험은 한 사람에게 한 번(최소한의 막음 — §4-13): 같은 브라우저(표시 쿠키)로 새 계정을 만들어도 다시 없다
+    {
+      const tb = await start({ SE_EDITION: 'open', SE_PURPOSE: 'ebook' }, { billing });   // 가입 고삐(한 곳에서 1시간 5개)가 앞의 가입과 섞이지 않게 새 서버
+      const trialOf = async (id) => (await pool.query(`SELECT 1 FROM subscriptions s JOIN users u ON u.id = s.user_id WHERE u.login_id = $1 AND s.provider = 'trial'`, [id])).rowCount > 0;
+      const s1 = await post(tb, '/api/auth/signup', '', { loginId: 'tr-one', password: 'long-enough-tr-one' });
+      const mark = cookieOf(s1.setCookie, 'se_trial');
+      ok('**처음 가입 — 체험 2일 · 이 브라우저에 «체험 받음» 표시(1년 · HttpOnly)**', s1.status === 200 && s1.trial === 2 && !s1.trialUsed && await trialOf('tr-one') && mark === 'se_trial=1'
+        && s1.setCookie.some((c) => /^se_trial=1;/.test(c) && /Max-Age=31536000/.test(c) && /HttpOnly/.test(c)), JSON.stringify(s1));
+      const s2 = await post(tb, '/api/auth/signup', mark, { loginId: 'tr-two', password: 'long-enough-tr-two' });
+      ok('**같은 브라우저로 새 계정 — 가입은 되지만 체험은 없다(trialUsed — 화면이 까닭을 보인다)**', s2.status === 200 && s2.trial === 0 && s2.trialUsed === true && !(await trialOf('tr-two'))
+        && !s2.setCookie.some((c) => c.startsWith('se_trial=')), JSON.stringify(s2));
+      const s3 = await post(tb, '/api/auth/signup', '', { loginId: 'tr-three', password: 'long-enough-tr-three' });
+      ok('다른 브라우저(표시 없음)는 체험을 받는다', s3.trial === 2 && await trialOf('tr-three'));
+      await pool.query(`INSERT INTO app_settings (key, value) VALUES ('billing.rules', '{"notifyEmail": "ops@example.com", "trialDays": 0}') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+      const s4 = await post(tb, '/api/auth/signup', '', { loginId: 'tr-four', password: 'long-enough-tr-four' });
+      ok('체험을 0일로 두면 체험도 · 표시 쿠키도 없다', s4.status === 200 && s4.trial === 0 && !s4.trialUsed && !s4.setCookie.some((c) => c.startsWith('se_trial=')) && !(await trialOf('tr-four')));
     }
   } finally {
     for (const s of servers) await new Promise((r) => s.close(r));
