@@ -568,6 +568,8 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         return go(res, '/account.html?google=new', [clear, auth.sessionCookie(t, { secure })]);
       }
 
+      // 읽기 쪽 — 소개 · 개인정보처리방침 · 이용약관은 로그인 없이 연다(구글 동의 화면 · 결제창이 가리키는 주소, OPEN_EDITION §4-10)
+      if (req.method === 'GET' && ['/about', '/privacy', '/terms'].includes(url.pathname)) return staticFile(res, url.pathname.slice(1) + '.html');
       if (req.method === 'GET' && (url.pathname === '/login' || url.pathname === '/login.html')) {
         // 이미 들어와 있는 사람이 초대 링크를 열면 — 지금 계정으로 참여하는 자리(내 계정 «새 수업 코드 넣기»)로 코드를 들고 간다(자유 가입판에는 초대가 없다)
         const inv = edition === 'open' ? '' : url.searchParams.get('invite');

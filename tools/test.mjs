@@ -2233,7 +2233,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('작업실 · 옆 줄의 이름은 서버가 준 이름(없으면 스토리 엔진)', app.includes("const appName = () => (S.me && S.me.appName) || '스토리 엔진';")
     && app.includes("class: 'top-name', style: 'font-size:30px', text: appName()") && app.includes("class: 'side-title', text: appName()") && !app.includes("text: '스토리 엔진'"));
   ok('탭 제목도 서버가 준 이름으로', app.includes('document.title = S.me.appName') && login.includes('document.title = S.name') && school.includes("document.title = document.title.replace('스토리 엔진', S.me.appName)"));
-  ok('로그인 화면의 이름은 /api/setup 의 name', login.includes("text: appName() }), form)") && !login.includes("text: '스토리 엔진'"));
+  ok('로그인 화면의 이름은 /api/setup 의 name', login.includes("text: appName() }), form,") && !login.includes("text: '스토리 엔진'"));
   ok('보내는 링크의 제목도 그 이름', !school.includes("'스토리 엔진 초대'") && !school.includes("'스토리 엔진 비밀번호 재설정'") && school.includes("appName() + ' 초대'"));
   ok('**말 바꾸기는 전자책 용도에서만**', app.includes("const isBook = () => !!(S.me && S.me.purpose === 'ebook');") && app.includes("const W = (s) => (isBook() ? String(s).replace(/작품/g, '책') : s);"));
   const wCalls = app.match(/(?<![A-Za-z0-9_$.])W\([^)]/g) || [];
@@ -2247,6 +2247,14 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 긴 글(EBOOK_EDITION §5-1) — 저장이 거절돼도(너무 큼 · 연결) 쓴 글을 잃지 않는다
   ok('**문서 저장이 거절되면 쓴 글을 칸에 되살리고 까닭을 보인다**', app.includes('Object.assign(S.typed, kept);') && app.includes("'저장하지 못했습니다 — '") && /try \{ r = await api\('doc\.write', body\); \} catch/.test(app));
   ok('파일로 문서를 만들지 못하면 말없이 지나가지 않는다', app.includes("'파일로 문서를 만들지 못했습니다 — '"));
+  // 읽기 쪽(소개 · 개인정보처리방침 · 이용약관 — OPEN_EDITION §4-10). 글은 HTML 에 그대로, 이름 · 용도만 policy.js 가 서버에서 받아 채운다
+  const pages = ['about', 'privacy', 'terms'].map((n) => src(join(ROOT, 'web', n + '.html')));
+  ok('**읽기 쪽 세 쪽이 있고 서로 · 로그인으로 잇는다**', pages.every((t) => t.includes('href="/about"') && t.includes('href="/privacy"') && t.includes('href="/terms"') && t.includes('href="/login"') && t.includes('<script src="policy.js"></script>')));
+  ok('운영자 · 연락처가 적혀 있다', pages.every((t) => t.includes('oldtowerstudio') && t.includes('oldtowerstudio@gmail.com')));
+  ok('개인정보처리방침은 실제로 받는 것 · 맡기는 곳 · 보유 기간 · 권리 · 책임자를 적는다', ['그로블', 'Replit', 'Resend', '구글 계정의 고유 번호', '암호화', '5년', '만 14세 미만', '개인정보 보호책임자'].every((w) => pages[1].includes(w)));
+  ok('이용약관은 이용권 · 환불(7일) · 작성물 권리 · AI 결과물 책임을 적는다', ['7일 안', '[구독 취소]', '권리는 회원에게', 'AI 결과물'].every((w) => pages[2].includes(w)));
+  ok('읽기 쪽 이름은 서버가 준다(박지 않는다)', src(join(ROOT, 'web', 'policy.js')).includes("fetch('/api/setup')") && !pages.some((t) => /(['"`])[^'"`\n]*전자책 오토[^'"`\n]*\1/.test(t)));
+  ok('로그인 화면 아래 세 링크 — 자유 가입판에서만', login.includes("S.edition === 'open' ? h('div', { class: 'login-foot' }"));
 }
 
 // ---------------------------------------------------------------- Core 는 바깥을 모른다 (온라인화 Phase 1)

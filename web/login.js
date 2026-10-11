@@ -286,7 +286,10 @@ function draw(form) {
   for (const el of root.querySelectorAll('input[id]')) if (el.type !== 'hidden' && el.value !== el.defaultValue) keep[el.id] = el.value;
   root.textContent = '';
   root.appendChild(h('div', { class: 'body', style: 'max-width:380px;margin:0 auto;padding-top:12vh;padding-bottom:40px' },
-    h('div', { class: 'top-name', style: 'font-size:30px;margin-bottom:24px', text: appName() }), form));
+    h('div', { class: 'top-name', style: 'font-size:30px;margin-bottom:24px', text: appName() }), form,
+    // 자유 가입판 — 소개 · 개인정보처리방침 · 이용약관(로그인 없이 열린다)
+    S.edition === 'open' ? h('div', { class: 'login-foot' },
+      h('a', { href: '/about', text: '소개' }), h('a', { href: '/privacy', text: '개인정보처리방침' }), h('a', { href: '/terms', text: '이용약관' })) : null));
   for (const [id, v] of Object.entries(keep)) {
     const el = $(id);
     if (!el) continue;

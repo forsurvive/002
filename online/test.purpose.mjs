@@ -54,6 +54,12 @@ export async function run({ pool, ok, eq }) {
     const s2 = await novel.setup();
     ok('**용도를 적지 않은 앱은 지금 그대로 — novel · 스토리 엔진**', s2.purpose === 'novel' && s2.name === '스토리 엔진' && (await novel.get('/api/me')).me.purpose === 'novel'
       && (await novel.get('/api/me')).me.appName === '스토리 엔진' && (await novel.post('/api/edu', { op: 'me.memberships' })).appName === '스토리 엔진');
+    // 읽기 쪽 — 소개 · 개인정보처리방침 · 이용약관은 로그인 없이 열린다(구글 동의 화면의 «앱 도메인» 링크, OPEN_EDITION §4-10)
+    for (const [path, word] of [['/about', '운영자 oldtowerstudio'], ['/privacy', '개인정보 보호책임자'], ['/terms', '환불과 구독 취소']]) {
+      const r = await fetch(book.base + path);
+      const t = await r.text();
+      ok('**로그인 없이 ' + path + ' 가 열린다**', r.status === 200 && /text\/html/.test(r.headers.get('content-type') || '') && t.includes(word) && t.includes('oldtowerstudio@gmail.com') && t.includes('/privacy') && t.includes('/terms'), String(r.status));
+    }
     const school = await start({ SE_PURPOSE: 'ebook' });
     ok('용도는 판과 따로 돈다(교육기관판 + ebook)', (await school.setup()).purpose === 'ebook' && (await school.setup()).edition === 'school');
 

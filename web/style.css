@@ -500,3 +500,17 @@ body.tour-on .layer { align-items: start; padding-top: 24px; }
 body.tour-on .panel { max-height: calc(100vh - var(--tour-h, 260px) - 64px); }
 body.tour-on .tour-card { max-height: none; }
 body.tour-on .body { padding-bottom: calc(var(--tour-h, 260px) + 60px); }
+
+/* ---------------------------------------------------------------- 읽기 쪽(소개 · 개인정보처리방침 · 이용약관 — 로그인 없이 연다) */
+.doc { max-width: 760px; margin-inline: auto; padding: 48px 24px 96px; }
+.doc h1 { font-size: 28px; letter-spacing: -.02em; margin: 0 0 6px; }
+.doc h2 { font-size: 17px; margin: 30px 0 8px; }
+.doc p, .doc li { color: var(--ink); line-height: 1.75; }
+.doc ul { padding-left: 20px; margin: 6px 0; }
+.doc a { color: var(--blue); }
+.doc table { border-collapse: collapse; width: 100%; font-size: 14px; margin: 8px 0; }
+.doc th, .doc td { border: 1px solid var(--line); padding: 7px 9px; text-align: left; vertical-align: top; }
+.doc-foot { margin-top: 40px; display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+.doc-foot a { color: var(--dim); }
+.login-foot { margin-top: 28px; display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; }
+.login-foot a { color: var(--dim); }
