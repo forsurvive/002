@@ -20,6 +20,7 @@
 | **안전** | `127.0.0.1` 에만 연다 · 같은 `data\` 를 두 곳에서 열지 않는다(잠금) · 뽑혀도 반쪽 파일이 남지 않는다(내려쓰기) · 켤 때마다 백업 한 벌 |
 | **만들기 · 업데이트** | 아무 PC 에서 `node tools\usb-build.mjs --out <USB 의 폴더>` 한 줄 — 받는 곳 · 버전 · 해시를 맞춰 본다(§4) |
 | **용도** | 프로젝트마다 «이야기» 또는 «전자책»(§7) |
+| **ChatGPT** | 설정 › 무엇으로 › [ChatGPT 구독] — 그 PC 에 로그인한 Codex CLI 로 돈다(§8). Gemini 구독은 약관 문제로 사람이 정할 때까지 만들지 않았다 |
 | **크기** | 앱 약 2MB + node.exe 약 87MB + claude.exe 약 260MB(2026-10 기준) + 원고. **1GB 이상의 USB** 를 권한다 |
 
 ## 2. 폴더 그림
@@ -105,6 +106,7 @@ node tools/usb-build.mjs --out <USB 의 폴더> --skip-download       앱 파일
 | 남는 것 | 자리 | 까닭 · 지우는 법 |
 |---|---|---|
 | **Claude 로그인 정보** | `%USERPROFILE%\.claude\` (`.credentials.json` 등) | 사용자 결정 «PC 마다 로그인». `claude.exe auth logout` 으로 지운다 |
+| ChatGPT 로그인 정보(골랐을 때만) | `%USERPROFILE%\.codex\` (`auth.json` · `installation_id` 등) | PC 마다 로그인. `tools\codex\bin\codex.exe logout` |
 | Claude Code 의 설정 · 상태 | `%USERPROFILE%\.claude.json` · `%USERPROFILE%\.claude\backups\` | Claude Code 가 켤 때마다 쓴다(리눅스에서 `auth status` 만 돌려도 생기는 것을 확인) |
 | 호출 기록(원고가 든 대화) | `%USERPROFILE%\.claude\projects\` | 실행기가 `--no-session-persistence` 를 알면 **남지 않는다**(2.1.296 은 안다 — 동봉 판). 모르는 옛 실행기(데스크톱 앱에 딸린 것)를 쓰면 남는다 |
 | 호출 한 벌의 임시 폴더 | `%TEMP%\se2-call-*` | 호출이 끝나면 지운다. 호출 도중에 뽑히면 남는다(시스템 프롬프트 한 장) |
@@ -120,9 +122,27 @@ USB 에 `tools\claude\` 가 없으면(만들기 도구 없이 복사만 한 폴�
 고르는 것은 만들 때 한 번이다(에이전트가 그 종류로 지어지고 단계 기록이 그 템플릿에 묶이므로, 만든 뒤 바꾸지 않는다). 다른 용도로 쓰려면 새 작품을 만든다.
 자동 집필 «레일»(반자동 · 완전 자동)은 아직 어느 판에도 없다(EBOOK_EDITION 로드맵 E1~). 개인판의 이야기 작품은 지금과 한 글자도 다르지 않다.
 
-## 8. ChatGPT · Gemini 구독
+## 8. ChatGPT · Gemini 구독 (사용자 지시, 2026-10-13 — «챗 지피티와 제미니도 구독 사용량으로»)
 
-(이어서 적는다 — 조사 중)
+### 8-1. ChatGPT — 만들었다
+- **길**: OpenAI 의 공식 Codex CLI 를 그대로 띄운다(`codex exec`, `tools/codex-cli.mjs` · `tools/call.mjs runCodexCall` · `ai/local-codex.mjs`). Codex 는 ChatGPT 요금제(Plus · Pro …)로 로그인해 쓰는 것이 공식 쓰임이고,
+  OpenAI 문서는 `codex exec` 가 저장된 ChatGPT 로그인을 그대로 쓴다고 적는다(자동화에는 API 키를 권하고, «내 계정으로 돌려야 할 때 믿을 수 있는 자리»에서 ChatGPT 로그인을 쓰게 한다 — developers.openai.com/codex/auth · /codex/noninteractive, 검색 요약으로 확인. 이 작업 환경에서는 페이지를 직접 열지 못했다).
+  이 앱은 그 사람의 PC 에서, 그 사람의 로그인으로, 그 사람의 작품에만 부른다 — 로그인 정보(`%USERPROFILE%\.codex\auth.json`)는 읽지도 옮기지도 않는다.
+- **고르는 곳**: 설정 › 무엇으로 › **[ChatGPT 구독]**(`data\auth.json` 의 `mode: 'chatgpt'` — 그대로 · 구독 · API 키 옆의 네 번째 갈래). 그 PC 의 모든 작품이 ChatGPT 로 돈다. 클로드로 돌아가려면 다른 갈래를 누른다.
+- **로그인**: PC 마다(사용자 결정). ChatGPT 구독을 골라 둔 채 `.cmd` 를 켜면 검은 창이 `codex login status` 를 보고, 안 되어 있으면 `codex login`(브라우저)을 띄운다. 그때는 클로드 로그인을 묻지 않는다.
+  떠날 때: `tools\codex\bin\codex.exe logout`.
+- **부르는 꼴**: `codex exec --json --skip-git-repo-check --ephemeral --sandbox read-only -C <빈 임시 폴더> -o <끝 글 파일> -c model_instructions_file="<시스템 프롬프트 파일>" -`(프롬프트는 stdin).
+  `--ephemeral` — 그 PC 에 대화 기록을 남기지 않는다. `read-only` — 파일을 고치거나 명령을 돌리지 못한다. 모델은 고르지 않는다(Codex 가 그 요금제의 기본 모델 — 설정의 «모델»은 클로드에만 걸린다).
+  부르기 전에 로그인을 본다 — 로그인이 없으면 Codex 는 실패하지 않고 «다시 잇는 중»으로 오래 버티므로(조사에서 확인), 띄우지 않고 «ChatGPT 로그인이 필요합니다»로 물러선다.
+  돌려주는 꼴 · 동시 고삐(3) · 임시 폴더 · 끊기 · 실패 갈래는 클로드와 같다(한도 문구 «usage limit» → `quota-session`). 한도의 남은 양은 Codex 가 구조화해 주지 않아 보이지 않는다.
+- **USB 에 담기**: `node tools/usb-build.mjs --out <USB 의 폴더> --with-codex` — OpenAI 가 npm 에 올린 `@openai/codex` 의 윈도우 판(dist-tag `win32-x64`)을 sha512 로 맞춰 보고
+  `vendor/x86_64-pc-windows-msvc/` 를 `tools\codex\` 에 통째로 푼다(`bin\codex.exe` 와 곁 파일, 0.162.1 기준 약 460MB). 한 번 담으면 다음 업데이트 때 함께 바뀐다. 담지 않았으면 PATH 의 `codex` 를 쓴다.
+- **확인 못 한 것**(로그인 없이 `--help` · 빈 HOME 으로만 조사): 실제 로그인 뒤의 끝 글 · 사용량 칸, `model_instructions_file` 이 기본 지시문을 «갈음»하는지(깃발은 받는 것을 확인), 윈도우의 `read-only` 모래 상자가 관리자 권한 없이 서는지(`codex-windows-sandbox-setup.exe` 가 곁에 있다), USB 에서 띄운 codex.exe 가 PC 에 무엇을 남기는지(`%USERPROFILE%\.codex\` — 로그인 · `installation_id` 등).
+
+### 8-2. Gemini — 멈추고 묻는다(만들지 않았다)
+- Gemini 는 Codex 처럼 Gemini CLI(`gemini -p`, `-o json`)를 띄울 수는 있다(조사로 확인). 그러나 **Google 계정 로그인(«Login with Google»)을 제3자 소프트웨어가 Gemini CLI 를 거쳐 쓰는 것을 Google 약관이 금하고, 실제 계정 정지 사례가 있다**(docs/OPEN_EDITION.md §1 · geminicli.com/docs/resources/tos-privacy — 검색 요약, 페이지를 직접 열지 못했다).
+  이 앱이 Gemini CLI 를 띄우는 것이 바로 그 꼴로 읽힐 수 있다 — 잃는 것이 사용자의 Google 계정이라 사람이 정한다(CLAUDE.md «멈추고 묻는다» — 법률 · 정책).
+- 약관에 걸리지 않는 길: Google AI Studio 의 **API 키**(구독 사용량이 아니라 종량 — 무료 등급이 있다). 온라인판에는 이미 Gemini 어댑터(`ai/gemini.mjs`)가 있어 개인판에 «Gemini API 키» 갈래로 붙일 수 있다.
 
 ## 9. 구독 규정 — «본인만 사용»
 
@@ -143,4 +163,6 @@ USB 에 `tools\claude\` 가 없으면(만들기 도구 없이 복사만 한 폴�
 | 자동 업데이트가 PC 에 깔지 않는다 | 며칠 쓰고 `%USERPROFILE%\.local\bin\claude.exe` · `%USERPROFILE%\.local\share\claude\` 를 본다 | 없다(전에 따로 설치한 적이 없다면) |
 | 로그아웃 | `tools\claude\claude.exe auth logout` 뒤 다시 켠다 | 로그인 창이 다시 뜬다 |
 | 회사 · 학교 PC | 이동식 드라이브의 실행 파일을 막는 정책(AppLocker 등)이 있으면 켜지지 않는다 | 그런 PC 에서는 쓸 수 없다 — 앱이 풀 수 없다 |
+| ChatGPT 구독 | `--with-codex` 로 만든 USB · 설정 › 무엇으로 › [ChatGPT 구독] → 검은 창을 닫고 다시 켠다 → 로그인 → 문서 하나 생성 | 검은 창 `ChatGPT : <USB>\tools\codex\bin\codex.exe (via: portable (tools/codex))` · 생성 결과가 문서의 새 판으로. 관리자 권한 창이 뜨거나 «sandbox» 오류가 나면 알려 주십시오 |
+| ChatGPT 기록이 남지 않는다 | 생성 뒤 `%USERPROFILE%\.codex\sessions\` 를 본다 | 이 앱의 호출 기록이 없다(`--ephemeral`) |
 | 윈도우 ARM PC | `win32-arm64` 판은 아직 담지 않는다 | x64 에뮬레이션으로 돌 것으로 보지만 확인 못 함 |

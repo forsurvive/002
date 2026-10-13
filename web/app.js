@@ -938,7 +938,8 @@ function openAgent(id, back) { S.open = { type: 'agent', id, model: null, back: 
 //   그대로 : 그 PC 의 환경이 정하는 대로(손대지 않는다)
 //   구독   : 물려받은 API 키를 지워 구독으로만 돌린다
 //   API 키 : 담아 둔 키로 돈다
-const AUTH_SAY = { auto: '그대로', sub: '구독', api: 'API 키' };
+//   ChatGPT 구독 : 그 PC 에 로그인한 Codex CLI 로 돈다(모델은 Codex 가 정한다 — 위 «모델»은 클로드에만)
+const AUTH_SAY = { auto: '그대로', sub: '구독', api: 'API 키', chatgpt: 'ChatGPT 구독' };
 
 function authRow(a) {
   const cur = (a && a.mode) || 'auto';

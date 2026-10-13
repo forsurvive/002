@@ -1217,7 +1217,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   let a = await post('auth.read');
   eq('손대지 않는 것이 기본이다', a.auth.mode, 'auto');
   eq('키는 없다', a.auth.hasKey, false);
-  ok('고를 수 있는 갈래 셋', a.auth.modes.join(',') === 'auto,sub,api');
+  ok('고를 수 있는 갈래 넷(ChatGPT 구독이 더해졌다 — 2026-10-13)', a.auth.modes.join(',') === 'auto,sub,api,chatgpt');
 
   a = await post('auth.write', { mode: 'api', apiKey: 'sk-ant-시험-키' });
   eq('갈래가 바뀐다', a.auth.mode, 'api');
@@ -2201,6 +2201,67 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   for (const pid of [rb.pid, rs.pid, rx.pid]) await post('project.delete', { pid });
 }
 
+// ---------------------------------------------------------------- ChatGPT 구독 — Codex CLI 로 부르기 (docs/PERSONAL_USB.md §8)
+{
+  const cx = await import('./codex-cli.mjs');
+  const call = await import('./call.mjs');
+  const args = cx.buildCodexArgs({ dir: 'C:\\t\\d', systemPromptFile: 'C:\\t\\d\\시스템 "sp".txt', outFile: 'C:\\t\\d\\o.txt' });
+  ok('codex exec 로 부르고 프롬프트는 stdin', args[0] === 'exec' && args[args.length - 1] === '-' && args.includes('--json'));
+  ok('그 PC 에 대화 기록을 남기지 않는다', args.includes('--ephemeral'));
+  ok('글만 쓴다 — 읽기 전용 모래 상자 · 빈 임시 폴더', args[args.indexOf('--sandbox') + 1] === 'read-only' && args[args.indexOf('-C') + 1] === 'C:\\t\\d' && args.includes('--skip-git-repo-check'));
+  ok('시스템 프롬프트는 기본 지시문을 갈음하는 파일로(윈도우 경로 · 따옴표도 TOML 로 그대로)', args[args.indexOf('-c') + 1] === 'model_instructions_file="C:\\\\t\\\\d\\\\시스템 \\"sp\\".txt"');
+  ok('모델 id 를 코드에 두지 않는다(Codex 가 요금제의 기본 모델을 쓴다)', !args.includes('-m') && !args.includes('--model'));
+  const evs = cx.readCodexEvents([
+    '{"type":"thread.started","thread_id":"t"}', 'noise', '{"type":"item.completed","item":{"id":"i1","type":"reasoning","text":"생각"}}',
+    '{"type":"item.completed","item":{"id":"i2","type":"agent_message","text":"끝 글"}}', '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":3}}'].join('\n'));
+  ok('JSONL 에서 끝 글 · 사용량을 읽는다(생각은 끝 글이 아니다)', evs.said === '끝 글' && evs.usage.output_tokens === 3 && !evs.error);
+  eq('실패 사건을 읽는다', cx.readCodexEvents('{"type":"turn.failed","error":{"message":"You\'ve hit your usage limit"}}').error, "You've hit your usage limit");
+
+  if (process.platform !== 'win32') {
+    const { writeFileSync: wf, chmodSync } = await import('node:fs');
+    const fake = join(BOX, 'fake-codex');
+    const flag = join(BOX, 'codex-logged-in');
+    // 가짜 Codex — login status 는 표 파일이 있을 때만 0, exec 는 stdin · 시스템 프롬프트 파일을 읽어 -o 파일에 답을 쓴다
+    wf(fake, '#!' + process.execPath + '\n' + `
+const fs = require('node:fs');
+const a = process.argv.slice(2);
+if (a[0] === 'login') process.exit(fs.existsSync(${JSON.stringify(flag)}) ? 0 : 1);
+let input = '';
+process.stdin.on('data', (d) => { input += d; });
+process.stdin.on('end', () => {
+  const sp = JSON.parse(a[a.indexOf('-c') + 1].replace(/^model_instructions_file=/, ''));
+  const sys = fs.readFileSync(sp, 'utf8');
+  if (input.includes('LIMIT')) { console.log(JSON.stringify({ type: 'turn.failed', error: { message: "You've hit your usage limit. Try again later." } })); process.exit(1); }
+  fs.writeFileSync(a[a.indexOf('-o') + 1], '답[' + sys + '] ' + input);
+  console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 7, output_tokens: 2, cached_input_tokens: 1 } }));
+});
+`.replace(/^\n/, ''));
+    chmodSync(fake, 0o755);
+    cx.forgetCodexLogin();
+    let r = await call.runCodexCall({ systemPrompt: '작법', prompt: '쓰라', cli: fake });
+    ok('ChatGPT 로그인이 없으면 띄우지 않고 «로그인 필요»로 물러선다', !r.ok && r.reason === 'auth' && r.error.includes('ChatGPT 로그인'));
+    wf(flag, '1');
+    r = await call.runCodexCall({ systemPrompt: '작법', prompt: '쓰라', cli: fake });
+    ok('로그인되어 있으면 Codex 가 쓴 끝 글을 받는다(시스템 프롬프트 · 프롬프트가 실렸다)', r.ok && r.text === '답[작법] 쓰라' && r.authSource === 'chatgpt', JSON.stringify(r));
+    ok('사용량을 같은 꼴로', r.usage && r.usage.input === 7 && r.usage.output === 2 && r.usage.cacheRead === 1);
+    r = await call.runCodexCall({ systemPrompt: '작법', prompt: 'LIMIT', cli: fake });
+    ok('구독 한도는 같은 갈래(quota-session)로', !r.ok && r.reason === 'quota-session' && r.error.includes('ChatGPT 구독 한도'), JSON.stringify(r));
+    const calls = () => readdirSync(tmpdir()).filter((f) => f.startsWith('se2-call-')).length;
+    const before = calls();
+    await call.runCodexCall({ systemPrompt: '작법', prompt: '한 번 더', cli: fake });
+    ok('호출 한 벌의 임시 폴더를 남기지 않는다', calls() === before);
+  }
+  const prov = await import('../ai/local-codex.mjs');
+  const { isProvider } = await import('../ai/provider.mjs');
+  ok('ChatGPT 길도 Provider 계약을 지킨다', isProvider(prov.localCodexProvider));
+  const engSrc = src(join(HERE, 'engine.mjs'));
+  ok('«ChatGPT 구독»을 고르면 같은 한 자리(callModel)에서 Codex 로 간다', engSrc.includes("generator === localCliProvider && auth.read().mode === 'chatgpt' ? localCodexProvider : generator"));
+  const la = src(join(HERE, 'launch.mjs'));
+  ok('ChatGPT 구독이면 실행기가 Codex 로그인을 본다(그 PC 에서 처음 한 번)', la.includes("auth.read().mode === 'chatgpt'") && la.includes('codexLogin(C.cli)') && la.includes('viaChatGPT ? { loggedIn: true }'));
+  ok('Codex 는 폴더에 담아 온 것 → PATH 순서로만 찾는다', /join\(HERE, 'codex', 'bin', EXE\), join\(HERE, 'codex', EXE\)/.test(src(join(HERE, 'codex-cli.mjs'))));
+  ok('화면에 «ChatGPT 구독» 갈래', src(join(ROOT, 'web', 'app.js')).includes("chatgpt: 'ChatGPT 구독'"));
+}
+
 // ---------------------------------------------------------------- USB 휴대판 — 만들기 도구 (망 없이 순수 부분만)
 {
   const ub = await import('./usb-build.mjs');
@@ -2231,6 +2292,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('온라인판 · 시험 · 동봉물 · 원고는 담지 않는다', !files.some((f) => /^(online|migrations|data|node_modules)\//.test(f) || f === 'tools/test.mjs' || f.startsWith('tools/node/') || f.startsWith('tools/claude/')));
   const ubSrc = src(join(HERE, 'usb-build.mjs'));
   ok('받는 곳은 nodejs.org 와 앤트로픽의 npm 패키지뿐이다', (ubSrc.match(/https:\/\/[^'"\s]+/g) || []).every((u) => u.startsWith('https://nodejs.org/dist/') || u.startsWith('https://registry.npmjs.org/')) && ubSrc.includes("'@anthropic-ai/claude-code-win32-x64'"));
+  ok('tar 의 파일을 차례로 꺼낸다(Codex 는 폴더 하나를 통째로 푼다)', [...ub.untarEntries(tar)].map((e) => e.name).join() === 'package/README.md,package/claude.exe');
+  ok('Codex 묶음 밖으로 나가는 이름(..)은 풀지 않는다', /split\('\/'\)\.some\(\(x\) => x === '\.\.' \|\| x === ''\)\) continue/.test(ubSrc));
+  ok('ChatGPT 길(Codex)은 고른 사람만 담는다(--with-codex) · 받는 곳은 OpenAI 의 npm 패키지', ubSrc.includes("else if (a === '--with-codex') o.codex = 'latest';") && ubSrc.includes("export const CODEX_PKG = '@openai/codex';") && /!integrityOk\(tgz, dist\.integrity\)\) throw new Error\('sha512 mismatch for ' \+ CODEX_PKG/.test(ubSrc));
+  ok('담아 온 Codex 도 저장소에는 싣지 않는다', src(join(ROOT, '.gitignore')).includes('tools/codex/') && !files.some((f) => f.startsWith('tools/codex/')));
   ok('해시가 맞지 않으면 쓰지 않는다', /sha256\(buf\) !== want\) throw/.test(ubSrc) && /!integrityOk\(tgz, dist\.integrity\)\) throw/.test(ubSrc));
 
   // 업데이트 — 지난 목록에만 있던 앱 파일은 걷고, data/ 는 손대지 않는다

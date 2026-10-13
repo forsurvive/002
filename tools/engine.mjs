@@ -6,6 +6,7 @@ import { cleanResponse, cleanPart } from './assemble.mjs';
 import { planCall } from '../core/reference/plan.mjs';
 import * as gen from '../core/generation/run.mjs';
 import { localCliProvider } from '../ai/local-cli.mjs';
+import { localCodexProvider } from '../ai/local-codex.mjs';
 import { isProvider } from '../ai/provider.mjs';
 import * as auth from './auth.mjs';
 import * as state from './state.mjs';
@@ -23,8 +24,10 @@ let generator = localCliProvider;
 export function useGenerator(p) { generator = isProvider(p) ? p : localCliProvider; }
 
 // 한 번 부르기 — code 는 그 자리의 이름(모의 응답과 기록이 쓴다).
+// 개인판에서 «ChatGPT 구독»을 골랐으면(설정 › 무엇으로) 같은 자리에서 Codex CLI 로 간다 — 꽂아 둔 다른 Provider(온라인 · 시험)는 그대로
 export function callModel({ systemPrompt, prompt, code = '', signal = null, model = '' }) {
-  return generator.generate({ model, systemPrompt, userPrompt: prompt, signal, metadata: { code } });
+  const g = generator === localCliProvider && auth.read().mode === 'chatgpt' ? localCodexProvider : generator;
+  return g.generate({ model, systemPrompt, userPrompt: prompt, signal, metadata: { code } });
 }
 
 // 일하는 법(tools/prompts.data.json)을 읽지 못했으면 부르지 않는다.

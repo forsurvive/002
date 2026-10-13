@@ -6,6 +6,7 @@
 //   auto : 아무것도 손대지 않는다(지금까지의 거동). 사용자 PC 의 환경이 정하는 대로 간다.
 //   sub  : 구독으로만 돈다 — 물려받은 ANTHROPIC_API_KEY 를 지워 종량 과금으로 새는 것을 막는다.
 //   api  : 여기 담아 둔 키로 돈다 — 구독 한도를 다 썼을 때 갈아타는 자리.
+//   chatgpt : 클로드가 아니라 ChatGPT 구독으로 돈다 — 그 PC 에 로그인한 Codex CLI(tools/codex-cli.mjs, 2026-10-13 사용자 지시).
 //
 // 왜 «auto» 를 기본으로 두는가: 구독 로그인 없이 API 키만 있는 PC 에서 키를 지우면 그 사람은 아무것도 못 한다.
 // 사람이 고르기 전까지는 손대지 않는 것이 맞다.
@@ -23,7 +24,7 @@ import { DATA_DIR, readJson, writeJson } from './store.mjs';
 
 const FILE = () => join(DATA_DIR, 'auth.json');
 
-export const MODES = ['auto', 'sub', 'api'];
+export const MODES = ['auto', 'sub', 'api', 'chatgpt'];
 
 export function read() {
   const v = readJson(FILE(), null) || {};

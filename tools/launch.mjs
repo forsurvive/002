@@ -8,6 +8,8 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveCliDetailed, childEnv, authStatus, installClaudeCode, INSTALL_URL } from './claude-cli.mjs';
+import { resolveCodex, codexLoggedIn, codexLogin } from './codex-cli.mjs';
+import * as auth from './auth.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.SE2_PORT || 8801);
@@ -45,7 +47,27 @@ line('  Claude Code : ' + R.cli + '  (via: ' + R.via + ')');
 if (R.via.startsWith('portable')) process.env.DISABLE_AUTOUPDATER = '1';
 line();
 
-const before = await authStatus(R.cli);
+// ChatGPT 구독으로 돌게 골라 두었으면(설정 › 무엇으로) 클로드 대신 Codex 의 로그인을 본다(docs/PERSONAL_USB.md §8)
+const viaChatGPT = auth.read().mode === 'chatgpt';
+if (viaChatGPT) {
+  const C = resolveCodex();
+  line('  ChatGPT     : ' + C.cli + '  (via: ' + C.via + ')');
+  if (!(await codexLoggedIn(C.cli))) {
+    line('  ------------------------------------------------------------');
+    line('   ONE-TIME CHATGPT LOGIN (first run on this computer)');
+    line('   A browser page opens. Sign in with your ChatGPT account.');
+    line('  ------------------------------------------------------------');
+    const code = await codexLogin(C.cli);
+    if (!(await codexLoggedIn(C.cli))) {
+      line('  [NOT LOGGED IN] codex login exit code: ' + code);
+      line('  The app starts anyway - AI calls will ask for the login again.');
+      line('  To go back to Claude: Settings > (mode) in the app.');
+    }
+  }
+  line();
+}
+
+const before = viaChatGPT ? { loggedIn: true } : await authStatus(R.cli);
 if (!before.loggedIn) {
   line('  ------------------------------------------------------------');
   line('   ONE-TIME LOGIN (first run on this computer)');

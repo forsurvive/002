@@ -23,12 +23,13 @@
 //   처음에 0 으로 보인 것은 시험 프롬프트가 캐시 최소 길이 아래였던 탓이다. 그러니 이 방식을 바꾸지 않는다.
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveCliDetailed, childEnv, supportsNoPersist, NO_PERSIST } from './claude-cli.mjs';
 import * as auth from './auth.mjs';
 import { fitOf } from '../ai/http.mjs';
+import { resolveCodex, buildCodexArgs, readCodexEvents, codexLoggedIn } from './codex-cli.mjs';
 
 const R = resolveCliDetailed();
 export const CLI = R.cli;
@@ -338,6 +339,88 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
     };
   } catch (e) {
     return fail((stderr ? stderr + ' | ' : '') + String((e && e.message) || e), 'other');
+  } finally {
+    if (signal && onAbort) { try { signal.removeEventListener('abort', onAbort); } catch {} }
+    if (p) { LIVE.delete(p); killTree(p); }
+    if (dir) { try { rmSync(dir, { recursive: true, force: true }); } catch {} }
+    release();
+  }
+}
+
+// ChatGPT 구독으로 부르기 — Codex CLI(`codex exec`, tools/codex-cli.mjs). 돌려주는 꼴은 runClaudeCall 과 같다(Core 가 갈라 보지 않게).
+// 같은 고삐 · 같은 임시 폴더 한 벌 · 같은 끊기. 실패 갈래도 같은 classify 로 가른다(문구만 본다 — Codex 는 구조화된 한도 칸을 주지 않는다).
+// cli 는 시험이 가짜 실행기를 넘긴다.
+export const CODEX = resolveCodex();
+const SAY_CODEX = { auth: 'ChatGPT 로그인이 필요합니다 — 프로그램을 끄고 다시 켜면 검은 창이 로그인을 띄웁니다', 'quota-session': 'ChatGPT 구독 한도를 다 썼습니다' };
+export async function runCodexCall({ systemPrompt, prompt, mockKey, signal, model, cli = null } = {}) {
+  // 모의 실행은 클로드 쪽과 같은 가짜 응답을 낸다(구독 소모 0)
+  if (MOCK && !cli) return runClaudeCall({ systemPrompt, prompt, mockKey, signal, model });
+  const started = Date.now();
+  const fail = (error, reason = 'other') => {
+    const say = SAY_CODEX[reason] || SAY[reason] || '';
+    const detail = String(error || '').trim();
+    return { ok: false, text: '', error: say ? (detail && detail !== say ? say + ' — ' + detail : say) : (detail || '알 수 없는 오류'),
+      reason, elapsedMs: Date.now() - started, usage: null, limit: null, authSource: 'chatgpt' };
+  };
+  if (!prompt || !String(prompt).trim()) return fail('보낼 것이 없습니다', 'empty');
+  if (signal && signal.aborted) return fail('', 'stopped');
+  const exe = cli || CODEX.cli;
+  // 로그인이 없으면 Codex 는 실패하지 않고 오래 버틴다 — 띄우기 전에 본다
+  if (!(await codexLoggedIn(exe))) return fail('', 'auth');
+
+  const got = await acquire(signal);
+  if (!got) return fail('', 'stopped');
+  let dir = null;
+  let p = null;
+  let onAbort = null;
+  let out = '';
+  try {
+    dir = mkdtempSync(join(tmpdir(), 'se2-call-'));
+    const spFile = join(dir, 'system-prompt.txt');
+    const outFile = join(dir, 'last-message.txt');
+    writeFileSync(spFile, String(systemPrompt || ''), 'utf8');
+    // ChatGPT 길에는 클로드의 키가 쓰일 일이 없다 — 물려받은 ANTHROPIC_API_KEY · CLAUDE_* 를 걷는 같은 손질만 한다
+    p = spawn(exe, buildCodexArgs({ dir, systemPromptFile: spFile, outFile }), { env: childEnv({ mode: 'sub' }), windowsHide: true, cwd: dir });
+    LIVE.add(p);
+    p.stdin.on('error', () => {});
+    try { p.stdin.write(String(prompt), 'utf8'); } catch {}
+    try { p.stdin.end(); } catch {}
+    p.stdout.setEncoding('utf8');
+    p.stdout.on('data', (s) => { out += s; });
+    p.stderr.setEncoding('utf8');
+    p.stderr.on('data', (s) => { out += '\n' + s; });
+    let timedOut = false;
+    let aborted = false;
+    let code = null;
+    await new Promise((resolve) => {
+      const timer = setTimeout(() => { timedOut = true; killTree(p); }, CALL_TIMEOUT_MS);
+      if (signal) {
+        onAbort = () => { aborted = true; killTree(p); };
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      }
+      p.on('error', (e) => { out += '\n' + String(e.message || e); clearTimeout(timer); resolve(); });
+      p.on('close', (c) => { code = c; clearTimeout(timer); resolve(); });
+    });
+    if (aborted) return fail('', 'stopped');
+    const ev = readCodexEvents(out);
+    let text = '';
+    try { text = readFileSync(outFile, 'utf8'); } catch { text = ev.said; }
+    if (timedOut) return text.trim() ? { ok: true, text, error: null, reason: null, elapsedMs: Date.now() - started, usage: null, limit: null, authSource: 'chatgpt', finishReason: 'length' }
+      : fail(Math.round(CALL_TIMEOUT_MS / 60000) + '분 초과로 끊었습니다', 'timeout');
+    if (code !== 0 || ev.error || !text.trim()) {
+      const why = ev.error || out;
+      const reason = !text.trim() && !ev.error && code === 0 ? 'other' : classify({ stderr: why });
+      return fail(String(ev.error || '결과 없음').slice(0, 600), reason);
+    }
+    const u = ev.usage || {};
+    return {
+      ok: true, text, error: null, reason: null, elapsedMs: Date.now() - started,
+      usage: { input: u.input_tokens || 0, output: u.output_tokens || 0, cacheRead: u.cached_input_tokens || 0, cacheWrite: 0, costUsd: 0 },
+      limit: null, authSource: 'chatgpt', finishReason: 'stop',
+    };
+  } catch (e) {
+    return fail(String((e && e.message) || e), 'other');
   } finally {
     if (signal && onAbort) { try { signal.removeEventListener('abort', onAbort); } catch {} }
     if (p) { LIVE.delete(p); killTree(p); }
