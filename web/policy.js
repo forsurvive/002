@@ -12,6 +12,10 @@
   // 용도마다 다른 한 단락(전자책 오토 · 스토리 엔진) — 모르면 둘 다 보인다
   const purpose = st && st.purpose ? String(st.purpose) : '';
   if (purpose) for (const el of document.querySelectorAll('[data-purpose]')) el.hidden = el.dataset.purpose !== purpose;
+  // 이용권 축(정기결제 · 평생 이용권, §4-14) — 서버가 보낼 때 이미 맞지 않는 단락을 감춰 둔다. 여기서는 같은 규칙을 한 번 더 · 평생 이용권의 값.
+  const billing = st && st.billing ? String(st.billing) : '';
+  if (billing) for (const el of document.querySelectorAll('[data-billing]')) el.hidden = el.dataset.billing !== billing;
+  if (Number.isInteger(st && st.price)) for (const el of document.querySelectorAll('[data-price]')) el.textContent = st.price.toLocaleString('ko-KR');
   // 무료 체험 · 환불 기간 — 운영 화면 «이용 규칙»의 지금 값(자유 가입판). 0일이면 그 문장을 감춘다. 못 받으면 글에 적힌 기본값 그대로.
   for (const [key, mark] of [['trialDays', 'trial'], ['refundDays', 'refund']]) {
     const n = st ? st[key] : undefined;

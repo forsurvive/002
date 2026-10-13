@@ -67,6 +67,14 @@ export async function run({ pool, ok, eq }) {
     const st = await (await fetch(base + '/api/setup')).json();
     ok('**/api/setup — 평생 이용권 · 체험 3일 · 값 99,000원**', st.billing === 'lifetime' && st.trialDays === 3 && st.price === 99000, JSON.stringify(st));
 
+    // 읽기 쪽 — 이 앱의 이용권 축에 맞는 글만 보인다(스크립트 없이도 — 서버가 보낼 때 다른 축의 단락에 hidden)
+    const page = async (p) => (await fetch(base + p)).text();
+    const terms = await page('/terms'); const about = await page('/about'); const privacy = await page('/privacy');
+    ok('**이용약관 — 평생 이용권 단락이 보이고 정기결제 · 구독 취소 단락은 감춰진다**', terms.includes('<li data-billing="lifetime">이용권은 한 번 결제하는 평생 이용권')
+      && terms.includes('<li data-billing="subscription" hidden>이용권은 월 단위 정기결제') && terms.includes('<h2 data-billing="subscription" hidden>4. 환불과 구독 취소')
+      && !/data-billing="lifetime" hidden/.test(terms) && terms.includes('<span data-trial>2</span>'));
+    ok('소개 · 개인정보처리방침도 같다', about.includes('<span data-billing="subscription" hidden>(월 정기결제)') && privacy.includes('<span data-billing="subscription" hidden>(구독 중이면'));
+
     // ---------------- 가입 → 3일 무료 체험 · 구매 제안(값과 함께) · 자동 결제 없음
     const su = await post('/api/auth/signup', '', { loginId: 'lf-new', password: 'long-enough-lf-new' });
     const nu = await one(`SELECT u.id, s.paid_until FROM users u JOIN subscriptions s ON s.user_id = u.id AND s.provider = 'trial' WHERE u.login_id = 'lf-new'`);

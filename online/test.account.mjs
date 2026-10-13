@@ -95,6 +95,8 @@ export async function run({ pool, ok, eq }) {
       && terms.includes('회원이 «내 계정»에서 고른 AI 회사') && about.includes('사용자가 «내 계정»에서 고른 AI 회사'));
     ok('**탈퇴는 «내 계정 → 계정 지우기»에서 직접 — 구독 취소가 저절로**', terms.includes('«내 계정 → 계정 지우기»에서 직접 계정을 지울 수 있습니다') && terms.includes('구독 취소가 저절로 접수')
       && privacy.includes('«내 계정 → 계정 지우기»') && !terms.includes('연락처로 탈퇴'));
+    ok('**정기결제 판의 읽기 쪽 — 평생 이용권 단락은 감춰진다(§4-14)**', terms.includes('<li data-billing="lifetime" hidden>') && !terms.includes('data-billing="subscription" hidden')
+      && about.includes('<span data-billing="lifetime" hidden>'));
     ok('이용약관의 체험 · 환불 일수는 지금 값으로 채우는 자리', terms.includes('<span data-trial>2</span>') && terms.includes('<span data-refund>7</span>') && /data-if-trial/.test(terms));
 
     // ---------------- 사람들 — 운영자 · 지울 사람(작품 · 키 · 구글 · 구독) · 남는 사람
