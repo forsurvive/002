@@ -28,7 +28,7 @@ import { AGENT_SLOTS } from '../tools/prompts.mjs';
 import { createJobQueue } from './jobs.mjs';
 import { createTenancy, SAY } from './tenancy.mjs';
 import { createEdu } from './edu.mjs';
-import { editionOf } from './edition.mjs';
+import { editionOf, billingOf } from './edition.mjs';
 import { purposeOf, purposeName, purposeTemplate } from './purpose.mjs';
 import { createBilling, passActive, rulesOf } from './billing/service.mjs';
 import { deleteAccount } from './account.mjs';
@@ -85,6 +85,10 @@ export function onlinePlan(env = process.env) {
   // 용도 — novel(기본) · ebook(전자책 오토). 모르는 값은 novel 로(docs/EBOOK_EDITION.md §8)
   plan.purpose = purposeOf(env);
   if (env.SE_PURPOSE && String(env.SE_PURPOSE).trim().toLowerCase() !== plan.purpose) plan.notes.push('SE_PURPOSE is not novel or ebook - using novel');
+  // 이용권 — subscription(월 정기결제, 기본) · lifetime(평생 이용권 — 단건 결제 한 번). 자유 가입판에서만 뜻이 있다(docs/OPEN_EDITION.md §4-14)
+  plan.billing = billingOf(env);
+  if (env.SE_BILLING && String(env.SE_BILLING).trim().toLowerCase() !== plan.billing) plan.notes.push('SE_BILLING is not subscription or lifetime - using subscription');
+  if (plan.billing === 'lifetime' && plan.edition !== 'open') plan.notes.push('SE_BILLING=lifetime is used only with SE_EDITION=open - ignored');
   return plan;
 }
 
@@ -196,7 +200,8 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
   const markKey = firstKey ? createHmac('sha256', firstKey).update('trial-mark-v1').digest() : null;
   const bill = billing !== undefined ? billing : edition === 'open'
     ? createBilling({ pool, secrets: () => [process.env.GROBLE_WEBHOOK_SECRET, process.env.GROBLE_WEBHOOK_SECRET_PREVIOUS], log: (m) => console.log('  [billing] ' + m),
-      siteUrl: site ? 'https://' + site : '', app: purposeName(purpose), markKey }) : null;
+      siteUrl: site ? 'https://' + site : '', app: purposeName(purpose), markKey, mode: plan.billing || 'subscription' }) : null;
+  const billingMode = bill ? bill.mode || 'subscription' : '';   // 화면이 정기결제 · 평생 이용권 말을 고른다(자유 가입판만)
   const tenancy = createTenancy(pool, { edition });
   const wfs = createWorkflowSource(pool, { defaultKey: templateKey });
   const edu = createEdu({ pool, credentials, wfs, keyTester, subscription, codeKeys, recoveryCode: plan.recoveryCode || '', edition, billing: bill, google: !!gcfg, purpose });
@@ -455,9 +460,11 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         // 바깥에 열었으면(플랫폼 앞단을 거치면 소켓 주소가 루프백일 수 있다) 출입 열쇠만 믿는다
         const trusted = !!plan.gate || (!plan.exposed && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || ''));
         // 자유 가입판 — 무료 체험 · 환불 기간(이용약관 쪽이 지금 값으로 채운다 — 운영 화면 «이용 규칙»)
-        const days = bill && req.method === 'GET' ? await rulesOf(pool) : null;
+        const days = bill && req.method === 'GET' ? await rulesOf(pool, billingMode) : null;
+        // 평생 이용권 판은 소개 · 약관이 값을 적는다 — 켜진 평생 이용권 결제 옵션 가운데 첫 것(없으면 싣지 않는다)
+        const price = days && billingMode === 'lifetime' ? ((await pool.query(`SELECT price FROM billing_plans WHERE enabled AND kind = 'lifetime' ORDER BY sort_order, created_at LIMIT 1`)).rows[0] || {}).price : null;
         if (req.method === 'GET') return json(res, 200, ok({ needed: empty && (trusted || !!setupCode), code: empty && !trusted && !!setupCode, ai: !!credentials, edition, google: !!gcfg, purpose, name: purposeName(purpose),
-          ...(days ? { trialDays: days.trialDays, refundDays: days.refundDays } : {}) }));
+          ...(days ? { trialDays: days.trialDays, refundDays: days.refundDays, billing: billingMode, ...(price ? { price } : {}) } : {}) }));
         if (req.method !== 'POST') return json(res, 405, bad('POST 만 받습니다'));
         if (!empty) return json(res, 409, bad('이미 설정을 마쳤습니다 — 로그인해 주세요'));
         if (!trusted) {
@@ -497,7 +504,7 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         // 자유 가입판 — 기관 · 수업이 없다. 관리 단추는 운영자에게만(운영 화면), 내 수업 · 수업 자리는 없다.
         if (edition === 'open') {
           // pass — 이용권이 살아 있는가(새 AI 작업이 되는가). 첫 화면이 «이용권 없음» 한 줄을 세울 근거(막는 것은 서버다)
-          return { ...me, edition, purpose, appName: purposeName(purpose), manage: !!user.isPlatformAdmin, platformAdmin: !!user.isPlatformAdmin, classes: 0, member: false, places: [], roles: user.isPlatformAdmin ? ['platform_admin'] : [], pass: await passActive(pool, user.id) };
+          return { ...me, edition, purpose, billing: billingMode, appName: purposeName(purpose), manage: !!user.isPlatformAdmin, platformAdmin: !!user.isPlatformAdmin, classes: 0, member: false, places: [], roles: user.isPlatformAdmin ? ['platform_admin'] : [], pass: await passActive(pool, user.id) };
         }
         const r = (await pool.query(
           `SELECT bool_or(role = 'organization_admin') AS org_admin, count(*)::int AS n FROM organization_members WHERE user_id = $1 AND status = 'active'`, [user.id])).rows[0];
@@ -816,6 +823,7 @@ export async function main(env = process.env) {
   console.log('  Story Engine (online) : listening on ' + plan.host + ':' + plan.port);
   console.log('  Edition      : ' + plan.edition + (plan.edition === 'open' ? ' (open sign-up)' : ' (schools)'));
   console.log('  Purpose      : ' + plan.purpose + (plan.purpose === 'ebook' ? ' (e-book auto)' : ' (story)'));
+  if (plan.edition === 'open') console.log('  Billing      : ' + plan.billing + (plan.billing === 'lifetime' ? ' (one-time lifetime pass)' : ' (monthly subscription)'));
   console.log('  Host names   : ' + plan.allowedHosts.join(', '));
   for (const n of plan.notes) console.log('  [NOTE] ' + n);
   const users = (await pool.query('SELECT count(*)::int AS n FROM users')).rows[0].n;

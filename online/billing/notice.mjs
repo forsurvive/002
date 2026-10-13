@@ -56,24 +56,25 @@ export function again(msg, day, app = '') {
     text: '아직 처리되지 않아 다시 알립니다 — 요청 ' + day + '일째. 처리될 때까지 날마다 한 번 보냅니다.\n\n' + msg.text };
 }
 
-// 환불 요청 — 구독 시작 7일 안에 고객이 [환불 요청]을 눌렀다. 이용권은 요청과 함께 멈췄다.
-export function refundMail({ user, at, start, until, inPolicy, payment, aiRuns, prevRefunds = 0, reason, detail, site = '', app = '', done = null }) {
+// 환불 요청 — 구독 시작(평생 이용권은 구매) 7일 안에 고객이 [환불 요청]을 눌렀다. 이용권은 요청과 함께 멈췄다.
+// lifetime — 평생 이용권(§4-14): 할 일은 환불 하나(끊을 정기결제가 없다)
+export function refundMail({ user, at, start, until, inPolicy, payment, aiRuns, prevRefunds = 0, reason, detail, site = '', app = '', done = null, lifetime = false }) {
+  const from = lifetime ? '구매' : '구독 시작';
   return {
-    subject: head(app) + '환불 요청 — ' + idOf(user),
+    subject: head(app) + (lifetime ? '환불 요청(평생 이용권) — ' : '환불 요청 — ') + idOf(user),
     text: [
-      who(user) + ' 님이 환불을 요청했습니다.', '',
-      ...(done ? ['· 남은 일: ' + leftOf(done), ''] : []),
+      who(user) + ' 님이 ' + (lifetime ? '평생 이용권 ' : '') + '환불을 요청했습니다.', '',
+      ...(done ? ['· 남은 일: ' + (lifetime ? (done.refunded ? '없음' : '① 그로블에서 이 결제 환불') : leftOf(done)), ''] : []),
       '· 요청: ' + kst(at),
-      '· 구독 시작(첫 결제): ' + kday(start) + ' · 환불 기한 ' + until + '까지 → ' + (inPolicy ? '기한 안' : '기한 밖'),
+      '· ' + (lifetime ? '구매' : '구독 시작(첫 결제)') + ': ' + kday(start) + ' · 환불 기한 ' + until + '까지 → ' + (inPolicy ? '기한 안' : '기한 밖'),
       '· 환불할 결제: ' + payLine(payment),
-      '· 구독 시작 뒤 AI 작업: ' + aiRuns + '회',
+      '· ' + from + ' 뒤 AI 작업: ' + aiRuns + '회',
       '· 이전 환불: ' + (prevRefunds ? prevRefunds + '번' : '없음'),
       why(reason, detail),
       '· 이용권: 요청과 함께 멈췄습니다(새 AI 작업만 — 편집 · 열람 · 내보내기는 그대로)', '',
       '할 일(그로블 판매 관리):',
-      '1. 위 결제 환불',
-      '2. 이 정기결제 해지',
-      '둘 다 그로블에서 처리되면 [결제 기록]의 이 요청에 «환불됨 · 해지됨»이 저절로 찍힙니다.',
+      ...(lifetime ? ['1. 위 결제 환불(단건 결제 — 끊을 정기결제는 없습니다)', '그로블에서 환불되면 [결제 기록]의 이 요청에 «환불됨»이 저절로 찍힙니다.']
+        : ['1. 위 결제 환불', '2. 이 정기결제 해지', '둘 다 그로블에서 처리되면 [결제 기록]의 이 요청에 «환불됨 · 해지됨»이 저절로 찍힙니다.']),
       '환불하지 않기로 했으면 [결제 기록] → 이 요청의 [요청 되돌리기](멈춘 이용권이 되살아납니다).',
       ...tail(site),
     ].join('\n'),
@@ -102,7 +103,22 @@ export function cancelMail({ user, at, nextBilling, lastPayment = null, reason, 
 const leftOf = (d) => [d.refunded ? '' : '① 그로블에서 이 결제 환불', d.cancelled ? '' : '② 그로블에서 정기결제 해지'].filter(Boolean).join(' · ') || '없음';
 
 // 그로블에서 먼저 환불됐다(이번 회차) — 정기결제 해지가 아직이면 할 일이 있다(다음 결제일에 다시 청구된다)
-export function grobleRefundMail({ user, at, payment, verdict = '', cancelled = false, site = '', app = '' }) {
+export function grobleRefundMail({ user, at, payment, verdict = '', cancelled = false, site = '', app = '', lifetime = false }) {
+  // 평생 이용권(§4-14) — 끊을 정기결제가 없다: 알림만
+  if (lifetime) {
+    return {
+      subject: head(app) + '그로블에서 환불됨(평생 이용권) — ' + idOf(user),
+      text: [
+        who(user) + ' 님의 평생 이용권 결제가 그로블에서 환불되었습니다.', '',
+        '· 때: ' + kst(at),
+        '· 환불된 결제: ' + payLine(payment),
+        ...(verdict ? ['· 판정: ' + verdict] : []),
+        '· 이용권: 환불과 함께 끝났습니다', '',
+        '할 일 없음(알림만).',
+        ...tail(site),
+      ].join('\n'),
+    };
+  }
   return {
     subject: head(app) + (cancelled ? '그로블에서 환불됨 — ' : '확인 필요 — 그로블에서 환불됨 · 정기결제 해지가 아직 — ') + idOf(user),
     text: [
@@ -119,7 +135,7 @@ export function grobleRefundMail({ user, at, payment, verdict = '', cancelled = 
 }
 
 // 구매자가 그로블에서 결제 취소(환불)를 요청했다 — 승인 · 반려는 판매자가 그로블에서
-export function buyerCancelMail({ user, at, payment, verdict = '', site = '', app = '' }) {
+export function buyerCancelMail({ user, at, payment, verdict = '', site = '', app = '', lifetime = false }) {
   return {
     subject: head(app) + '확인 필요 — 구매자가 그로블에서 취소(환불) 요청 — ' + idOf(user),
     text: [
@@ -127,7 +143,7 @@ export function buyerCancelMail({ user, at, payment, verdict = '', site = '', ap
       '· 때: ' + kst(at),
       '· 결제: ' + payLine(payment),
       ...(verdict ? ['· 판정: ' + verdict] : []), '',
-      '할 일(그로블 판매 관리): 이 취소 요청 승인 또는 반려 — 승인하면 정기결제도 해지해 주세요.',
+      '할 일(그로블 판매 관리): 이 취소 요청 승인 또는 반려' + (lifetime ? '(평생 이용권 — 승인하면 환불되고 이용권이 저절로 끝납니다).' : ' — 승인하면 정기결제도 해지해 주세요.'),
       '처리했으면 [결제 기록]의 이 줄을 [처리함]으로 닫아 주세요(환불되면 저절로 닫힙니다). 그 전까지 날마다 다시 알립니다.',
       ...tail(site),
     ].join('\n'),
@@ -193,9 +209,9 @@ export function chargedMail({ user, requestedAt, at, payment, site = '', app = '
   };
 }
 
-export function testMail({ site = '', app = '' } = {}) {
+export function testMail({ site = '', app = '', lifetime = false } = {}) {
   return {
     subject: head(app) + '알림 메일 시험',
-    text: ['이 메일이 보이면 환불 요청 · 구독 취소 알림이 이 주소로 옵니다.', ...tail(site)].join('\n'),
+    text: ['이 메일이 보이면 환불 요청' + (lifetime ? '' : ' · 구독 취소') + ' 알림이 이 주소로 옵니다.', ...tail(site)].join('\n'),
   };
 }

@@ -31,15 +31,19 @@ export function billingOps({ pool, billing, log = async () => {} }) {
       if (r.ok) return ok({ url: r.url });
       return r.code === 'bad_link' ? no(422, '결제 링크가 맞지 않습니다 — 운영자에게 알려 주세요', 'bad_link') : no(404, '그 결제 옵션이 없습니다', 'missing');
     },
-    // [환불 요청] — 구독 시작 뒤 기간 안에만. 이유를 받고 서버가 다시 판정한다(§4-8). 받으면 이용권이 바로 멈추고 운영자에게 메일 —
-    // 운영자가 그로블에서 환불 · 정기결제 해지를 함께 한다.
+    // [환불 요청] — 구독 시작(평생 이용권은 구매) 뒤 기간 안에만. 이유를 받고 서버가 다시 판정한다(§4-8). 받으면 이용권이 바로 멈추고 운영자에게 메일 —
+    // 운영자가 그로블에서 환불 · 정기결제 해지를 함께 한다(평생 이용권은 환불만, §4-14).
     async 'me.pass.refund'(user, b, ip) {
       const why = readReason(b);
       if (!why.ok) return no(422, why.error, 'validation');
       const r = await billing.requestRefund(user, why);
       if (!r.ok) {
-        const SAY = { off: '지금은 환불 요청을 받지 않습니다', no_payment: '환불할 결제가 없습니다', window_passed: '환불 기간(구독 시작 후 ' + r.check.refundDays + '일)이 지났습니다 — [구독 취소]를 눌러 주세요',
-          ai_used: '구독 시작 뒤 AI 작업을 해서 환불 대상이 아닙니다', requested: '이미 환불을 요청했습니다 — 운영자가 처리하고 있습니다', refunded: '이미 환불된 결제입니다' };
+        // 평생 이용권 판(§4-14)은 기한을 구매한 날부터 세고, 기간이 지나면 끊을 구독이 없다
+        const life = billing.mode === 'lifetime';
+        const SAY = { off: '지금은 환불 요청을 받지 않습니다', no_payment: '환불할 결제가 없습니다',
+          window_passed: life ? '환불 기간(구매 후 ' + r.check.refundDays + '일)이 지났습니다' : '환불 기간(구독 시작 후 ' + r.check.refundDays + '일)이 지났습니다 — [구독 취소]를 눌러 주세요',
+          ai_used: (life ? '구매' : '구독 시작') + ' 뒤 AI 작업을 해서 환불 대상이 아닙니다',
+          requested: '이미 환불을 요청했습니다 — 운영자가 처리하고 있습니다', refunded: '이미 환불된 결제입니다' };
         return no(422, SAY[r.code] || '환불할 수 없습니다', r.code);
       }
       const k = r.check;

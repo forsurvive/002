@@ -30,3 +30,13 @@ export function eduOpAllowed(edition, op, body = {}) {
   if (edition === 'open') return !SCHOOL_ONLY_OPS.has(op) && !(ORG_SCOPED_OPS.has(op) && body && body.orgId);
   return !isOpenOnlyOp(op);
 }
+
+// 이용권 축(자유 가입판만 — docs/OPEN_EDITION.md §4-14) — 환경 변수 SE_BILLING 하나로 고른다. 판 · 용도와는 따로 돈다.
+//   subscription(기본) — 월 정기결제(그로블 정기결제 · 갱신 · 해지 · 구독 취소). 지금 앱들 그대로.
+//   lifetime          — 평생 이용권(그로블 단건 결제 한 번). 갱신 · 해지 · 구독 취소가 없다. 무료 체험 뒤 구매를 제안하고 사람이 고른다(자동 결제 없음).
+// 모르는 값은 subscription 으로 읽는다(지금 앱이 저절로 바뀌지 않게).
+export const BILLINGS = ['subscription', 'lifetime'];
+
+export function billingOf(env = process.env) {
+  return String(env.SE_BILLING || '').trim().toLowerCase() === 'lifetime' ? 'lifetime' : 'subscription';
+}

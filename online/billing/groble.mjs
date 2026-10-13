@@ -12,16 +12,16 @@ export const WINDOW_MS = 5 * 60 * 1000;   // timestamp 허용 폭 ±5분
 
 // 그로블 사건 종류 → 정규화한 갈래
 //   paid · failed · cancel_requested · terminated · refunded(정기결제) · cancel_request(구매자의 취소 요청 — 정기결제 건이면 환불 판정을 붙인다)
-//   · one_time(단건 결제 · 환불) · unknown
+//   · once_paid · once_refunded(단건 결제 · 환불 — 정기결제 판에서는 기록만, 평생 이용권 판(SE_BILLING=lifetime)에서는 이것이 이용권) · unknown
 const KINDS = {
   'subscription_payment.completed': 'paid',          // 최초(INITIAL) · 매 갱신(RENEWAL)
   'subscription_payment.failed': 'failed',            // 갱신 실패(기본 3회 · 1일 간격 재시도 → 유예 7일)
   'subscription.cancel_requested': 'cancel_requested', // 해지 «예고» — 이용 기간은 남는다
   'subscription.terminated': 'terminated',            // 해지 완료 — 막는 것은 이것뿐
   'subscription_payment.refunded': 'refunded',        // 회차 환불 — 해지가 아니다
-  'payment.completed': 'one_time',
+  'payment.completed': 'once_paid',                    // 단건 결제 — 평생 이용권(sellerReference 로 사람을 잇는다)
   'payment.cancel_requested': 'cancel_request',       // 구매자가 구매 후 7일 안에 낸 취소 요청 — 승인 · 반려는 판매자가 그로블에서
-  'payment.refunded': 'one_time',
+  'payment.refunded': 'once_refunded',
 };
 
 export const newRef = () => randomBytes(18).toString('base64url');   // 24자 — REF_RE 안
