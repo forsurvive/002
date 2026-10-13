@@ -1352,33 +1352,48 @@ function promptPanel(close) {
 
 // 글 파일(txt · md, 2MB 까지)과 문서 파일(docx · pdf, 20MB 까지 — 글만 뽑아 넣는다, web/textfile.js). 서버는 뽑은 글만 받고 다시 거른다.
 // hwp 는 읽지 못한다(한글에서 docx · pdf · txt 로 저장해 넣는다). 스캔한 그림 PDF 도 글이 없어 못 읽는다.
+// 개인판은 그 속의 그림과 그림 파일(png · jpg · gif · webp)도 받는다(DESIGN §6-9) — onRead(이름, 글, 그림[{ key, name, data }], 읽지 못해 뺀 그림 수).
 const FILE_MAX = 2 * 1024 * 1024;
 const DOC_MAX = 20 * 1024 * 1024;
 const TEXT_EXT = /\.(txt|md|markdown|text)$/i;
 const DOC_EXT = /\.(docx|pdf)$/i;
+const PIC_EXT = /\.(png|jpe?g|gif|webp)$/i;
+// 꺼낸 그림 → 올릴 꼴(긴 변 1600px · base64)
+async function picsOf(list) {
+  const out = [];
+  for (const x of list || []) out.push({ key: x.key, ...(await picOf(new Blob([x.bytes], { type: x.mime }), x.name)) });
+  return out;
+}
 function fileButton(onRead, onBad = (m) => { S.open.err = m; render(); }) {
+  const pics = !S.me;   // 그림은 개인판만(온라인판은 아직 그림을 두지 않는다)
   const input = h('input', {
-    type: 'file', style: 'display:none', multiple: true, accept: '.txt,.md,.markdown,.text,.docx,.pdf,text/plain,text/markdown,application/pdf',
+    type: 'file', style: 'display:none', multiple: true, accept: '.txt,.md,.markdown,.text,.docx,.pdf,text/plain,text/markdown,application/pdf' + (pics ? ',.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp' : ''),
     onchange: (e) => {
       for (const f of e.target.files) {
-        if (DOC_EXT.test(f.name)) {
+        if (DOC_EXT.test(f.name) || (pics && PIC_EXT.test(f.name))) {
           if (f.size > DOC_MAX) { onBad(f.name + ' — 파일이 너무 큽니다(20MB 까지)'); continue; }
           if (!window.SEText) { onBad(f.name + ' — 문서 파일을 읽는 부분을 불러오지 못했습니다'); continue; }
-          window.SEText.textOf(f).then((t) => {
-            if (t.length > FILE_MAX) return onBad(f.name + ' — 뽑은 글이 너무 깁니다(2MB 까지) — 나눠서 넣어 주세요');
-            onRead(f.name.replace(DOC_EXT, ''), t);
+          (pics ? window.SEText.contentOf(f) : window.SEText.textOf(f).then((text) => ({ text, images: [], skipped: 0 }))).then(async (r) => {
+            if (r.text.length > FILE_MAX) return onBad(f.name + ' — 뽑은 글이 너무 깁니다(2MB 까지) — 나눠서 넣어 주세요');
+            onRead(f.name.replace(DOC_EXT, '').replace(PIC_EXT, ''), r.text, await picsOf(r.images), r.skipped || 0);
           }).catch((err) => onBad(f.name + ' — ' + String((err && err.message) || err)));
           continue;
         }
         if (/\.hwpx?$/i.test(f.name)) { onBad(f.name + ' — 한글(hwp) 파일은 읽지 못합니다. 한글에서 docx · pdf · txt 로 저장해 넣어 주세요'); continue; }
         if (!TEXT_EXT.test(f.name) && !/^text\//.test(f.type || '')) { onBad(f.name + ' — txt · md · docx · pdf 파일만 넣을 수 있습니다'); continue; }
-        if (f.size > FILE_MAX) { onBad(f.name + ' — 파일이 너무 큽니다(2MB 까지)'); continue; }
+        // 그림을 담은 md(개인판)는 파일이 클 수 있다 — 그림을 꺼낸 뒤의 글로 2MB 를 잰다
+        const mdPics = pics && /\.(md|markdown)$/i.test(f.name);
+        if (f.size > (mdPics ? DOC_MAX : FILE_MAX)) { onBad(f.name + ' — 파일이 너무 큽니다(' + (mdPics ? '20MB' : '2MB') + ' 까지)'); continue; }
         const rd = new FileReader();
         rd.onload = () => {
           const t = String(rd.result || '');
           // 깨진 글자(�)가 많거나 NUL 이 있으면 글 파일이 아니다(인코딩이 다르거나 바이너리)
           if (t.includes('\u0000') || (t.match(/\uFFFD/g) || []).length > Math.max(3, t.length / 100)) return onBad(f.name + ' — 글로 읽을 수 없습니다(UTF-8 txt · md 로 저장해 주세요)');
-          onRead(f.name, t);
+          // md 속에 담겨 온 그림(data:)은 꺼내 그림으로(개인판)
+          if (!mdPics || !window.SEText || !window.SEText.mdContent) return onRead(f.name, t);
+          const md = window.SEText.mdContent(t);
+          if (md.text.length > FILE_MAX) return onBad(f.name + ' — 글이 너무 깁니다(그림을 빼고 2MB 까지) — 나눠서 넣어 주세요');
+          picsOf(md.images).then((imgs) => onRead(f.name, md.text, imgs, 0)).catch((err) => onBad(f.name + ' — ' + String((err && err.message) || err)));
         };
         rd.readAsText(f, 'utf-8');
       }
@@ -1834,7 +1849,12 @@ function threadPanel(close) {
 const NEW_PROJECT_KEYS = ['n-name', 'n-form', 'n-outline', 'n-length', 'n-standard', 'n-request', 'n-mat'];
 
 function newProjectPanel(close) {
-  const add = (name, text) => { if (String(text || '').trim()) { S.draft.push({ name: name || firstLine(text), text }); render(); } };
+  const add = (name, text, images, skipped) => {
+    if (!String(text || '').trim()) return;
+    S.draft.push({ name: name || firstLine(text), text, ...(images && images.length ? { images } : {}) });
+    if (skipped) S.open.note = name + ' — 그림 ' + skipped + '장은 읽지 못해 뺐습니다';
+    render();
+  };
   S.askOpen = {
     label: '만들고 닫기',
     dirty: () => typedAny(...NEW_PROJECT_KEYS) || S.draft.length > 0,
@@ -1857,7 +1877,7 @@ function newProjectPanel(close) {
       h('div', null,
         h('div', { class: 'lab', text: '자료' }),
         S.draft.map((m, i) => h('div', { class: 'mat' },
-          h('div', { class: 'name', text: m.name }),
+          h('div', { class: 'name', text: m.name + (m.images && m.images.length ? ' · 그림 ' + m.images.length + '장' : '') }),
           h('button', { class: 'btn-text red', text: '삭제', onclick: () => { S.draft.splice(i, 1); render(); } }))),
         area('n-mat', '자료'),
         h('div', { class: 'line', style: 'margin-top:8px' },
@@ -1959,10 +1979,15 @@ function newDocPanel(close) {
         h('button', {
           class: 'btn', text: '생성', onclick: makeDoc,
         }),
-        fileButton(async (name, text) => {
+        fileButton(async (name, text, images, skipped) => {
           let r = null;
-          try { r = await api('doc.create', { title: name.replace(/\.[^.]+$/, ''), body: text }); } catch { r = null; }
-          if (r && r.ok) { S.open = { type: 'doc', id: r.id }; render(); return; }
+          try { r = await api('doc.create', { title: name.replace(/\.[^.]+$/, ''), body: text, ...(images && images.length ? { images } : {}) }); } catch { r = null; }
+          if (r && r.ok) {
+            S.open = { type: 'doc', id: r.id };
+            if (skipped) S.open.err = '그림 ' + skipped + '장은 읽지 못해 뺐습니다';
+            render();
+            return;
+          }
           // 만들지 못했으면 말없이 지나가지 않는다
           S.open.err = '파일로 문서를 만들지 못했습니다 — ' + ((r && r.error) || '연결을 확인해 주세요'); render();
         }))));

@@ -385,7 +385,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     && src(join(ROOT, 'web', 'login.js')).includes("q.get('invite')") && src(join(ROOT, 'web', 'login.js')).includes("q.get('reset')"));
   // 2026-10-07: docx · pdf 도 받는다(브라우저에서 글만 뽑아 — 뽑은 글도 2MB 까지)
   ok('화면은 txt · md(2MB) · docx · pdf(20MB, 뽑은 글 2MB)만 고른다', src(join(ROOT, 'web', 'app.js')).includes("accept: '.txt,.md,.markdown,.text,.docx,.pdf,text/plain,text/markdown,application/pdf'")
-    && src(join(ROOT, 'web', 'app.js')).includes('const FILE_MAX = 2 * 1024 * 1024;') && src(join(ROOT, 'web', 'app.js')).includes('if (t.length > FILE_MAX)'));
+    // 2026-10-13: 뽑은 글을 재는 자리가 그림과 함께 뽑는 길(r.text)로 옮겨 갔다(DESIGN §6-9) — 같은 2MB 를 새 자리에서 본다
+    && src(join(ROOT, 'web', 'app.js')).includes('const FILE_MAX = 2 * 1024 * 1024;') && src(join(ROOT, 'web', 'app.js')).includes('if (r.text.length > FILE_MAX)'));
 
   // 작품 통째로 — 내려받은 파일을 가져오면 새 작품(새 id)으로 문서 · 판 · 참조 · 논의가 그대로
   const dlp = await fetch(base + '/api/download?pid=' + pid + '&kind=project&id=');
@@ -4271,6 +4272,70 @@ process.stdin.on('end', () => {
   ok('화면이 글 뽑기를 app.js 앞에 싣는다', idx.indexOf('textfile.js') > 0 && idx.indexOf('textfile.js') < idx.indexOf('app.js'));
   const appSrc = src(join(ROOT, 'web', 'app.js'));
   ok('[파일 선택]이 docx · pdf 를 받고 hwp 는 까닭을 말한다', /accept: '[^']*\.docx,\.pdf/.test(appSrc) && /한글\(hwp\) 파일은 읽지 못합니다/.test(appSrc));
+
+  // ---- 파일 속 그림 꺼내기(DESIGN §6-9) — docx · pdf · md · 그림 파일
+  tctx.CompressionStream = CompressionStream; tctx.atob = atob; tctx.Set = Set; tctx.Promise = Promise;
+  const { inflateSync } = await import('node:zlib');
+  // 우리가 만든 PNG 를 다시 풀어 화소를 본다(거르개 0 만 쓰므로 행 앞 바이트만 뗀다)
+  const pngPixels = (u8) => {
+    const b = Buffer.from(u8); let at = 8; const idat = []; let w = 0, h = 0, type = -1;
+    while (at < b.length) { const len = b.readUInt32BE(at); const t = b.toString('latin1', at + 4, at + 8); const d = b.subarray(at + 8, at + 8 + len); if (t === 'IHDR') { w = d.readUInt32BE(0); h = d.readUInt32BE(4); type = d[9]; } if (t === 'IDAT') idat.push(d); at += 12 + len; }
+    const raw = inflateSync(Buffer.concat(idat)); const ch = { 0: 1, 2: 3, 4: 2, 6: 4 }[type]; const row = w * ch; const px = Buffer.alloc(row * h);
+    for (let y = 0; y < h; y++) { if (raw[y * (row + 1)] !== 0) return null; raw.copy(px, y * row, y * (row + 1) + 1, y * (row + 1) + 1 + row); }
+    return { w, h, type, px };
+  };
+  const png = tinyPng([10, 200, 30]);
+  const zipBin = zipOf;   // Buffer 도 그대로 받는다(Buffer.from 이 그대로 베낀다)
+  const docxPic = zipBin([['[Content_Types].xml', '<x/>'],
+    ['word/document.xml', '<w:document><w:body><w:p><w:r><w:t>앞 문단</w:t></w:r></w:p><w:p><w:r><w:drawing><wp:inline><wp:docPr id="1" name="그림 1" descr="마을 &amp; 지도"/><a:graphic><a:blip r:embed="rId5"/></a:graphic></wp:inline></w:drawing></w:r></w:p><w:p><w:r><w:t>뒤 문단</w:t></w:r><w:r><w:pict><v:imagedata r:id="rId6"/></w:pict></w:r></w:p></w:body></w:document>'],
+    ['word/_rels/document.xml.rels', '<Relationships><Relationship Id="rId5" Type="image" Target="media/image1.png"/><Relationship Id="rId6" Type="image" Target="media/image2.emf"/><Relationship Id="rId9" Target="https://x" TargetMode="External"/></Relationships>'],
+    ['word/media/image1.png', png], ['word/media/image2.emf', Buffer.from('EMF not a picture')]]);
+  const dc = await T.contentOf({ name: '안내.docx', arrayBuffer: async () => docxPic.buffer.slice(docxPic.byteOffset, docxPic.byteOffset + docxPic.byteLength) });
+  ok('**docx — 본문 속 그림을 놓인 자리에 · 그림 설명으로 · 못 읽는 꼴(emf)은 세어 뺀다**', dc.text === '앞 문단\n![마을 & 지도](img:k1)\n뒤 문단' && dc.images.length === 1 && dc.images[0].mime === 'image/png'
+    && Buffer.from(dc.images[0].bytes).equals(png) && dc.skipped === 1, JSON.stringify({ text: dc.text, n: dc.images.length, skipped: dc.skipped }));
+  eq('docx 글만 뽑는 길(textOf · 온라인판)은 그대로 — 그림 자리를 넣지 않는다', await T.docxText(docxPic), '앞 문단\n\n뒤 문단');
+  // pdf — JPEG 그대로 · 8비트 RGB(예측자 Sub)를 PNG 로 · 투명도(SMask) · 색 목록(Indexed)은 뺀다 · 16px 아래 조각은 그림이 아니다
+  const W = 16, H = 16;
+  const rgb = Buffer.alloc(W * H * 3); for (let i = 0; i < W * H; i++) { rgb[i * 3] = i % 256; rgb[i * 3 + 1] = (i * 7) % 256; rgb[i * 3 + 2] = 99; }
+  const subRows = Buffer.alloc((W * 3 + 1) * H);
+  for (let y = 0; y < H; y++) { subRows[y * (W * 3 + 1)] = 1; for (let x = 0; x < W * 3; x++) subRows[y * (W * 3 + 1) + 1 + x] = (rgb[y * W * 3 + x] - (x >= 3 ? rgb[y * W * 3 + x - 3] : 0)) & 0xff; }
+  const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70, 0, 1, 1, 0, 0xff, 0xd9]);
+  const pdfPics = (() => {
+    const ch = []; const add = (x) => ch.push(Buffer.isBuffer(x) ? x : Buffer.from(x, 'latin1'));
+    const stream = (n, dict, body) => { add(n + ' 0 obj << ' + dict + ' /Length ' + body.length + ' >>\nstream\n'); add(body); add('\nendstream endobj\n'); };
+    add('%PDF-1.5\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n');
+    add('2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n');
+    add('3 0 obj << /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /Font << /F2 7 0 R >> /XObject << /J 10 0 R /R 11 0 R /X 12 0 R /T 13 0 R >> >> >> endobj\n');
+    stream(4, '', Buffer.from('BT /F2 10 Tf 72 700 Td (before) Tj ET q 1 0 0 1 0 0 cm /J Do Q /T Do /R Do /J Do /X Do BT /F2 10 Tf 72 600 Td (after) Tj ET', 'latin1'));
+    add('7 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n');
+    stream(10, '/Type /XObject /Subtype /Image /Width 20 /Height 20 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode', jpg);
+    stream(11, '/Type /XObject /Subtype /Image /Width 16 /Height 16 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /Columns 16 >> /SMask 14 0 R', deflateSync(subRows));
+    stream(12, '/Type /XObject /Subtype /Image /Width 16 /Height 16 /ColorSpace [/Indexed /DeviceRGB 1 <000000FFFFFF>] /BitsPerComponent 8 /Filter /FlateDecode', deflateSync(Buffer.alloc(256)));
+    stream(13, '/Type /XObject /Subtype /Image /Width 8 /Height 8 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode', deflateSync(Buffer.alloc(64)));
+    stream(14, '/Type /XObject /Subtype /Image /Width 16 /Height 16 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode', deflateSync(Buffer.alloc(256, 128)));
+    add('trailer << /Root 1 0 R >>\n%%EOF\n');
+    return new Uint8Array(Buffer.concat(ch));
+  })();
+  const pc = await T.contentOf({ name: '책.pdf', arrayBuffer: async () => pdfPics.buffer.slice(pdfPics.byteOffset, pdfPics.byteOffset + pdfPics.byteLength) });
+  const rgba = pc.images[1] ? pngPixels(pc.images[1].bytes) : null;
+  ok('**pdf — 그려진 차례대로 그 자리에 · 같은 그림은 한 번 · JPEG 그대로**', pc.text === 'before\n\n![그림 1](img:k1)\n\n![그림 2](img:k2)\n\nafter' && pc.images.length === 2
+    && pc.images[0].mime === 'image/jpeg' && Buffer.from(pc.images[0].bytes).equals(jpg), JSON.stringify(pc.text));
+  ok('**pdf — 8비트 RGB 는 예측자를 풀어 PNG 로 · 투명도(SMask)를 RGBA 로**', !!rgba && rgba.w === 16 && rgba.h === 16 && rgba.type === 6
+    && [...Array(W * H).keys()].every((i) => rgba.px[i * 4] === rgb[i * 3] && rgba.px[i * 4 + 1] === rgb[i * 3 + 1] && rgba.px[i * 4 + 2] === 99 && rgba.px[i * 4 + 3] === 128));
+  ok('pdf — 색 목록 꼴은 세어 빼고, 16px 아래 조각은 그림으로 치지 않는다', pc.skipped === 1);
+  eq('pdf 글만 뽑는 길은 그대로(그림 자리 없음)', await T.pdfText(pdfPics), 'before\nafter');
+  // md 속 data: 그림 · 그림 파일
+  const md = T.mdContent('앞 ![표](data:image/png;base64,' + png.toString('base64') + ') ![가짜](data:image/png;base64,QUJDREVGR0hJSktM) 뒤');
+  ok('md — 담겨 온 그림(data:)을 꺼내고, 꼴이 맞지 않는 것은 글 그대로', md.text === '앞 ![표](img:k1) ![가짜](data:image/png;base64,QUJDREVGR0hJSktM) 뒤' && md.images.length === 1 && Buffer.from(md.images[0].bytes).equals(png));
+  const pf = await T.contentOf({ name: '갈무리.png', arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength) });
+  ok('그림 파일 — 그 그림 한 장짜리 글', pf.text === '![갈무리](img:k1)' && pf.images.length === 1 && pf.images[0].mime === 'image/png');
+  let whyPic = ''; try { await T.contentOf({ name: '가짜.png', arrayBuffer: async () => new TextEncoder().encode('<svg></svg> not png').buffer }); } catch (e) { whyPic = e.message; }
+  ok('이름만 그림인 파일은 까닭을 말한다', /png · jpg · gif · webp/.test(whyPic));
+  // 화면 — [파일 선택]
+  ok('[파일 선택] — 개인판은 그림 파일도 받고 · 그림을 꺼내 줄여 글과 함께 넘긴다', appSrc.includes("(pics ? ',.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp' : '')")
+    && appSrc.includes('window.SEText.contentOf(f)') && appSrc.includes('await picsOf(r.images), r.skipped || 0') && appSrc.includes('window.SEText.mdContent(t)'));
+  ok('새 작품 자료 · 파일로 만드는 문서가 그림을 함께 보낸다', appSrc.includes('...(images && images.length ? { images } : {})') && appSrc.includes("api('doc.create', { title: name.replace(/\\.[^.]+$/, ''), body: text, ...(images && images.length ? { images } : {}) })")
+    && appSrc.includes("'그림 ' + skipped + '장은 읽지 못해 뺐습니다'"));
 }
 
 // ---------------------------------------------------------------- 호스팅 실행 — 포트 · 주소 · 허용 호스트 · 출입 열쇠

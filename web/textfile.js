@@ -4,8 +4,10 @@
 // docx: zip 안의 word/document.xml — 문단(w:p)마다 한 줄, w:t 를 잇고 w:tab · w:br 을 살린다.
 // pdf : 페이지 차례(카탈로그 → Pages 나무)대로 내용 흐름을 읽어 Tj · TJ · ' · " 의 글을 모은다.
 //       한글 PDF 는 거의 CID 글꼴이라 글자 번호를 ToUnicode CMap 으로 바꿔야 한다(bfchar · bfrange).
-//       압축(FlateDecode) · 객체 흐름(ObjStm, PDF 1.5+)을 푼다. 암호가 걸린 파일 · 스캔(그림)만 있는 파일은 못 뽑는다.
+//       압축(FlateDecode) · 객체 흐름(ObjStm, PDF 1.5+)을 푼다. 암호가 걸린 파일 · 스캔(그림)만 있는 파일은 글로는 못 뽑는다.
 // hwp 는 다루지 않는다(구조가 닫혀 있다) — 한글에서 «다른 이름으로 저장 → docx · pdf · txt» 를 안내한다.
+// 개인판은 그림도 꺼낸다(contentOf · mdContent — DESIGN §6-9): docx 본문 속 그림 · pdf 에 그려진 그림 · md 속 data: 그림 · 그림 파일.
+// 그림은 브라우저에 있다가 글과 함께 서버로 간다(글 속 자리는 임시 열쇠 img:k1 — 서버가 그림 id 로 바꾼다).
 
 (function (root) {
   'use strict';
@@ -53,20 +55,62 @@
   }
   const unxml = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
     .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d))).replace(/&amp;/g, '&');
-  async function docxText(u8) {
+  // 그림(DESIGN §6-9) — 받는 꼴은 png · jpeg · gif · webp. 앞 바이트로 가린다(서버도 다시 가린다)
+  function sniff(u8) {
+    if (!u8 || u8.length < 12) return '';
+    if (u8[0] === 0x89 && u8[1] === 0x50 && u8[2] === 0x4e && u8[3] === 0x47) return 'image/png';
+    if (u8[0] === 0xff && u8[1] === 0xd8 && u8[2] === 0xff) return 'image/jpeg';
+    if (u8[0] === 0x47 && u8[1] === 0x49 && u8[2] === 0x46 && u8[3] === 0x38) return 'image/gif';
+    if (latin1(u8.subarray(0, 4)) === 'RIFF' && latin1(u8.subarray(8, 12)) === 'WEBP') return 'image/webp';
+    return '';
+  }
+  // 글 속 그림 자리 — 임시 열쇠(k1 …). 서버가 받아 둔 그림 id 로 바꾼다
+  const picRef = (alt, key) => '![' + String(alt || '그림').replace(/[[\]\n]/g, ' ').trim() + '](img:' + key + ')';
+
+  // opts.images 가 참이면 본문 속 그림(a:blip · v:imagedata)을 놓인 자리에 꺼낸다 — 그림 설명(docPr descr)이 있으면 그것을 설명으로
+  async function docxContent(u8, opts = {}) {
     const xmlBytes = await zipEntry(u8, 'word/document.xml');
     if (!xmlBytes) throw new Error('docx 안에 본문(word/document.xml)이 없습니다');
     const xml = new TextDecoder().decode(xmlBytes);
     const body = (xml.match(/<w:body[\s\S]*<\/w:body>/) || [xml])[0];
     const paras = body.match(/<w:p[\s>][\s\S]*?<\/w:p>|<w:p\/>/g) || [];
-    return paras.map((p) => {
+    const rels = new Map();
+    if (opts.images) {
+      const rb = await zipEntry(u8, 'word/_rels/document.xml.rels');
+      for (const r of (rb ? new TextDecoder().decode(rb) : '').match(/<Relationship\b[^>]*>/g) || []) {
+        const id = (/\bId="([^"]+)"/.exec(r) || [])[1], target = (/\bTarget="([^"]+)"/.exec(r) || [])[1];
+        if (id && target && !/TargetMode="External"/.test(r)) rels.set(id, target.startsWith('/') ? target.slice(1) : 'word/' + target);
+      }
+    }
+    const images = []; let skipped = 0;
+    const out = [];
+    for (const p of paras) {
       let t = '';
-      const re = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>|<w:tab\/>|<w:br\/>|<w:cr\/>/g;
+      let alt = '';
+      let hadPic = false;
+      const re = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>|<w:tab\/>|<w:br\/>|<w:cr\/>|<wp:docPr\b([^>]*)>|<a:blip\b[^>]*\br:embed="([^"]+)"|<v:imagedata\b[^>]*\br:id="([^"]+)"/g;
       let m;
-      while ((m = re.exec(p))) t += m[1] != null ? unxml(m[1]) : m[0] === '<w:tab/>' ? '\t' : '\n';
-      return t;
-    }).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+      while ((m = re.exec(p))) {
+        if (m[1] != null) t += unxml(m[1]);
+        else if (m[2] != null) alt = unxml((/\bdescr="([^"]*)"/.exec(m[2]) || /\btitle="([^"]*)"/.exec(m[2]) || [])[1] || '');
+        else if (m[3] != null || m[4] != null) {
+          if (!opts.images) continue;
+          const path = rels.get(m[3] != null ? m[3] : m[4]);
+          const bytes = path ? await zipEntry(u8, path) : null;
+          const mime = bytes ? sniff(bytes) : '';
+          if (!mime) { skipped++; continue; }   // emf · wmf · tiff 따위
+          const key = 'k' + (images.length + 1);
+          images.push({ key, name: alt || '그림 ' + (images.length + 1), mime, bytes: new Uint8Array(bytes) });
+          t += (t && !t.endsWith('\n') ? '\n' : '') + picRef(alt || '그림 ' + images.length, key) + '\n';
+          alt = '';
+          hadPic = true;
+        } else t += m[0] === '<w:tab/>' ? '\t' : '\n';
+      }
+      out.push(hadPic ? t.replace(/\n$/, '') : t);   // 그림 뒤에 붙인 줄바꿈만 걷는다(글만 뽑는 길은 지금 그대로)
+    }
+    return { text: out.join('\n').replace(/\n{3,}/g, '\n\n').trim(), images, skipped };
   }
+  async function docxText(u8) { return (await docxContent(u8)).text; }
 
   // ---------------------------------------------------------------- pdf
   // 낱말 자르기 — 이름 · 수 · 글줄 · 16진 글줄 · 배열 · 사전 · 연산자
@@ -130,7 +174,50 @@
     return null;
   }
 
-  async function pdfText(u8) {
+  // ---------------------------------------------------------------- pdf 의 그림(DESIGN §6-9)
+  // JPEG(DCTDecode)은 그대로, 8비트 회색 · RGB(FlateDecode — PNG 예측자 포함, SMask 투명도 포함)는 PNG 로 다시 싼다.
+  // 그 밖의 꼴(색 목록 · CMYK · 16비트 · JPX · 팩스 꼴)은 빼고 수를 센다. 16px 아래 조각(꾸밈)은 그림으로 치지 않는다.
+  const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(u8) { let c = 0xffffffff; for (let i = 0; i < u8.length; i++) c = CRC[(c ^ u8[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+  async function deflate(u8) {
+    if (typeof CompressionStream === 'undefined') throw new Error('이 브라우저는 압축을 할 수 없습니다');
+    return new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+  }
+  // PNG 예측자(행마다 앞에 거르개 바이트)를 풀어 날 화소로
+  function unpredict(data, w, bpp) {
+    const row = w * bpp, h = Math.floor(data.length / (row + 1));
+    const out = new Uint8Array(row * h);
+    for (let y = 0; y < h; y++) {
+      const f = data[y * (row + 1)], src = y * (row + 1) + 1, at = y * row;
+      for (let x = 0; x < row; x++) {
+        const a = x >= bpp ? out[at + x - bpp] : 0, b = y ? out[at - row + x] : 0, c = x >= bpp && y ? out[at - row + x - bpp] : 0;
+        const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+        const pred = f === 1 ? a : f === 2 ? b : f === 3 ? (a + b) >> 1 : f === 4 ? (pa <= pb && pa <= pc ? a : pb <= pc ? b : c) : 0;
+        out[at + x] = (data[src + x] + pred) & 0xff;
+      }
+    }
+    return out;
+  }
+  async function pngOf(w, h, chans, px) {
+    const type = chans === 1 ? 0 : chans === 2 ? 4 : chans === 3 ? 2 : 6;
+    const row = w * chans;
+    const raw = new Uint8Array((row + 1) * h);
+    for (let y = 0; y < h; y++) raw.set(px.subarray(y * row, y * row + row), y * (row + 1) + 1);
+    const chunk = (name, data) => {
+      const td = new Uint8Array(4 + data.length); for (let i = 0; i < 4; i++) td[i] = name.charCodeAt(i); td.set(data, 4);
+      const o = new Uint8Array(12 + data.length); const dv = new DataView(o.buffer);
+      dv.setUint32(0, data.length); o.set(td, 4); dv.setUint32(8 + data.length, crc32(td));
+      return o;
+    };
+    const ihdr = new Uint8Array(13); const dv = new DataView(ihdr.buffer); dv.setUint32(0, w); dv.setUint32(4, h); ihdr[8] = 8; ihdr[9] = type;
+    const parts = [new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', await deflate(raw)), chunk('IEND', new Uint8Array(0))];
+    const out = new Uint8Array(parts.reduce((n, x) => n + x.length, 0));
+    let at = 0; for (const x of parts) { out.set(x, at); at += x.length; }
+    return out;
+  }
+
+  async function pdfText(u8) { return (await pdfContent(u8)).text; }
+  async function pdfContent(u8, opts = {}) {
     const s = latin1(u8);
     if (!/^%PDF-/.test(s.slice(0, 1024).trimStart())) throw new Error('pdf 파일이 아닙니다');
     if (/\/Encrypt\s/.test(s)) throw new Error('암호가 걸린 PDF 라 읽을 수 없습니다');
@@ -181,6 +268,45 @@
     }
     const get = (v) => (v && typeof v === 'object' && 'ref' in v ? (objs.get(v.ref) || {}).val : v);
     const objOf = (v) => (v && typeof v === 'object' && 'ref' in v ? objs.get(v.ref) : null);
+
+    // 그림 한 장 — XObject(Image) → { mime, bytes } 또는 null(읽지 못하는 꼴)
+    const comps = (cs) => {
+      const c = get(cs);
+      const n = c && c.name ? c.name : Array.isArray(c) && c[0] ? c[0].name : '';
+      if (n === 'DeviceRGB' || n === 'CalRGB') return 3;
+      if (n === 'DeviceGray' || n === 'CalGray') return 1;
+      if (n === 'ICCBased' && Array.isArray(c)) { const icc = get(c[1]); const k = icc && icc.N; return k === 1 || k === 3 ? k : 0; }
+      return 0;
+    };
+    async function pixels(o, chans) {
+      const v = o.val;
+      if (!o.raw || names(v.Filter).join() !== 'FlateDecode' || v.BitsPerComponent !== 8) return null;
+      let data = await inflateLoose(o.raw);
+      const dp = get(v.DecodeParms) || {};
+      if (dp.Predictor >= 10) data = unpredict(data, v.Width, chans);
+      else if (dp.Predictor && dp.Predictor !== 1) return null;
+      return data.length >= v.Width * v.Height * chans ? data : null;
+    }
+    async function pdfImage(o) {
+      const v = o && o.val;
+      if (!v || !o.raw) return null;
+      const f = names(v.Filter);
+      if (f.length === 1 && f[0] === 'DCTDecode') { const b = new Uint8Array(o.raw); return sniff(b) === 'image/jpeg' ? { mime: 'image/jpeg', bytes: b } : null; }
+      const chans = comps(v.ColorSpace);
+      if (!chans || v.ImageMask) return null;
+      const px = await pixels(o, chans);
+      if (!px) return null;
+      const w = v.Width, h = v.Height;
+      const sm = objOf(v.SMask);
+      const alpha = sm && sm.val && sm.val.Width === w && sm.val.Height === h ? await pixels(sm, 1) : null;
+      if (!alpha) return { mime: 'image/png', bytes: await pngOf(w, h, chans, px.subarray(0, w * h * chans)) };
+      const mix = new Uint8Array(w * h * (chans + 1));
+      for (let i = 0; i < w * h; i++) { for (let k = 0; k < chans; k++) mix[i * (chans + 1) + k] = px[i * chans + k]; mix[i * (chans + 1) + chans] = alpha[i]; }
+      return { mime: 'image/png', bytes: await pngOf(w, h, chans + 1, mix) };
+    }
+    const images = [];
+    let skipped = 0;
+    const seenImg = new Set();   // 쪽마다 되풀이되는 같은 그림(머리 무늬 따위)은 한 번만
 
     // ToUnicode CMap → { bytes: 1|2, map: Map(code → 글) }
     const cmaps = new Map();
@@ -271,6 +397,24 @@
           if (a && a.t === 'arr') for (const x of a.v) { if (x.t === 'str') line += decode(x.v, cm); else if (x.t === 'num' && x.v < -250) line += ' '; }
         } else if (op === 'Td' || op === 'TD') { const y = stack[stack.length - 1]; if (y && y.t === 'num' && Math.abs(y.v) > 0.5) flush(); }
         else if (op === 'T*') flush();
+        else if (op === 'Do' && opts.images) {
+          // 그려지는 그림 — 놓인 차례대로 그 자리에 자리 표시를 세운다(DESIGN §6-9)
+          const nm = stack[stack.length - 1];
+          const ref = nm && nm.t === 'name' ? ((res && get(res.XObject)) || {})[nm.v] : null;
+          const o = objOf(ref);
+          const v = o && o.val;
+          if (v && v.Subtype && v.Subtype.name === 'Image' && v.Width >= 16 && v.Height >= 16 && !seenImg.has(ref.ref)) {
+            seenImg.add(ref.ref);
+            const pic = await pdfImage(o);
+            if (!pic) skipped++;
+            else {
+              flush();
+              const key = 'k' + (images.length + 1);
+              images.push({ key, name: '그림 ' + (images.length + 1), mime: pic.mime, bytes: pic.bytes });
+              out.push('', picRef('그림 ' + images.length, key), '');   // 그림은 제 문단에
+            }
+          }
+        }
         else if (op === 'Tm') { const y = stack[stack.length - 1]; if (y && y.t === 'num') { if (lastY != null && Math.abs(y.v - lastY) > 0.5) flush(); lastY = y.v; } }
         else if (op === 'ET') { /* 글 덩이 끝 — 줄은 다음 이동이 정한다 */ }
         stack.length = 0;
@@ -278,7 +422,7 @@
       flush();
       out.push('');
     }
-    return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    return { text: out.join('\n').replace(/\n{3,}/g, '\n\n').trim(), images, skipped };
   }
 
   // 파일 하나 → 글. 확장자로 고른다.
@@ -293,5 +437,38 @@
     return t;
   }
 
-  root.SEText = { textOf, docxText, pdfText };
+  // 파일 하나 → { text, images: [{ key, name, mime, bytes }], skipped } — 개인판의 [파일 선택]은 그림도 꺼낸다(DESIGN §6-9).
+  // 글 속 그림 자리는 임시 열쇠(img:k1 …) — 서버가 받아 둔 그림 id 로 바꾼다. 스캔한 PDF 도 그림으로는 들어온다.
+  const PIC_EXT = /\.(png|jpe?g|gif|webp)$/i;
+  async function contentOf(file) {
+    const name = String(file.name || '');
+    const u8 = new Uint8Array(await file.arrayBuffer());
+    if (PIC_EXT.test(name)) {
+      const mime = sniff(u8);
+      if (!mime) throw new Error('png · jpg · gif · webp 그림만 넣을 수 있습니다');
+      const alt = name.replace(PIC_EXT, '');
+      return { text: picRef(alt, 'k1'), images: [{ key: 'k1', name: alt, mime, bytes: u8 }], skipped: 0 };
+    }
+    let r;
+    if (/\.docx$/i.test(name)) r = await docxContent(u8, { images: true });
+    else if (/\.pdf$/i.test(name)) r = await pdfContent(u8, { images: true });
+    else throw new Error('docx · pdf · 그림 파일만 읽습니다');
+    if (!r.text.trim()) throw new Error(/\.pdf$/i.test(name) ? '글도 그림도 뽑지 못했습니다' : '글이 없습니다');
+    return r;
+  }
+  // 마크다운 글 속 data: 그림(다른 프로그램이 그림을 안에 담아 내보낸 md) → 임시 열쇠 자리 + 그림
+  function mdContent(text) {
+    const images = [];
+    const out = String(text || '').replace(/!\[([^\]\n]*)\]\(data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=\s]+)\)/g, (m, alt, mime, b64) => {
+      let bytes;
+      try { const bin = atob(b64.replace(/\s+/g, '')); bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); } catch { return m; }
+      if (sniff(bytes) !== mime) return m;
+      const key = 'k' + (images.length + 1);
+      images.push({ key, name: alt || '그림 ' + (images.length + 1), mime, bytes });
+      return picRef(alt || '그림 ' + images.length, key);
+    });
+    return { text: out, images, skipped: 0 };
+  }
+
+  root.SEText = { textOf, docxText, pdfText, contentOf, mdContent, sniff };
 })(typeof window !== 'undefined' ? window : globalThis);
