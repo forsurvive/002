@@ -14,6 +14,7 @@
   바깥(루프백이 아닌 주소)에 열 때만 허용 호스트와 스테이징 출입 열쇠가 선다 — §6 문지기. 설계 전체는 `docs/`.
 - 부르는 값은 이 PC 의 Claude 구독에서 나간다(`claude` 실행기). 가입·결제·관리자 페이지는 없다.
 - 클로드 호출: `-p --system-prompt-file <파일> --output-format stream-json --verbose --tools ""` + stdin 프롬프트 → 마지막 `result` 이벤트의 텍스트. (`tools/call.mjs`, 실측 검증된 계약 — 손대지 않는다.)
+  더한 것 하나(2026-10-13): 실행기의 `--help` 에 `--no-session-persistence` 가 있으면 그것도 싣는다 — 원고가 든 호출 기록을 그 PC 의 사용자 폴더에 남기지 않게(USB 로 여러 PC 를 옮겨 다닌다). 모르는 실행기에는 싣지 않는다.
 - `SE2_MOCK=1` 이면 호출 없이 가짜 응답(시험용).
 
 ### 파일

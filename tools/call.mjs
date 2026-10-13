@@ -26,7 +26,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveCliDetailed, childEnv } from './claude-cli.mjs';
+import { resolveCliDetailed, childEnv, supportsNoPersist, NO_PERSIST } from './claude-cli.mjs';
 import * as auth from './auth.mjs';
 import { fitOf } from '../ai/http.mjs';
 
@@ -112,13 +112,15 @@ function release() {
   }
 }
 
-export function buildCallArgs(systemPromptFile, model) {
+export function buildCallArgs(systemPromptFile, model, { noPersist = false } = {}) {
   const m = String(model || '').trim();
   return [
     '-p',
     '--system-prompt-file', systemPromptFile,
     '--output-format', 'stream-json', '--verbose',
     ...(m ? ['--model', m] : []),
+    // 호출 기록(원고가 든 대화)을 그 PC 에 남기지 않는다 — 실행기가 아는 깃발일 때만(claude-cli.supportsNoPersist, 2026-10-13)
+    ...(noPersist ? [NO_PERSIST] : []),
     // 남의 것이 딸려 오지 않게 — 커넥터·설정·스킬·플러그인을 걷는다(위 머리글의 실측 근거).
     '--strict-mcp-config',
     '--setting-sources', '',
@@ -241,7 +243,8 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
     writeFileSync(spFile, String(systemPrompt || ''), 'utf8');
     // cwd 를 빈 임시 폴더로 못박는다 — 그 자리의 CLAUDE.md 가 딸려 오지 않게.
     // 고른 갈래를 따른다 — 구독인지 API 키인지는 사람이 정한다(tools/auth.mjs).
-    p = spawn(cli || CLI, buildCallArgs(spFile, model), { env: childEnv(authMode ? { mode: authMode } : auth.read()), windowsHide: true, cwd: dir });
+    const noPersist = await supportsNoPersist(cli || CLI);
+    p = spawn(cli || CLI, buildCallArgs(spFile, model, { noPersist }), { env: childEnv(authMode ? { mode: authMode } : auth.read()), windowsHide: true, cwd: dir });
     LIVE.add(p);
     // 실행기가 글을 다 받기 전에 끝나면(거절 · 죽음) 쓰던 통로가 EPIPE 를 낸다 — 듣는 이가 없으면 프로세스가 통째로 죽는다.
     // 그 까닭은 실행기의 결과 · stderr 가 말해 주므로 여기서는 삼킨다.

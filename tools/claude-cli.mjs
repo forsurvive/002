@@ -140,6 +140,18 @@ export function runCli(cli, args, { input, timeoutMs = 600000, onStdout } = {}) 
   });
 }
 
+// 호출 기록을 그 PC 에 남기지 않는 깃발을 이 실행기가 아는가 — 실행기마다 한 번 `--help` 를 읽어 본다.
+// 남기면 원고가 든 대화가 그 PC 의 사용자 폴더(.claude/projects/)에 쌓인다 — USB 로 남의 PC 를 옮겨 다니면 PC 마다 원고가 남는다.
+// 옛 실행기(데스크톱 앱에 딸린 것)는 모르는 깃발이면 호출을 통째로 거절하므로 알 때만 싣는다.
+export const NO_PERSIST = '--no-session-persistence';
+const flagCache = new Map();
+export function supportsNoPersist(cli) {
+  if (!flagCache.has(cli)) {
+    flagCache.set(cli, runCli(cli, ['--help'], { timeoutMs: 30000 }).then((r) => r.code === 0 && (r.out + r.err).includes(NO_PERSIST)));
+  }
+  return flagCache.get(cli);
+}
+
 export async function authStatus(cli) {
   const r = await runCli(cli, ['auth', 'status', '--text'], { timeoutMs: 60000 });
   return { loggedIn: r.code === 0, detail: (r.out + r.err).trim() };
