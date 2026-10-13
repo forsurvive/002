@@ -25,9 +25,8 @@ export async function runUpdate({ store, call, seatOf }, pid, docId, ctx, { mode
     : (d.targetIds || []).slice();
   const refIds = (d.refIds || []).filter((id) => id !== d.id);
   const agentIds = (d.agentIds || []).slice();
-  // 자리 사람을 뗐으면(DESIGN §6-8) 걸린 사람만 쓴다 — 아무도 없으면 부르지 않는다
-  const off = !!d.seatOff;
-  if (off && !model.agentsByIds(project, agentIds, seatsOf(seatOf, project)).length) return { ok: false, error: '필수 항목 누락 — 에이전트' };
+  // 자리 사람을 뗐으면(DESIGN §6-8) 걸린 사람만 쓴다 — 아무도 없으면 자리 사람이 쓴다(에이전트는 필수 항목이 아니다, 2026-10-13)
+  const off = !!d.seatOff && model.agentsByIds(project, agentIds, seatsOf(seatOf, project)).length > 0;
   const common = {
     pid, refIds, targetIds, request: d.request || '',
     finalFirst: d.kind === 'check', keepSeat: !off, dropSeat: off, modelPick,
@@ -181,8 +180,8 @@ export async function runStage({ store, call, workflow, seatOf }, pid, { stageKe
   // 걸음의 할 일과 출력 꼴은 그대로다. 앉힌 사람이 없으면 지금처럼 자리 사람 옆에 문서에 건 사람이 더해진다(keepSeat). DESIGN §5-1
   const seated = s.position ? model.agentsByIds(project, ((project.positions || {})[s.position]) || []).map((a) => a.id) : [];
   // 문서에서 자리 사람을 뗐으면(DESIGN §6-8) 걸린 사람만 — 앉힌 사람이 있으면 그것이 먼저라 뗄 것이 없다
-  const off = !seated.length && !!d.seatOff;
-  if (off && !model.agentsByIds(project, d.agentIds || [], seatsOf(seatOf, project)).length) return { ok: false, error: '필수 항목 누락 — 에이전트' };
+  // 아무도 걸지 않았으면 자리 사람이 쓴다(에이전트는 필수 항목이 아니다, 2026-10-13)
+  const off = !seated.length && !!d.seatOff && model.agentsByIds(project, d.agentIds || [], seatsOf(seatOf, project)).length > 0;
   const r = await call({
     pid, code: s.code || 'F-UPDATE',
     refIds: (d.refIds || []).filter((id) => id !== d.id), targetIds: String(d.body || '').trim() ? [d.id] : [],

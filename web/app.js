@@ -353,7 +353,7 @@ function bootSay(text) {
 window.addEventListener('error', (e) => { if (!S.drawn) bootSay('화면을 그리지 못했습니다 — ' + String((e && e.message) || e).slice(0, 160)); });
 
 // 다시 그려도 보던 자리와 치던 자리를 지킨다 — 1.5초마다 도는 갱신이 화면을 흔들지 않도록.
-const SCROLLERS = ['.main', '#layer1 .panel-body', '#layer2 .panel-body', '#d-body', '#d-out', '#d-view'];
+const SCROLLERS = ['.main', '#layer1 .panel-body', '#layer2 .panel-body', '#d-body', '#d-out', '#d-view', '#layer1 .doc-controls'];
 
 // 읽기만 하는 작품(강사 · 열람이 허락된 기관 관리자) — 고치는 손잡이를 모두 걷고 칸은 읽기 전용으로.
 // 막는 것은 서버다(쓰기 문은 403) — 이것은 누를 수 없는 단추를 보이지 않게 하는 안내일 뿐이다.
@@ -1502,8 +1502,6 @@ function refIndex() {
 
 // 그 문서를 지으려면 무엇이 있어야 하는가 — 없으면 그 이름들을 돌려준다.
 function missingFor(d) {
-  // 자리 사람을 떼고 아무도 걸지 않았으면 쓸 사람이 없다(DESIGN §6-8) — 서버도 같은 말로 막는다
-  const noOne = !!d.seatOff && !(d.agentIds || []).length;
   // 합평회와 모순 검사는 «이번에 무엇을 보라»는 말이 있어야 선다 — 요청사항이 그 자리의 미션이다(사용자 지시).
   // 모순 검사는 거기에 더해 맞댈 것이 둘은 있어야 한다(대상 둘, 또는 대상 하나에 참조 하나).
   if (d.kind === 'check' || d.kind === 'review') {
@@ -1511,11 +1509,11 @@ function missingFor(d) {
     if (!(d.targetIds || []).length) miss.push('대상');
     else if (d.kind === 'check' && (d.targetIds || []).length + (d.refIds || []).length < 2) miss.push('대상 또는 참조');
     if (!String(d.request || '').trim()) miss.push('요청사항');
-    if (noOne) miss.push('에이전트');
     return miss.join(' · ');
   }
   const has = String(d.body || '').trim() || String(d.request || '').trim() || (d.refIds || []).length;
-  return [has ? '' : '요청사항 또는 참조', noOne ? '에이전트' : ''].filter(Boolean).join(' · ');
+  // 에이전트는 필수 항목이 아니다(2026-10-13) — 아무도 걸지 않으면 그 문서 종류의 자리 사람이 쓴다
+  return has ? '' : '요청사항 또는 참조';
 }
 
 // 작법서는 가리키기만 하는 문서다 — 본문이 갱신에 실려 오지 않으므로 열 때 한 번 받아 둔다.
@@ -1528,22 +1526,23 @@ async function fetchSrc(id) {
   render();
 }
 
-// 고치는 문서의 본문 — 글이 있고 치는 중이 아니면 «보기»(꼴대로), [고치기] 또는 보기를 누르면 치는 칸. 빈 문서는 곧바로 치는 칸.
+// 고치는 문서의 본문 — 글이 있고 치는 중이 아니면 «보기»(꼴대로), [고치기]를 눌러야 치는 칸. 빈 문서는 곧바로 치는 칸.
+// 본문을 누르는 것만으로는 고치기로 가지 않는다(사용자 지시, 2026-10-13). [보기] · [고치기]는 본문 칸 위에 늘 서고, 본문은 그 칸 안에서만 스크롤한다(.doc-body).
 function bodyBox(d, saveFields, busy = false) {
   const has = String(d.body || '').trim();
   // 생성 중에는 읽기만 — 치는 칸도 [고치기]도 없다(서버도 막는다). 끝나면 새 판이 «보기»로 선다.
   if (busy) {
     clearTyped('d-body');
-    return has ? mdView('d-view', d.body) : h('div', { class: 'md-view', style: 'color:var(--dim)', text: '생성 중입니다 — 끝나면 여기에 보입니다' });
+    return h('div', { class: 'doc-body' }, has ? mdView('d-view', d.body) : h('div', { class: 'md-view', style: 'color:var(--dim)', text: '생성 중입니다 — 끝나면 여기에 보입니다' }));
   }
   const editing = !has || (S.open && S.open.edit) || 'd-body' in S.typed;
   const toEdit = () => { S.open.edit = true; render(); const t = $('d-body'); if (t) t.focus(); };
   const toView = async () => { await saveFields(); S.open.edit = false; render(); };
-  return h('div', null,
-    has ? h('div', { class: 'line', style: 'gap:6px;margin-bottom:6px' },
+  return h('div', { class: 'doc-body' },
+    has ? h('div', { class: 'line doc-tools' },
       h('button', { class: editing ? 'btn-line' : 'btn', text: '보기', onclick: editing ? toView : null }),
       h('button', { class: editing ? 'btn' : 'btn-line', text: '고치기', onclick: editing ? null : toEdit })) : null,
-    editing ? area('d-body', BODY_HINT, d.body, { class: 'body-edit', onblur: saveFields, onpaste: pasteInto('d-body', saveFields), ondrop: pasteInto('d-body', saveFields), ondragover: dragOver }) : mdView('d-view', d.body, toEdit));
+    editing ? area('d-body', BODY_HINT, d.body, { class: 'body-edit', onblur: saveFields, onpaste: pasteInto('d-body', saveFields), ondrop: pasteInto('d-body', saveFields), ondragover: dragOver }) : mdView('d-view', d.body));
 }
 
 function docPanel(close) {
@@ -1596,7 +1595,8 @@ function docPanel(close) {
 
   S.saveOpen = closeFields;
 
-  return h('div', { class: 'panel' },
+  // 창 높이를 다 쓰는 두 칸(2026-10-13) — 위(.doc-main): 단추와 본문, 본문만 제 칸에서 스크롤 / 아래(.doc-controls): 입력란들, 늘 보인다
+  return h('div', { class: 'panel doc-panel' },
     h('div', { class: 'panel-head' },
       KIND_MARK[d.kind] ? h('span', { class: 'mark', text: KIND_MARK[d.kind] }) : null,
       textbox('d-title', '이름', d.title, { onblur: saveFields }),
@@ -1606,7 +1606,8 @@ function docPanel(close) {
       S.me ? h('button', { class: 'btn-text', text: S.open.runs ? '만든 기록 닫기' : '만든 기록', onclick: () => toggleRuns(d.id) }) : null,
       h('button', { class: 'btn-text red', text: '삭제', onclick: async () => { await api('doc.delete', { ids: [d.id] }); close(); } }),
       h('button', { class: 'x', text: '×', onclick: close })),
-    h('div', { class: 'panel-body' },
+    h('div', { class: 'panel-body doc-split' },
+      h('div', { class: 'doc-main' },
       // 지금 판을 지은 AI 가 출력 상한에 닿았다(온라인 — 서버가 truncated 를 실을 때만). 저장은 됐고, 끝이 잘렸을 수 있다.
       runsBox(),
       d.truncated && !peeking ? h('div', { class: 'notice', text: '이 글은 길이 한도에 닿아 끝이 잘렸을 수 있습니다 — 끝부분을 확인하고, 필요하면 나눠서 다시 생성하세요' }) : null,
@@ -1616,11 +1617,12 @@ function docPanel(close) {
       // 모순 검사에는 치는 칸이 없다 — 결과가 나온 뒤에만 읽는 칸이 선다(빈 칸을 세워 두면 치는 자리로 보인다).
       // 작법서는 읽는 자리다 — 치는 칸도, 지을 거리도 두지 않는다.
       // 읽는 칸(작법서 · 옛 판 · 모순 검사 결과)은 마크다운을 꼴대로 보인다. 고치는 문서는 글이 있으면 «보기»가 먼저, [고치기]로 치는 칸(2026-10-07).
-      d.src ? mdView('d-out', S.srcText && S.srcText.id === d.id ? S.srcText.text : '')
-        : peeking ? mdView('d-out', peeking.body)
+      d.src ? h('div', { class: 'doc-body' }, mdView('d-out', S.srcText && S.srcText.id === d.id ? S.srcText.text : ''))
+        : peeking ? h('div', { class: 'doc-body' }, mdView('d-out', peeking.body))
           : d.kind === 'check'
-            ? (String(d.body || '').trim() ? mdView('d-out', d.body) : null)
-            : bodyBox(d, saveFields, locked),
+            ? (String(d.body || '').trim() ? h('div', { class: 'doc-body' }, mdView('d-out', d.body)) : null)
+            : bodyBox(d, saveFields, locked)),
+      h('div', { class: 'doc-controls' },
       h('div', null, h('div', { class: 'lab', text: '카테고리' }), h('div', { class: 'line' }, catPicker(d))),
       d.src ? null : h('div', null, h('div', { class: 'lab', text: '요청사항' }), area('d-req', '요청사항', d.request, { onblur: saveFields })),
       d.src || d.kind === 'doc' ? null : refLine('대상', d.targetIds, byId, (ids) => api('doc.write', { id: d.id, targetIds: ids }), d.id),
@@ -1654,7 +1656,7 @@ function docPanel(close) {
             class: 'when', text: when(v.at) + ' · ' + v.title, style: 'cursor:pointer',
             onclick: () => { S.peek = { docId: d.id, i: v.i }; render(); },
           }),
-          h('button', { class: 'btn-text', text: '복원', onclick: () => { S.peek = null; api('doc.restoreVersion', { id: d.id, index: v.i }); } })))) : null));
+          h('button', { class: 'btn-text', text: '복원', onclick: () => { S.peek = null; api('doc.restoreVersion', { id: d.id, index: v.i }); } })))) : null)));
 }
 
 function catPicker(d) {

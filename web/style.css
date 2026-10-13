@@ -391,7 +391,24 @@ details summary:hover { opacity: .7; }
 .body-edit[readonly] { background: var(--group); }
 
 /* 마크다운 보기(web/markdown.js) — 문서 창의 «보기» · 읽기 전용 칸 · 논의의 AI 답 */
-.md-view { min-height: 46vh; padding: 14px 16px; border-radius: var(--r-m); background: var(--group); overflow: auto; cursor: text; }
+.md-view { min-height: 46vh; padding: 14px 16px; border-radius: var(--r-m); background: var(--group); overflow: auto; }
+
+/* 문서 창 — 창 높이를 다 쓰는 두 칸(사용자 지시, 2026-10-13).
+   위 칸: [보기] · [고치기]가 늘 보이고 본문은 제 칸 안에서만 스크롤한다. 아래 칸: 입력란들이 늘 보인다(창이 낮으면 이 칸만 따로 스크롤). */
+.panel.doc-panel { height: 88vh; }
+.panel-body.doc-split { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
+.doc-main { flex: 1 1 0; min-height: 140px; display: flex; flex-direction: column; gap: 12px; }
+.doc-main > * { flex: none; }
+.doc-main:not(:has(.doc-body)) { flex: none; min-height: 0; }
+.doc-main:empty { display: none; }
+.doc-main > .doc-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.doc-body > .doc-tools { flex: none; gap: 6px; }
+.doc-body > .md-view, .doc-body > .body-edit { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.doc-body > .body-edit { resize: none; }
+.doc-controls { flex: none; max-height: 62%; overflow: auto; margin: 0 -22px; padding: 16px 22px 24px; border-top: 1px solid var(--line-soft); }
+.doc-controls > * + * { margin-top: 12px; }
+.doc-controls .lab { margin-bottom: 5px; }
+.doc-controls textarea { min-height: 58px; height: 58px; }
 .md { font-size: 15px; line-height: 1.75; color: var(--ink); word-break: break-word; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }

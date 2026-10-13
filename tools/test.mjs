@@ -2312,10 +2312,13 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   await post('doc.write', { pid: sp.pid, id: dc.id, request: '한 문단', seatOff: true });
   st = (await stateOf(sp.pid)).project;
   ok('doc.write {seatOff} — 상태의 문서에 실린다', st.docs.find((x) => x.id === dc.id).seatOff === true);
+  // 2026-10-13 «문서를 생성할 때 에이전트를 필수 항목으로 두지 말도록 하자» — 아무도 없으면 막지 않고 자리 사람이 쓴다(DESIGN §6-8)
+  seen.length = 0;
   await post('doc.update', { pid: sp.pid, id: dc.id });
   st = await settle(sp.pid);
   const failed = (st.jobs || []).filter((j) => j.kind === 'update' && j.status === 'failed').pop();
-  ok('자리 사람을 떼고 아무도 없으면 부르지 않는다 — «필수 항목 누락 — 에이전트»', !!failed && String(failed.error || '').includes('필수 항목 누락 — 에이전트'), JSON.stringify(failed));
+  const alone = seen.find((x) => x.key === 'F-UPDATE');
+  ok('자리 사람을 떼고 아무도 없어도 생성한다 — 그때는 자리 사람이 쓴다(에이전트는 필수 항목이 아니다)', !failed && !!alone && alone.sys.startsWith('■ 에이전트\n' + nm('F-UPDATE') + ' — '), JSON.stringify(failed || (alone && alone.sys.slice(0, 80))));
   await post('doc.write', { pid: sp.pid, id: dc.id, agentIds: ['seat:F-CONTRA', mine.id] });
   seen.length = 0;
   await post('doc.update', { pid: sp.pid, id: dc.id });
@@ -2360,7 +2363,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     && app.includes("api('doc.write', { id: d.id, seatOff: !next.includes(own), agentIds: next.filter((x) => x !== own) })") && app.includes("mark: a.id === own ? '자리' : '내장'"));
   ok('고르기 창 — 내장 사람과 만든 사람 모두(고른 것만 켜진다) · 스레드는 늘 서는 자리 사람을 숨긴다', app.includes("const builtins = S.me ? [] : (p.builtins || []).filter((a) => !hide.has(a.id));")
     && app.includes("builtins.length ? [h('div', { class: 'lab', text: '내장' }), builtins.map(row)] : null") && app.includes("['seat:F-TALK', 'seat:F-THREADDOC']"));
-  ok('아무도 없으면 화면도 «필수 항목 누락 — 에이전트»', app.includes("const noOne = !!d.seatOff && !(d.agentIds || []).length;") && app.includes("if (noOne) miss.push('에이전트');"));
+  ok('화면도 에이전트를 필수 항목으로 보지 않는다(2026-10-13)', !app.includes("miss.push('에이전트')") && !app.includes('const noOne') && !src(join(ROOT, 'core', 'generation', 'run.mjs')).includes('필수 항목 누락 — 에이전트'));
 }
 
 // ---------------------------------------------------------------- 문서의 그림 — 담고 · 보이고 · 내려받고 · 옮긴다 (DESIGN §6-9, 사용자 결정 2026-10-13)
@@ -2615,6 +2618,24 @@ function tinyPng(rgb = [220, 20, 20], w = 4, h = 4) {
   globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
+// ---------------------------------------------------------------- 문서 창 — 누르기만으로 고치지 않는다 · 단추와 입력란은 늘 보인다 (사용자 지시, 2026-10-13)
+
+{
+  const app = src(join(ROOT, 'web', 'app.js'));
+  const css = src(join(ROOT, 'web', 'style.css'));
+  const box = app.slice(app.indexOf('function bodyBox('), app.indexOf('function docPanel('));
+  ok('**본문을 누르는 것만으로는 고치기로 가지 않는다 — [고치기]를 눌러야 한다**', box.includes("mdView('d-view', d.body))") && !box.includes("mdView('d-view', d.body, toEdit)")
+    && box.includes("text: '고치기', onclick: editing ? null : toEdit") && !/\.md-view \{[^}]*cursor: text/.test(css));
+  ok('[보기] · [고치기]는 본문 칸 위에 따로 서고, 본문은 제 칸 안에서만 스크롤한다', box.includes("h('div', { class: 'doc-body' },") && box.includes("h('div', { class: 'line doc-tools' },")
+    && /\.doc-body > \.md-view, \.doc-body > \.body-edit \{[^}]*overflow: auto/.test(css) && /\.doc-body > \.doc-tools \{[^}]*flex: none/.test(css));
+  const panel = app.slice(app.indexOf('function docPanel('), app.indexOf('function catPicker('));
+  ok('문서 창은 위 칸(단추 · 본문)과 아래 칸(입력란들)으로 나뉘고 아래 칸은 줄어들지 않는다', panel.includes("class: 'panel doc-panel'") && panel.includes("h('div', { class: 'doc-main' },") && panel.includes("h('div', { class: 'doc-controls' },")
+    && /\.panel\.doc-panel \{[^}]*height: 88vh/.test(css) && /\.doc-controls \{[^}]*flex: none/.test(css) && /\.doc-main \{[^}]*flex: 1 1 0/.test(css));
+  ok('읽는 칸(작법서 · 옛 판 · 모순 검사 결과)도 위 칸에서 스크롤한다', (panel.match(/h\('div', \{ class: 'doc-body' \}, mdView\('d-out'/g) || []).length === 3);
+  ok('다시 그려도 아래 칸의 스크롤이 남는다', app.includes("'#layer1 .doc-controls'") && app.includes("'#d-view'") && app.includes("'#d-body'"));
+  ok('문서 창 반 이름이 정책 페이지의 .doc 과 겹치지 않는다', !panel.includes("class: 'panel doc'") && css.includes('.panel.doc-panel'));
+}
+
 // ---------------------------------------------------------------- 화면-서버 배선
 
 {
@@ -2643,8 +2664,8 @@ function tinyPng(rgb = [220, 20, 20], w = 4, h = 4) {
   // 모순 검사는 견주는 자리다 — 치는 칸이 없고, 맞댈 것이 둘은 있어야 한다(사용자 지시)
   ok('모순 검사에는 본문 치는 칸이 없다', /d\.kind === 'check'\s*\n?\s*\? \(String\(d\.body \|\| ''\)\.trim\(\)/.test(app));
   // 2026-10-07: 읽는 칸은 마크다운을 꼴대로 보이는 칸(mdView — 치는 칸이 아니다)으로 바뀌었다
-  ok('결과가 없으면 빈 칸도 세우지 않는다', /\.trim\(\) \? mdView\('d-out', d\.body\) : null\)/.test(app));
-  ok('결과와 옛 판은 읽는 칸으로 보인다', /peeking \? mdView\('d-out', peeking\.body\)/.test(app) && app.includes("'#d-out'") && !/h\('textarea', \{ id: 'd-out'/.test(app));
+  ok('결과가 없으면 빈 칸도 세우지 않는다', /\.trim\(\) \? (?:h\('div', \{ class: 'doc-body' \}, )?mdView\('d-out', d\.body\)\)? : null\)/.test(app));
+  ok('결과와 옛 판은 읽는 칸으로 보인다', /peeking \? (?:h\('div', \{ class: 'doc-body' \}, )?mdView\('d-out', peeking\.body\)/.test(app) && app.includes("'#d-out'") && !/h\('textarea', \{ id: 'd-out'/.test(app));
   ok('맞댈 것이 둘은 있어야 한다', app.includes("'대상 또는 참조'") && /\(d\.targetIds \|\| \[\]\)\.length \+ \(d\.refIds \|\| \[\]\)\.length < 2/.test(app));
   // 합평회·모순 검사는 요청사항이 그 자리의 미션이다(사용자 지시, 2026-09-20)
   ok('검사·합평은 요청사항이 있어야 선다', /d\.kind === 'check' \|\| d\.kind === 'review'[\s\S]{0,400}miss\.push\('요청사항'\)/.test(app));
@@ -2656,7 +2677,7 @@ function tinyPng(rgb = [220, 20, 20], w = 4, h = 4) {
   ok('설정에 계량어 토글이 선다', app.includes("text: '계량어 금지'") && /noCount: !p\.noCount/.test(app));
   ok('그 누름은 mousedown 으로 받는다', /onmousedown: \(\) => api\('project\.spec', \{ noCount/.test(app));
   // 작법서 창은 읽는 자리다
-  ok('작법서는 읽는 칸만 둔다', /d\.src \? mdView\('d-out'/.test(app) && /d\.src \? null : refLine\('참조'/.test(app));
+  ok('작법서는 읽는 칸만 둔다', /d\.src \? (?:h\('div', \{ class: 'doc-body' \}, )?mdView\('d-out'/.test(app) && /d\.src \? null : refLine\('참조'/.test(app));
   ok('작법서 글은 열 때 받아 온다', /function fetchSrc\(/.test(app) && /if \(d\.src\) fetchSrc\(d\.id\)/.test(app));
   // 2026-10-13 에이전트 칸을 합치며 «지음» 표가 칩(mark)이 되었다 — 같은 표를 새 모양에서 본다
   ok('지어진 자리에 표가 선다', app.includes("pr.made ? h('span', { class: 'mark', text: '지음' })"));
