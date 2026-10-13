@@ -12,7 +12,7 @@ import * as state from './state.mjs';
 import * as model from './model.mjs';
 import * as jobs from './jobs.mjs';
 import * as engine from './engine.mjs';
-import { prepareAgents, agentsReady, runStudy, STUDY_TITLE } from './agents.mjs';
+import { prepareAgents, agentsReady, runStudy, STUDY_TITLE, studyNote } from './agents.mjs';
 import { killAllCalls, lastLimit, useQueueHook } from './call.mjs';
 import * as auth from './auth.mjs';
 import { createOps } from './ops.mjs';
@@ -54,7 +54,7 @@ async function prepareThenStudy(pid, ctx, request = '') {
   }
   // «자료 분석» 문서가 이미 있으면 또 만들지 않는다(종류만 다시 가린 때 — core prepareThenStudy 와 같은 규칙)
   if ((state.get(pid) || { docs: [] }).docs.some((d) => d.title === STUDY_TITLE)) return { ok: true, skipped: true };
-  return runStudy(pid, ctx, request);   // 이어서 자료를 한 번 읽는다
+  return runStudy(pid, ctx, request, { note: studyNote(state.get(pid)) });   // 이어서 자료를 한 번 읽는다 — 작업 줄에 «자료 분석 — 에이전트 준비 끝»
 }
 // 작품마다 제 용도의 단계 템플릿(이야기 만들기 · 전자책) — 적혀 있지 않은 작품은 이야기 만들기(지금까지의 모든 작품)
 const workflowOf = async (pid) => baseTemplate(templateKeyOf(state.get(pid)));
@@ -80,6 +80,8 @@ function importProject(raw) {
   const p = normalizeProject({ ...structuredClone(raw), id: newId('p').replace(/[^A-Za-z0-9_-]/g, '') });
   if (!p) return { error: '작품 파일이 아닙니다' };
   p.jobs = [];
+  // 옮겨 온 자동 실행은 «중지됨»으로 연다 — 작업은 따라오지 않으므로 «진행 중»인 채로 두면 아무것도 돌지 않는데 도는 것처럼 보인다
+  if (p.rail && (p.rail.status === 'running' || p.rail.status === 'waiting')) p.rail = { ...p.rail, status: 'stopped', jobId: '', point: '', why: '' };
   saveProject(p);
   return { pid: p.id };
 }

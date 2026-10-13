@@ -118,7 +118,9 @@ function release() {
   }
 }
 
-export function buildCallArgs(systemPromptFile, model, { noPersist = false } = {}) {
+// 작품의 «웹 검색»(DESIGN §6-6)을 켜면 도구를 모두 닫는 대신 웹 검색 둘만 연다 — 묻지 않고 쓰게 허락까지(-p 에서는 묻지 못한다)
+export const WEB_TOOLS = 'WebSearch,WebFetch';
+export function buildCallArgs(systemPromptFile, model, { noPersist = false, webSearch = false } = {}) {
   const m = String(model || '').trim();
   return [
     '-p',
@@ -130,7 +132,8 @@ export function buildCallArgs(systemPromptFile, model, { noPersist = false } = {
     // 남의 것이 딸려 오지 않게 — 커넥터·설정·스킬·플러그인을 걷는다(위 머리글의 실측 근거).
     '--strict-mcp-config',
     '--setting-sources', '',
-    '--tools', '',            // 값을 여럿 받는 깃발이라 반드시 맨 뒤에 둔다
+    ...(webSearch ? ['--allowedTools', WEB_TOOLS] : []),
+    '--tools', webSearch ? WEB_TOOLS : '',   // 값을 여럿 받는 깃발이라 반드시 맨 뒤에 둔다
   ];
 }
 
@@ -179,9 +182,9 @@ export function classify({ limitInfo = null, finalResult = null, stderr = '', ab
 // 가짜 응답 — 시험이 자동 집필을 끝까지 돌 수 있도록 단계별 구조를 흉내낸다.
 // globalThis.__SE2_MOCK_FN 을 두면 시험이 단계별 응답을 직접 정한다.
 // 문자열이 아니라 { text, reason, limit, finishReason } 를 돌려주면 실패 · 한도 · 길이 한도(length — 이어 쓰기)까지 흉내낼 수 있다.
-export function mockResponse({ mockKey, prompt, systemPrompt, model }) {
+export function mockResponse({ mockKey, prompt, systemPrompt, model, webSearch = false }) {
   if (typeof globalThis.__SE2_MOCK_FN === 'function') {
-    const r = globalThis.__SE2_MOCK_FN({ mockKey, prompt, systemPrompt, model });
+    const r = globalThis.__SE2_MOCK_FN({ mockKey, prompt, systemPrompt, model, webSearch });
     if (typeof r === 'string') return r;
     if (r && typeof r === 'object') return r;
   }
@@ -194,7 +197,7 @@ export function mockResponse({ mockKey, prompt, systemPrompt, model }) {
 
 // 돌려주는 값: { ok, text, error, reason, elapsedMs, usage, limit, authSource }
 // authMode · cli 는 온라인판의 «운영자 구독» 길이 넘긴다(ai/subscription.mjs) — 개인판은 넘기지 않는다(그 PC 의 auth.json · 탐색한 실행기를 따른다).
-export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, model, authMode = null, cli = null } = {}) {
+export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, model, authMode = null, cli = null, webSearch = false } = {}) {
   const started = Date.now();
   const fail = (error, reason = 'other', limit = null) => {
     const say = SAY[reason] || '';
@@ -217,7 +220,7 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
   if (MOCK) {
     await new Promise((r) => setTimeout(r, Number(process.env.SE2_MOCK_DELAY_MS) || 3));
     if (signal && signal.aborted) return fail('', 'stopped');
-    const m = mockResponse({ mockKey, prompt, systemPrompt, model });
+    const m = mockResponse({ mockKey, prompt, systemPrompt, model, webSearch });
     if (typeof m === 'object') {
       if (m.limit) LAST_LIMIT = m.limit;
       if (m.reason) return fail(m.error || '', m.reason, m.limit || null);
@@ -250,7 +253,7 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
     // cwd 를 빈 임시 폴더로 못박는다 — 그 자리의 CLAUDE.md 가 딸려 오지 않게.
     // 고른 갈래를 따른다 — 구독인지 API 키인지는 사람이 정한다(tools/auth.mjs).
     const noPersist = await supportsNoPersist(cli || CLI);
-    p = spawn(cli || CLI, buildCallArgs(spFile, model, { noPersist }), { env: childEnv(authMode ? { mode: authMode } : auth.read()), windowsHide: true, cwd: dir });
+    p = spawn(cli || CLI, buildCallArgs(spFile, model, { noPersist, webSearch }), { env: childEnv(authMode ? { mode: authMode } : auth.read()), windowsHide: true, cwd: dir });
     LIVE.add(p);
     // 실행기가 글을 다 받기 전에 끝나면(거절 · 죽음) 쓰던 통로가 EPIPE 를 낸다 — 듣는 이가 없으면 프로세스가 통째로 죽는다.
     // 그 까닭은 실행기의 결과 · stderr 가 말해 주므로 여기서는 삼킨다.
@@ -359,9 +362,9 @@ export const CODEX = resolveCodex();
 // 폴더로 Codex 를 받은 뒤 다시 찾는다 — 같은 물건(CODEX)을 고쳐 쓰므로 들고 있던 쪽도 새 자리를 본다
 export const refreshCodex = () => Object.assign(CODEX, resolveCodex());
 const SAY_CODEX = { auth: 'ChatGPT 로그인이 필요합니다 — 프로그램을 끄고 다시 켜면 검은 창이 로그인을 띄웁니다', 'quota-session': 'ChatGPT 구독 한도를 다 썼습니다' };
-export async function runCodexCall({ systemPrompt, prompt, mockKey, signal, model, cli = null } = {}) {
+export async function runCodexCall({ systemPrompt, prompt, mockKey, signal, model, cli = null, webSearch = false } = {}) {
   // 모의 실행은 클로드 쪽과 같은 가짜 응답을 낸다(구독 소모 0)
-  if (MOCK && !cli) return runClaudeCall({ systemPrompt, prompt, mockKey, signal, model });
+  if (MOCK && !cli) return runClaudeCall({ systemPrompt, prompt, mockKey, signal, model, webSearch });
   const started = Date.now();
   const fail = (error, reason = 'other') => {
     const say = SAY_CODEX[reason] || SAY[reason] || '';
@@ -388,7 +391,7 @@ export async function runCodexCall({ systemPrompt, prompt, mockKey, signal, mode
     writeFileSync(spFile, String(systemPrompt || ''), 'utf8');
     // ChatGPT 길에는 클로드의 키가 쓰일 일이 없다 — 물려받은 ANTHROPIC_API_KEY · CLAUDE_* 를 걷는 같은 손질만 한다
     // 모델은 사람이 고른 것(설정 › 무엇으로 › ChatGPT 구독) — 작품의 모델(opus · sonnet …)은 클로드의 것이라 넘기지 않는다
-    p = spawn(exe, buildCodexArgs({ dir, systemPromptFile: spFile, outFile, model: auth.read().chatgptModel }), { env: childEnv({ mode: 'sub' }), windowsHide: true, cwd: dir });
+    p = spawn(exe, buildCodexArgs({ dir, systemPromptFile: spFile, outFile, model: auth.read().chatgptModel, webSearch }), { env: childEnv({ mode: 'sub' }), windowsHide: true, cwd: dir });
     LIVE.add(p);
     p.stdin.on('error', () => {});
     try { p.stdin.write(String(prompt), 'utf8'); } catch {}

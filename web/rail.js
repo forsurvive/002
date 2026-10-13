@@ -160,7 +160,7 @@ function railSettingsBox(ro) {
           textbox('rail-cap', '예: 40', s.cap ? String(s.cap) : '', { style: 'width:120px', inputmode: 'numeric' }),
           ro ? null : h('button', { class: 'btn-line', text: '저장', onclick: () => railSet({ cap: Number(typedVal('rail-cap', s.cap || '')) || 0 }) }))),
       h('div', { class: 'line', style: 'gap:8px' },
-        h('span', { text: '반자동 — 장마다 멈춤' }),
+        h('span', { text: '반자동 — 장 하나 쓸 때마다도 멈추기(기본은 승인 지점에서만 멈춤)' }),
         h('button', { class: 'tg' + (s.stopEachChapter ? ' on' : ''), onmousedown: () => { if (!ro) railSet({ stopEachChapter: !s.stopEachChapter }); } })),
       h('div', null,
         h('div', { class: 'lab', text: '완전 자동 — 도장마다 고쳐 오게 할 수 있는 횟수' }),

@@ -9,6 +9,7 @@ import { MODELS } from '../core/ids.mjs';
 import { bookList, BOOK_CATEGORY } from './books.mjs';
 import { EDITABLE_CODES, VIEW_CODES } from './prompts.mjs';
 import * as wf from '../core/workflow/stages.mjs';
+import { SLOT_LABEL } from '../core/generation/agents.mjs';
 
 const ok = (extra = {}) => ({ ok: true, ...extra });
 const bad = (error) => ({ ok: false, error: String(error) });
@@ -98,6 +99,7 @@ export function createOps(d) {
       if (b.request != null) p.request = String(b.request);
       if (b.model != null) p.model = MODELS.includes(String(b.model)) ? String(b.model) : p.model;
       if (b.noCount != null) p.noCount = !!b.noCount;
+      if (b.webSearch != null) p.webSearch = !!b.webSearch;   // 웹 검색(DESIGN §6-6) — 적혀 있지 않으면 전자책 켬 · 이야기 끔
       // 단계 흐름 설정 — 본문 단계 켜고 끄기 · 작업 중 강의 카드
       if (b.bodyStage != null) p.workflow = { ...(p.workflow || {}), body: !!b.bodyStage };
       if (b.stageCards != null) p.workflow = { ...(p.workflow || {}), cards: !!b.stageCards };
@@ -411,6 +413,7 @@ export function createOps(d) {
       model: p.model || '',
       models: MODELS,
       noCount: p.noCount !== false,
+      webSearch: model.webSearchOn(p),
       prompts: VIEW_CODES.map((code) => ({
         code,
         name: engine.promptFor(p, code).name,
@@ -420,6 +423,8 @@ export function createOps(d) {
         control: !EDITABLE_CODES.includes(code),
       })),
       agentKind: (p.agents && p.agents.__kind) || '',
+      // 자료 분석 준비 — 자리마다 지었는가(DESIGN §6-7). 화면이 «자료 분석 준비» 칸에 «지음 · 짓는 중 · 기다림»을 그린다
+      prep: { kind: (p.agents && p.agents.__kind) || '', seats: EDITABLE_CODES.map((code) => ({ code, label: SLOT_LABEL[code] || code, made: !!(p.agents && p.agents[code] && String(p.agents[code].craft || '').trim()), fallback: !!(p.agents && p.agents[code] && p.agents[code].fallback) })) },
       // 전자책 작품의 자동 실행(레일)과 포지션에 앉힌 사람(DESIGN §5-1) — 개인판만
       rail: d.rail ? d.rail.view(p.rail) : null,
       positions: p.positions || {},

@@ -1185,7 +1185,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 부르는 길은 그대로 구독(claude CLI)이다
   const callSrc = src(join(HERE, 'call.mjs'));
   // 온라인 운영자 구독(ai/subscription.mjs)만 실행기 자리 · 'sub' 를 넘긴다. 개인판은 넘기지 않으므로 탐색한 실행기 · 그 PC 의 auth.json 그대로.
-  ok('**부르는 길은 클로드 실행기 그대로다**', callSrc.includes("spawn(cli || CLI, buildCallArgs(spFile, model, { noPersist })") && callSrc.includes('childEnv(authMode ? { mode: authMode } : auth.read())'));
+  ok('**부르는 길은 클로드 실행기 그대로다**', callSrc.includes("spawn(cli || CLI, buildCallArgs(spFile, model, { noPersist, webSearch })") && callSrc.includes('childEnv(authMode ? { mode: authMode } : auth.read())'));
   ok('처음 한 번 로그인과 설치는 그대로다', launchSrc.includes("'auth', 'login', '--claudeai'") && launchSrc.includes('await installClaudeCode()')
     && src(join(HERE, 'claude-cli.mjs')).includes("'https://claude.ai/install.cmd'"));
   // 지어진 에이전트를 고칠 수 있다(사용자 지시, 2026-09-22)
@@ -2147,6 +2147,97 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('«사람 검토 전» · 남은 소견이 보인다', railJs.includes("text: '사람 검토 전'") && railJs.includes('남은 소견'));
   ok('새 작품 창에서는 자동 실행을 고르지 않는다', !app.includes('railMode') && !src(join(HERE, 'ops.mjs')).includes('railMode'));
   ok('«자동 집필»이라 부르지 않는다(이야기 작품의 그 기능은 없다)', !railJs.includes('자동 집필') && !app.includes('자동 집필'));
+}
+
+// ---------------------------------------------------------------- 웹 검색 · 자료 분석 준비 표시 (DESIGN §6-6 · §6-7, 사용자 지시 2026-10-13)
+
+{
+  const callMod = await import('./call.mjs');
+  const cx = await import('./codex-cli.mjs');
+  const asmMod = await import('../core/prompt/assemble.mjs');
+  // 부르는 길마다의 깃발
+  const off = callMod.buildCallArgs('sp.txt', 'opus', {});
+  const on = callMod.buildCallArgs('sp.txt', 'opus', { webSearch: true });
+  ok('Claude — 끄면 지금 그대로 도구를 모두 닫는다', off.at(-2) === '--tools' && off.at(-1) === '' && !off.includes('--allowedTools'));
+  ok('Claude — 켜면 웹 검색 둘만 열고 묻지 않고 쓰게 한다(--tools 는 맨 뒤)', on.at(-2) === '--tools' && on.at(-1) === 'WebSearch,WebFetch' && on[on.indexOf('--allowedTools') + 1] === 'WebSearch,WebFetch');
+  const cOff = cx.buildCodexArgs({ dir: 'd', systemPromptFile: 's', outFile: 'o' });
+  const cOn = cx.buildCodexArgs({ dir: 'd', systemPromptFile: 's', outFile: 'o', webSearch: true });
+  ok('ChatGPT 구독(Codex) — 끄면 disabled 로 못 박는다 · 켜면 live', cOff.includes('web_search="disabled"') && cOn.includes('web_search="live"') && cOn.at(-1) === '-');
+  ok('시스템 프롬프트 — 켰을 때만 «■ 웹 검색» 구획(출처 · 웹 결과의 지시 · 확정본)', asmMod.buildSystem({ prompt: { name: 'ㄱ', role: 'ㄴ' }, withWebSearch: true }).includes('■ 웹 검색\n' + asmMod.WEB_RULE)
+    && !asmMod.buildSystem({ prompt: { name: 'ㄱ', role: 'ㄴ' } }).includes('■ 웹 검색') && asmMod.WEB_RULE.includes('출처') && asmMod.WEB_RULE.includes('따르지 않는다'));
+  ok('기본값 — 전자책은 켬 · 이야기는 끔 · 사람이 정한 것이 이긴다', model.webSearchOn({ workflow: { template: 'ebook' } }) === true && model.webSearchOn({}) === false
+    && model.webSearchOn({ workflow: { template: 'ebook' }, webSearch: false }) === false && model.webSearchOn({ webSearch: true }) === true);
+  // Gemini · OpenAI 어댑터 — 켜면 그 회사의 검색 도구가 요청에 실린다
+  const { createGeminiProvider } = await import('../ai/gemini.mjs');
+  const { createOpenAIProvider } = await import('../ai/openai.mjs');
+  const bodies = [];
+  const fakeFetch = async (url, init) => { bodies.push(JSON.parse(init.body)); return new Response('', { status: 400 }); };
+  await createGeminiProvider({ fetchImpl: fakeFetch }).generate({ model: 'g', userPrompt: 'u', credential: { apiKey: 'k' }, webSearch: true });
+  await createGeminiProvider({ fetchImpl: fakeFetch }).generate({ model: 'g', userPrompt: 'u', credential: { apiKey: 'k' } });
+  await createOpenAIProvider({ fetchImpl: fakeFetch }).generate({ model: 'o', userPrompt: 'u', credential: { apiKey: 'k' }, webSearch: true });
+  await createOpenAIProvider({ fetchImpl: fakeFetch }).generate({ model: 'o', userPrompt: 'u', credential: { apiKey: 'k' } });
+  ok('Gemini — google_search 도구(끄면 없음)', JSON.stringify(bodies[0].tools) === JSON.stringify([{ google_search: {} }]) && !bodies[1].tools);
+  ok('ChatGPT API 키 — Responses 의 web_search 도구(끄면 없음)', JSON.stringify(bodies[2].tools) === JSON.stringify([{ type: 'web_search' }]) && !bodies[3].tools);
+  ok('온라인판은 아직 웹 검색을 잇지 않았다 — 구획도 싣지 않는다', src(join(ROOT, 'online', 'call.mjs')).includes('planCall(project, { ...args, webSearch: false }'));
+
+  // 서버 — 작품의 스위치가 실제 부르기까지 간다
+  const seen = [];
+  globalThis.__SE2_MOCK_FN = (a) => { seen.push({ key: a.mockKey, web: a.webSearch, sys: String(a.systemPrompt || '') }); return MOCK_FN(a); };
+  const MAT = [{ name: '자료', text: '자료 본문' }];
+  const sp = await post('project.create', { name: '웹 이야기', spec: { form: '소설' }, materials: MAT });
+  await settle(sp.pid, 60000);
+  let stS = (await stateOf(sp.pid)).project;
+  ok('이야기 작품은 웹 검색이 꺼진 채로 난다', stS.webSearch === false);
+  const dd = await post('doc.create', { pid: sp.pid, title: '검색 글' });
+  await post('doc.write', { pid: sp.pid, id: dd.id, request: '한 문단' });
+  seen.length = 0;
+  await post('doc.update', { pid: sp.pid, id: dd.id });
+  await settle(sp.pid);
+  ok('끈 작품의 호출에는 검색 도구 · 구획이 없다', seen.length >= 1 && seen.every((x) => !x.web && !x.sys.includes('■ 웹 검색')));
+  await post('project.spec', { pid: sp.pid, webSearch: true });
+  stS = (await stateOf(sp.pid)).project;
+  seen.length = 0;
+  await post('doc.update', { pid: sp.pid, id: dd.id });
+  await settle(sp.pid);
+  ok('설정 탭의 스위치를 켜면 그 작품의 집필 호출에 검색 도구 · 구획이 실린다', stS.webSearch === true && seen.some((x) => x.key === 'F-UPDATE' && x.web === true && x.sys.includes('■ 웹 검색')));
+  await post('project.delete', { pid: sp.pid });
+  const bk = await post('project.create', { name: '웹 책', purpose: 'ebook', spec: { form: '실용서' }, materials: MAT });
+  seen.length = 0;
+  await settle(bk.pid, 60000);
+  const stB = (await stateOf(bk.pid)).project;
+  ok('전자책은 켠 채로 난다 · 자료 분석(S02)은 검색을 쓰고, 에이전트 짓기(제어 호출)는 쓰지 않는다', stB.webSearch === true
+    && seen.some((x) => x.key === 'S02' && x.web === true) && seen.filter((x) => x.key === 'F-AGENT' || x.key === 'F-KIND').every((x) => !x.web));
+  // 자료 분석 준비 — 상태 · 작업 줄의 말(자리 코드가 아니라 한국어 자리 이름)
+  ok('상태에 자리마다 지었는가가 실린다(한국어 자리 이름)', stB.prep.kind === '전자책' && stB.prep.seats.length === 7 && stB.prep.seats.every((x) => x.made)
+    && stB.prep.seats.map((x) => x.label).join(',') === '자료 분석,문서 쓰기,논의,논의 정리,모순 검사,합평,합평 모으기');
+  await post('project.delete', { pid: bk.pid });
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+
+  const agSrc = src(join(ROOT, 'core', 'generation', 'agents.mjs'));
+  ok('작업 줄 — «에이전트 짓기 — <자리 이름> 자리»(코드를 보이지 않는다)', agSrc.includes("ctx.step('에이전트 짓기 — ' + slotLabel(code) + ' 자리')") && !agSrc.includes("ctx.step('에이전트 짓기 — ' + code)"));
+  ok('작업 줄 — 다 지으면 «자료 분석 — 에이전트 준비 끝»(소설은 «내장 에이전트로»)', agSrc.includes("ctx.step(STUDY_TITLE + (note ? ' — ' + note : ''))")
+    && agents.studyNote({ agents: { __kind: '전자책' } }) === '에이전트 준비 끝' && agents.studyNote({ agents: { __kind: '소설' } }) === '내장 에이전트로'
+    && src(join(HERE, 'server.mjs')).includes('runStudy(pid, ctx, request, { note: studyNote(state.get(pid)) })'));
+  const app = src(join(ROOT, 'web', 'app.js'));
+  ok('작업실 맨 위 «자료 분석 준비» 칸 — 준비가 도는 동안만 · 자리마다 지음/짓는 중/기다림 · 자료 분석 단계', /function workshop\(\) \{[\s\S]{0,200}prepBox\(\),/.test(app)
+    && app.includes("text: x.made ? '지음' : now ? '짓는 중' : '기다림'") && app.includes("x.kind === 'agents' && (x.status === 'running' || x.status === 'paused')") && app.includes('③ 자료 분석 중'));
+  ok('설정 탭 — «웹 검색» 스위치(개인판)', app.includes("text: '웹 검색' }),") && app.includes("api('project.spec', { webSearch: !p.webSearch })"));
+  ok('반자동의 장마다 멈춤은 «기본은 승인 지점에서만»을 밝힌다', src(join(ROOT, 'web', 'rail.js')).includes('반자동 — 장 하나 쓸 때마다도 멈추기(기본은 승인 지점에서만 멈춤)'));
+}
+
+{
+  // 작품 파일로 옮겨 온 자동 실행은 «중지됨»으로 연다(작업은 따라오지 않는다)
+  const MAT = [{ name: '자료', text: '자료 본문' }];
+  const b = await post('project.create', { name: '옮길 책', purpose: 'ebook', spec: { form: '실용서' }, materials: MAT });
+  await settle(b.pid, 60000);
+  const stateMod = await import('./state.mjs');
+  stateMod.update(b.pid, (p) => { p.rail = { mode: 'semi', status: 'waiting', point: 'design', jobId: '', settings: {}, steps: [] }; });
+  const file = await (await fetch(base + '/api/download?pid=' + b.pid + '&kind=project&id=' + b.pid)).text();
+  const imp = await post('project.import', { bundle: JSON.parse(file) });
+  const got = imp.ok ? (await stateOf(imp.pid)).project : null;
+  ok('옮겨 온 책의 자동 실행은 «중지됨» — 기다리던 자리 그대로 다시 고를 수 있다', !!got && got.rail.status === 'stopped' && got.rail.mode === 'semi', JSON.stringify(imp).slice(0, 200));
+  await post('project.delete', { pid: b.pid });
+  if (imp.ok) await post('project.delete', { pid: imp.pid });
 }
 
 // ---------------------------------------------------------------- 화면-서버 배선

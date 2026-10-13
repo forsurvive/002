@@ -47,7 +47,7 @@ export function planCall(project, {
   materials = false, allFinals = false, talk = [], prev = '', next = '',
   noCount = null, finalFirst = false, keepSeat = false,
   extraTargets = [], modelPick = '', digests = null, reading = null, targetPart = null, continueFrom = null,
-  extraDigests = null, talkCut = null, fixedDigests = null,
+  extraDigests = null, talkCut = null, fixedDigests = null, webSearch = null,
 } = {}, { pr, slotModel = '' } = {}) {
   // 아주 길어 나눠 읽은 요청사항 · 집필 기준 · 작품 요청사항 · 개요는 원문 자리에 옮긴 것을 싣는다
   const fx = fixedDigests || {};
@@ -143,7 +143,9 @@ export function planCall(project, {
   }
 
   const mSwap = swap(mats); const rSwap = swap(refs); const fSwap = swap(finals);
-  const systemPrompt = buildSystem({ prompt: pr, prev, next, crew, withFinalRule: finals.length > 0, withNoCount: nc });
+  // 웹 검색 — 부르는 쪽이 정하지 않았으면 작품의 스위치를 따른다(DESIGN §6-6). 나눠 읽는 조각 호출(위)에는 붙이지 않는다
+  const web = webSearch == null ? model.webSearchOn(project) : !!webSearch;
+  const systemPrompt = buildSystem({ prompt: pr, prev, next, crew, withFinalRule: finals.length > 0, withNoCount: nc, withWebSearch: web });
   const userPrompt = buildUser({
     project,
     // 에이전트 준비만 자료를 통째로 싣는다. 손으로 여는 자리에서 고른 자료는 참조 · 확정본 구획으로 간다.
@@ -156,5 +158,5 @@ export function planCall(project, {
     ...mSwap.map(tag('material')), ...rSwap.map(tag('reference')), ...fSwap.map(tag('final')),
     ...docTargets.map(tag('target')), ...extraTargets.map(tag('extra')), ...talk.map(tag('talk')),
   ];
-  return { systemPrompt, userPrompt, model: useModel, modelSource, inputs };
+  return { systemPrompt, userPrompt, model: useModel, modelSource, inputs, webSearch: web };
 }

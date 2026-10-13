@@ -28,9 +28,10 @@ export function useGenerator(p) { generator = isProvider(p) ? p : localCliProvid
 // 한 번 부르기 — code 는 그 자리의 이름(모의 응답과 기록이 쓴다).
 // 개인판에서 «ChatGPT 구독» · «Gemini API 키»를 골랐으면(설정 › 무엇으로) 같은 자리에서 그 길로 간다 — 꽂아 둔 다른 Provider(온라인 · 시험)는 그대로
 const BY_MODE = { chatgpt: localCodexProvider, gemini: localGeminiProvider, openai: localOpenAIProvider };
-export function callModel({ systemPrompt, prompt, code = '', signal = null, model = '' }) {
+// webSearch — 작품의 «웹 검색»(DESIGN §6-6): 부르는 길(Claude Code · Codex · Gemini · OpenAI)마다 제 검색 도구를 연다
+export function callModel({ systemPrompt, prompt, code = '', signal = null, model = '', webSearch = false }) {
   const g = generator === localCliProvider ? BY_MODE[auth.read().mode] || generator : generator;
-  return g.generate({ model, systemPrompt, userPrompt: prompt, signal, metadata: { code } });
+  return g.generate({ model, systemPrompt, userPrompt: prompt, signal, webSearch: !!webSearch, metadata: { code } });
 }
 
 // 일하는 법(tools/prompts.data.json)을 읽지 못했으면 부르지 않는다.
@@ -66,7 +67,7 @@ export async function callOnce({
     extraDigests, talkCut, fixedDigests,
   }, { pr: promptFor(project, code), slotModel: slotModel(project, code) });
 
-  const r = await callModel({ systemPrompt: plan.systemPrompt, prompt: plan.userPrompt, code, signal, model: plan.model });
+  const r = await callModel({ systemPrompt: plan.systemPrompt, prompt: plan.userPrompt, code, signal, model: plan.model, webSearch: !!plan.webSearch });
   // 사유(reason)와 한도(limit)를 떨어뜨리지 않는다 — 작업이 이것으로 «멈출까 실패할까»를 가른다.
   if (!r.ok) return { ok: false, error: r.error, reason: r.reason, limit: r.limit, ...(r.fit ? { fit: r.fit } : {}) };
   // 이어 쓴 조각은 다듬지 않는다(잇는 자리) · 길이 한도에 닿은 응답은 끝을 다듬지 않는다(core/generation/continue.mjs)

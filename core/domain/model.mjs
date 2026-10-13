@@ -321,6 +321,13 @@ export const MATERIAL_CATEGORY = '자료';
 
 export const materialDocs = (p) => (p.docs || []).filter((d) => d.material);
 
+// 웹 검색을 쓰는 작품인가(DESIGN §6-6) — 사람이 정해 두지 않았으면 전자책은 켬 · 이야기는 끔
+export function webSearchOn(p) {
+  if (!p) return false;
+  if (p.webSearch === true || p.webSearch === false) return p.webSearch;
+  return !!(p.workflow && p.workflow.template === 'ebook');
+}
+
 // 그 카테고리 — 없으면 맨 앞에 짓는다. 같은 이름의 카테고리가 이미 있으면 그것을 쓴다.
 export function materialCategory(p) {
   let c = p.categories.find((x) => x.name === MATERIAL_CATEGORY);

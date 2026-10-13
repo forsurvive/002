@@ -16,6 +16,11 @@ import { continuing } from './continue.mjs';
 
 export const CRAFT_MIN = 2000; // 기획서가 못 박은 하한. 위쪽 상한은 두지 않는다.
 export const STUDY_TITLE = '자료 분석';
+// 작업 줄에 보일 자리 이름(DESIGN §6-7 — 사용자 지시 «한국어로 표시해»). 자리 코드(S02 따위)는 화면에 내보내지 않는다
+export const SLOT_LABEL = { S02: '자료 분석', 'F-UPDATE': '문서 쓰기', 'F-TALK': '논의', 'F-THREADDOC': '논의 정리', 'F-CONTRA': '모순 검사', 'F-REVIEW': '합평', 'F-MERGE': '합평 모으기' };
+export const slotLabel = (code) => SLOT_LABEL[code] || '에이전트';
+// 에이전트 준비를 마친 뒤 자료 분석으로 넘어갈 때 작업 줄의 말 — 지은 에이전트로 / 내장 에이전트로(소설 · 판정 실패)
+export const studyNote = (project) => { const k = project && project.agents && project.agents.__kind; return k === '소설' || k === '기본' ? '내장 에이전트로' : '에이전트 준비 끝'; };
 
 // mats — 자료가 한 번에 실리지 않아 나눠 읽어 옮긴 목록(digestItems). 없으면 자료 원문 그대로.
 function ctl(prompts, code, extraTask, project, { materials = true, refs = [], request = '', mats = null } = {}) {
@@ -176,7 +181,7 @@ export async function prepareAgents(deps, pid, ctx, request = '') {
       '작법 본문은 최소 ' + CRAFT_MIN + '자 이상이어야 한다. 넉넉히 써라.',
     ].join('\n');
 
-    if (ctx) ctx.step('에이전트 짓기 — ' + code);
+    if (ctx) ctx.step('에이전트 짓기 — ' + slotLabel(code) + ' 자리');
     let made = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       const now = await store.get(pid);
@@ -205,14 +210,15 @@ export async function prepareAgents(deps, pid, ctx, request = '') {
 }
 
 // 자료 분석 — 에이전트가 준비되면 이어서 자료를 한 번 읽어 «자료 분석» 문서를 남긴다(작가가 따로 누를 것이 없다).
-export async function runStudy(deps, pid, ctx, request = '') {
+export async function runStudy(deps, pid, ctx, request = '', { note = '' } = {}) {
   const { store, call } = deps;
   const project = await store.get(pid);
   if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다' };
   if (!materialItems(project).length) return { ok: true, skipped: true };
   if (ctx && ctx.gate) await ctx.gate();
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
-  if (ctx) ctx.step(STUDY_TITLE);
+  // 에이전트를 다 짓고 넘어왔음을 보인다 — «자료 분석 — 에이전트 준비 끝»(DESIGN §6-7)
+  if (ctx) ctx.step(STUDY_TITLE + (note ? ' — ' + note : ''));
 
   const delays = deps.retryDelays || RETRY_MS;
   // 단계 템플릿이 «저절로 도는 자료 분석»의 할 일을 정했으면(prep — 전자책: 서문이 필요한지까지 판단) 그것을 함께 싣는다. 없으면 지금 그대로.
@@ -240,5 +246,5 @@ export async function prepareThenStudy(deps, pid, ctx, request = '') {
   // «자료 분석» 문서가 이미 있으면 또 만들지 않는다(종류만 다시 가린 때 — 같은 문서가 두 벌 서지 않게)
   const now = await deps.store.get(pid);
   if (now && (now.docs || []).some((d) => d.title === STUDY_TITLE)) return { ok: true, skipped: true };
-  return runStudy(deps, pid, ctx, request);
+  return runStudy(deps, pid, ctx, request, { note: studyNote(now) });
 }

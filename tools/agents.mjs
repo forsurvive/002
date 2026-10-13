@@ -49,4 +49,6 @@ export async function prepareAgents(pid, ctx, request = '') {
   return work;
 }
 
-export const runStudy = (pid, ctx, request = '') => core.runStudy(DEPS, pid, ctx, request);
+export const runStudy = (pid, ctx, request = '', opts = {}) => core.runStudy(DEPS, pid, ctx, request, opts);
+export const SLOT_LABEL = core.SLOT_LABEL;
+export const studyNote = core.studyNote;

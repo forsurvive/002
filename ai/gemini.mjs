@@ -28,7 +28,7 @@ export function createGeminiProvider({ baseUrl = 'https://generativelanguage.goo
   return {
     id: 'google',
 
-    async generate({ model, systemPrompt = '', userPrompt = '', credential = null, maxOutputTokens = 0, temperature, signal = null, timeoutMs, onProgress = null } = {}) {
+    async generate({ model, systemPrompt = '', userPrompt = '', credential = null, maxOutputTokens = 0, temperature, signal = null, timeoutMs, onProgress = null, webSearch = false } = {}) {
       const started = Date.now();
       const done = (r) => ({ ...r, elapsedMs: Date.now() - started });
       if (!String(userPrompt || '').trim()) return done(failure('empty', SAY.empty));
@@ -40,6 +40,8 @@ export function createGeminiProvider({ baseUrl = 'https://generativelanguage.goo
       const body = {
         ...(String(systemPrompt).trim() ? { systemInstruction: { parts: [{ text: String(systemPrompt) }] } } : {}),
         contents: [{ role: 'user', parts: [{ text: String(userPrompt) }] }],
+        // 웹 검색(개인판 작품의 «웹 검색» — DESIGN §6-6): Google 검색 그라운딩
+        ...(webSearch ? { tools: [{ google_search: {} }] } : {}),
         generationConfig: {
           ...(Number(maxOutputTokens) > 0 ? { maxOutputTokens: Number(maxOutputTokens) } : {}),
           ...(temperature == null ? {} : { temperature: Number(temperature) }),

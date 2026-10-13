@@ -701,11 +701,35 @@ function toggleAll(key, ids, on) {
 const pickedOf = (sel, ids) => ids.filter((id) => sel.has(id));
 const allPicked = (sel, ids) => ids.length > 0 && ids.every((id) => sel.has(id));
 
+// 자료 분석 준비 — 준비 작업(agents)이 도는 동안만 작업실 맨 위에 선다(DESIGN §6-7). 자리마다 «지음 · 짓는 중 · 기다림», 다 지으면 «자료 분석 중»
+function prepBox() {
+  const p = S.project;
+  const j = (p.jobs || []).find((x) => x.kind === 'agents' && (x.status === 'running' || x.status === 'paused'));
+  if (!j || !p.prep) return null;
+  const step = String(j.step || '');
+  const kind = p.prep.kind;
+  const built = kind && kind !== '소설' && kind !== '기본';
+  const studying = step.startsWith('자료 분석');
+  const seat = (x) => {
+    const now = !x.made && step.includes(x.label + ' 자리');
+    return h('div', { class: 'line', style: 'gap:8px' },
+      h('span', { class: 'mark', text: x.made ? '지음' : now ? '짓는 중' : '기다림' }),
+      h('span', { class: now ? 'name' : 'when', text: x.label + ' 자리' + (x.fallback ? ' (내장으로 채움)' : '') }));
+  };
+  return h('div', { class: 'card-box', style: 'margin-bottom:12px' },
+    h('div', { class: 'line' }, h('div', { class: 'name', style: 'flex:1;font-weight:700', text: '자료 분석 준비' }), h('span', { class: 'when', text: jobLine(j) })),
+    !kind ? h('div', { class: 'when', text: '① 글의 종류를 가리는 중 — 받은 자료와 규격을 읽고 있습니다' })
+      : built ? [h('div', { class: 'lab', text: '② 에이전트 짓기 — ' + kind + ' 에 맞춰 자리마다 프롬프트를 씁니다' }), p.prep.seats.map(seat)]
+        : h('div', { class: 'when', text: '② ' + (kind === '소설' ? '소설' : '종류를 가리지 못해') + ' — 내장 에이전트를 씁니다' }),
+    h('div', { class: studying ? 'name' : 'when', text: studying ? '③ 자료 분석 중 — 에이전트 준비를 마치고 자료를 읽고 있습니다' : '③ 자료 분석 — 에이전트를 다 지으면 이어서 합니다' }));
+}
+
 function workshop() {
   const p = S.project;
   const byId = new Map(p.docs.map((d) => [d.id, d]));
   const cats = p.categories;
   return h('div', null,
+    prepBox(),
     h('div', { class: 'plus-wrap' },
       h('button', { class: 'plus', text: '+', onclick: (e) => { stop(e); S.menu = !S.menu; render(); } }),
       S.menu ? plusMenu() : null),
@@ -901,6 +925,10 @@ function settings() {
     h('div', { class: 'line' },
       h('div', { class: 'lab', style: 'margin:0', text: '계량어 금지' }),
       h('button', { class: 'tg' + (p.noCount ? ' on' : ''), onmousedown: () => api('project.spec', { noCount: !p.noCount }) })),
+    // 웹 검색(DESIGN §6-6) — 켜면 AI 가 자료에 없는 사실을 웹에서 찾아 출처와 함께 쓴다. 개인판만(온라인판은 아직 잇지 않았다)
+    S.me ? null : h('div', { class: 'line' },
+      h('div', { class: 'lab', style: 'margin:0', text: '웹 검색' }),
+      h('button', { class: 'tg' + (p.webSearch ? ' on' : ''), onmousedown: () => api('project.spec', { webSearch: !p.webSearch }) })),
     // 에이전트 목록 — **고칠 수 있다는 것이 보여야 한다**(사용자 지시).
     //
     // 고치는 길은 전부터 있었다(이름·역할·이번에 할 일·프롬프트, 그리고 되돌리기).

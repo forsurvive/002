@@ -33,7 +33,7 @@ export function createOpenAIProvider({ baseUrl = 'https://api.openai.com', fetch
   return {
     id: 'openai',
 
-    async generate({ model, systemPrompt = '', userPrompt = '', credential = null, maxOutputTokens = 0, temperature, signal = null, timeoutMs, onProgress = null } = {}) {
+    async generate({ model, systemPrompt = '', userPrompt = '', credential = null, maxOutputTokens = 0, temperature, signal = null, timeoutMs, onProgress = null, webSearch = false } = {}) {
       const started = Date.now();
       const done = (r) => ({ ...r, elapsedMs: Date.now() - started });
       if (!String(userPrompt || '').trim()) return done(failure('empty', SAY.empty));
@@ -47,6 +47,8 @@ export function createOpenAIProvider({ baseUrl = 'https://api.openai.com', fetch
         model,
         ...(String(systemPrompt).trim() ? { instructions: String(systemPrompt) } : {}),
         input: String(userPrompt),
+        // 웹 검색(개인판 작품의 «웹 검색» — DESIGN §6-6): Responses 의 web_search 도구
+        ...(webSearch ? { tools: [{ type: 'web_search' }] } : {}),
         ...(Number(maxOutputTokens) > 0 ? { max_output_tokens: Number(maxOutputTokens) } : {}),
         stream: true,
         store: false,

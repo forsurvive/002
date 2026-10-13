@@ -40,7 +40,7 @@ export function resolveCodex(env = process.env) {
 // TOML 기본 문자열 — 윈도우 경로의 \ 와 따옴표를 그대로 넘기려면 JSON 꼴이 그대로 맞는다
 const toml = (s) => JSON.stringify(String(s));
 
-export function buildCodexArgs({ dir, systemPromptFile, outFile, model = '' }) {
+export function buildCodexArgs({ dir, systemPromptFile, outFile, model = '', webSearch = false }) {
   const m = String(model || '').trim();
   return [
     'exec', '--json',
@@ -51,6 +51,8 @@ export function buildCodexArgs({ dir, systemPromptFile, outFile, model = '' }) {
     '-C', dir,
     '-o', outFile,
     '-c', 'model_instructions_file=' + toml(systemPromptFile),
+    // 작품의 «웹 검색»(DESIGN §6-6) — 켜면 live, 끄면 disabled 로 못 박는다(Codex 의 기본값에 기대지 않는다)
+    '-c', 'web_search=' + toml(webSearch ? 'live' : 'disabled'),
     '-',                          // 프롬프트는 stdin
   ];
 }
