@@ -483,15 +483,18 @@ function projectList() {
 
 function goHome() { S.pid = null; S.project = null; S.tab = '작업실'; pull(true); }
 
+// 단계 탭은 온라인판(강의 카드 · 강사 열람)에서만 — 개인판은 걷었다(사용자 지시 2026-10-13, DESIGN §3 골격). 단계 기록 · 자동 실행은 그대로 돈다.
+const stageTab = (p) => !!(S.me && p && p.workflow);
+
 function app() {
   const p = S.project;
+  if (S.tab === '단계' && !stageTab(p)) S.tab = '작업실';
   return h('div', { class: 'shell' },
     h('div', { class: 'side' },
       h('div', { class: 'side-top' },
         h('button', { class: 'side-title', text: appName(), onclick: goHome }),
         brandMark()),
-      // 단계 탭은 단계 흐름이 실려 올 때만(서버가 템플릿을 갖고 있을 때) 선다
-      ['작업실', ...(p.workflow ? ['단계'] : []), '설정'].map((t) => h('button', {
+      ['작업실', ...(stageTab(p) ? ['단계'] : []), '설정'].map((t) => h('button', {
         class: 'tab' + (S.tab === t ? ' on' : ''), text: t, onclick: () => { S.tab = t; render(); },
       })),
       h('div', { class: 'side-jobs' }, (p.jobs || []).map(jobRow)),
@@ -508,7 +511,7 @@ function app() {
         // 전자책 작품 — [자동 실행](반자동 · 완전 자동을 고르고 · 중지 · 되돌리기, web/rail.js — DESIGN §5-1). 이야기 작품 · 온라인판에서는 서지 않는다
         railButton(),
         whoLine()),
-      h('div', { class: 'body' }, S.tab === '작업실' ? workshop() : S.tab === '단계' && p.workflow ? stagesView() : S.tab === '설정' ? settings() : trash()),
+      h('div', { class: 'body' }, S.tab === '작업실' ? workshop() : S.tab === '단계' ? stagesView() : S.tab === '설정' ? settings() : trash()),
       lectureCard()));
 }
 

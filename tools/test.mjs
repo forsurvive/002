@@ -2153,6 +2153,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('걸음마다 [여기로 되돌리기] — 묻고 되돌린다', railJs.includes("text: '여기로 되돌리기'") && railJs.includes("railDo('rail.rollback', { step: x.id })") && railJs.includes('직접 만들거나 들여온 문서는 그대로입니다'));
   ok('창에서 연 문서를 닫으면 자동 실행 창으로 돌아온다', railJs.includes("back: { open: { type: 'rail' } }"));
   ok('단계 탭에는 자동 실행 칸을 두지 않는다(위쪽 바 하나로)', !app.includes('railBox('));
+  // 단계 탭 걷기(사용자 지시 2026-10-13 «'단계' 탭은 없애자» — DESIGN §3 골격). 온라인판만 남는다
+  ok('**개인판에는 «단계» 탭이 없다 — 온라인판(S.me)에서만 선다 · 남은 탭 값은 작업실로**', app.includes('const stageTab = (p) => !!(S.me && p && p.workflow);')
+    && app.includes("['작업실', ...(stageTab(p) ? ['단계'] : []), '설정']") && !app.includes("...(p.workflow ? ['단계'] : [])") && app.includes("if (S.tab === '단계' && !stageTab(p)) S.tab = '작업실';"));
+  ok('**완전 자동으로 끝난 책의 사람 승인은 자동 실행 창의 [사람 승인]으로(완성 단계 승인)**', railJs.includes("text: '사람 승인', onclick: () => railDo('stage.approve', { key: 'finish' })") && !railJs.includes('«완성» 단계를 승인하면'));
   ok('도장 칸 — [승인] · [수정 요청] · [문서 열기] · 도장 ① 은 확정본으로도(기본 켬)', ["text: '승인'", "text: '수정 요청'", "text: '문서 열기'", "text: '확정본으로도'", 'S.railFinal = true'].every((x) => railJs.includes(x)));
   ok('장마다 멈춤 — [다음 장으로]', railJs.includes("text: '다음 장으로', onclick: () => railDo('rail.next')"));
   ok('설정 — 호출 상한 · 장마다 멈춤 · 판정 횟수 · 통과 못 하면 · 덧붙일 기준', ['호출 상한', '장마다 멈춤', '고쳐 오게 할 수 있는 횟수', '끝내 통과 못 하면', '편집장에게 덧붙일 기준'].every((x) => railJs.includes(x)));

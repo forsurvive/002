@@ -103,7 +103,11 @@ function railPanel(close) {
   } else if (r && r.status === 'stopped') {
     now = h('div', { class: 'when', text: '중지됨 — 그 자리부터 완전 수동입니다. 쓴 것은 그대로입니다.' });
   } else if (r && r.status === 'done') {
-    now = h('div', { class: 'name', text: r.unreviewed ? '완성 — 편집장이 승인했습니다. 읽어 보고 «완성» 단계를 승인하면 사람 검토가 끝납니다.' : '완성' });
+    // 사람 검토 — 단계 탭을 걷었으므로(DESIGN §3 골격) 완성 단계의 사람 승인은 이 창에서 한다
+    now = r.unreviewed ? h('div', null,
+      h('div', { class: 'name', text: '완성 — 편집장이 승인했습니다. 읽어 보고 승인하면 사람 검토가 끝납니다.' }),
+      ro ? null : h('button', { class: 'btn-red', text: '사람 승인', onclick: () => railDo('stage.approve', { key: 'finish' }) }))
+      : h('div', { class: 'name', text: '완성' });
   }
 
   return h('div', { class: 'panel narrow' },
