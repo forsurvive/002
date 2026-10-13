@@ -17,7 +17,9 @@ import { killAllCalls, lastLimit } from './call.mjs';
 import * as auth from './auth.mjs';
 import { createOps } from './ops.mjs';
 import { baseTemplate } from './workflow.mjs';
-import { normalizeProject, saveProject, newId } from './store.mjs';
+import { normalizeProject, saveProject, newId, DATA_DIR } from './store.mjs';
+import { acquire as lockData } from './datalock.mjs';
+import { backupProjects } from './backup.mjs';
 import { runKind } from '../core/generation/kinds.mjs';
 import { resolveHosting, hostOf, originOk, gateOk, isNavigation, GATE_REALM } from './hosting.mjs';
 
@@ -201,6 +203,20 @@ if (process.argv[1] && process.argv[1].endsWith('server.mjs') && toOnline) {
   const { start } = await import(new URL('../online/start.mjs', import.meta.url).href);
   await start(process.env);
 } else if (process.argv[1] && process.argv[1].endsWith('server.mjs')) {
+  // 같은 자료 상자를 다른 곳(다른 PC · 다른 창)에서 열어 두었으면 서지 않는다 — 두 서버가 서로의 저장을 덮어쓴다(datalock.mjs)
+  const lock = lockData(DATA_DIR);
+  if (!lock.ok) {
+    console.log('  [STOP] This data folder is open ' + (lock.same ? 'in another window on this PC' : 'on another PC (' + String(lock.who.host).replace(/[^\x20-\x7e]/g, '?') + ')') + '.');
+    console.log('         Close it there first. If that PC is off or the USB was pulled out, wait 3 minutes and try again.');
+    process.exit(1);
+  }
+  if (lock.stale) console.log('  [NOTE] Took over a lock left by another PC (it stopped updating more than 3 minutes ago)');
+  process.on('exit', lock.release);
+  // 켤 때마다 작품 파일 한 벌을 data/backup/ 에 — 깨진 파일은 옮겨 적지 않고 이름만 알린다(backup.mjs)
+  try {
+    const b = backupProjects(DATA_DIR);
+    for (const f of b.broken) console.log('  [WARN] Could not read data/projects/' + f + ' - the copy in data/backup/projects/ was kept');
+  } catch (e) { console.log('  [WARN] Backup skipped: ' + String((e && e.code) || 'error')); }
   try { await boot(PORT); } catch { process.exit(1); }
   const addr = 'http://127.0.0.1:' + PORT;
   if (!HOSTING.exposed) console.log('  Story Engine : ' + addr);
@@ -213,5 +229,6 @@ if (process.argv[1] && process.argv[1].endsWith('server.mjs') && toOnline) {
   if (process.env.SE2_OPEN_BROWSER === '1') {
     try { spawn('cmd', ['/c', 'start', '', addr], { windowsHide: true, detached: true, stdio: 'ignore' }).unref(); } catch {}
   }
-  process.on('SIGINT', () => { killAllCalls(); process.exit(0); });
+  // 창을 닫으면(윈도우 — SIGHUP · SIGBREAK) 잠금을 걷고 나간다. 걷지 못하고 꺼져도 3분 뒤면 버려진 잠금이 된다
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) process.on(sig, () => { killAllCalls(); process.exit(0); });
 }

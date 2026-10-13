@@ -2,7 +2,7 @@
 // 쓰기는 임시 파일에 쓰고 rename 으로 갈아끼운다(중간에 죽어도 반쪽 파일이 남지 않는다).
 // 한글 경로에서 fs.cpSync(recursive) 가 node 를 죽인 실측이 있어 재귀 복사는 쓰지 않는다.
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, rmSync, existsSync, openSync, writeSync, fsyncSync, closeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { newId, MODELS } from '../core/ids.mjs';
@@ -24,14 +24,20 @@ function projPath(id) {
   return join(PROJ_DIR, id + '.json');
 }
 
-// 윈도우에서는 방금 쓴 파일을 백신·색인기가 잠시 붙들고 있어 rename 이 EPERM 으로 튕기는 일이 있다.
-// 실측(자동 집필처럼 빠르게 잇달아 저장할 때)에서 실제로 나왔다 — 몇 번 다시 시도하고,
-// 그래도 안 되면 제자리에 그대로 쓴다(원자성을 잃더라도 작업을 잃지 않는 편이 낫다).
 export function writeJson(file, value) {
+  writeText(file, JSON.stringify(value, null, 1));
+}
+
+// 임시 파일을 디스크까지 내려 쓴(fsync) 뒤에 갈아끼운다 — USB 는 쓰기를 캐시에 들고 있다가 늦게 내려보낸다.
+// 내려가기 전에 뽑히면 rename 만 남고 내용이 빈 파일이 될 수 있어, 갈아끼우기 전에 내용부터 내려보낸다.
+export function writeText(file, text) {
   mkdirSync(dirname(file), { recursive: true });
-  const text = JSON.stringify(value, null, 1);
   const tmp = file + '.' + process.pid + '.tmp';
-  writeFileSync(tmp, text, 'utf8');
+  const fd = openSync(tmp, 'w');
+  try { writeSync(fd, text, null, 'utf8'); try { fsyncSync(fd); } catch {} } finally { closeSync(fd); }
+  // 윈도우에서는 방금 쓴 파일을 백신·색인기가 잠시 붙들고 있어 rename 이 EPERM 으로 튕기는 일이 있다.
+  // 실측(자동 집필처럼 빠르게 잇달아 저장할 때)에서 실제로 나왔다 — 몇 번 다시 시도하고,
+  // 그래도 안 되면 제자리에 그대로 쓴다(원자성을 잃더라도 작업을 잃지 않는 편이 낫다).
   let last = null;
   for (let attempt = 0; attempt < 6; attempt++) {
     try { renameSync(tmp, file); return; } catch (e) { last = e; sleepBriefly(6 + attempt * 8); }

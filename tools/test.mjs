@@ -2092,6 +2092,73 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('DESIGN 에 상점 길이 남아 있지 않다', !design.includes('brain.json') && !design.includes('first.mjs') && !design.includes('cloud.'));
 }
 
+// ---------------------------------------------------------------- USB 휴대판 — 잠금 · 내려쓰기 · 백업 한 벌 (docs/PERSONAL_USB.md)
+{
+  const lk = await import('./datalock.mjs');
+  const bk = await import('./backup.mjs');
+  const T0 = 10_000_000;
+  const me = { host: 'PC-A', pid: 4242 };
+  const live = () => true, dead = () => false;
+  ok('잠금이 없으면 들어간다', lk.judge(null, me, T0).ok);
+  ok('깨진 잠금(이름 없음)은 없는 것과 같다', lk.judge({ pid: 1 }, me, T0).ok);
+  const fresh = { host: 'PC-B', pid: 7, at: T0 - 60_000 };
+  const r1 = lk.judge(fresh, me, T0, live);
+  ok('다른 PC 가 숨 쉬고 있으면 막는다', !r1.ok && r1.same === false && r1.who.host === 'PC-B');
+  const r2 = lk.judge({ ...fresh, at: T0 - lk.STALE_MS - 1 }, me, T0, live);
+  ok('다른 PC 가 3분 넘게 숨을 쉬지 않았으면(USB 를 켠 채 뽑았다) 가져온다', r2.ok && r2.stale);
+  ok('같은 PC 의 살아 있는 다른 창은 막는다', !lk.judge({ host: 'PC-A', pid: 9, at: T0 }, me, T0, live).ok);
+  ok('같은 PC 의 꺼진 창이 남긴 잠금은 가져온다', lk.judge({ host: 'PC-A', pid: 9, at: T0 }, me, T0, dead).ok);
+  ok('같은 PC 라도 숨이 끊긴 잠금은 가져온다(pid 를 남이 물려받았을 수 있다)', lk.judge({ host: 'PC-A', pid: 9, at: T0 - lk.STALE_MS - 1 }, me, T0, live).ok);
+  ok('시각이 적히지 않은 다른 PC 의 잠금은 버려진 것이다', lk.judge({ host: 'PC-B', pid: 7 }, me, T0, live).ok);
+
+  const lbox = join(BOX, 'lockbox');
+  mkdirSync(lbox, { recursive: true });
+  const a = lk.acquire(lbox, { host: 'PC-A', pid: process.pid });
+  ok('잠금을 건다', a.ok && existsSync(join(lbox, lk.LOCK_NAME)));
+  const b2 = lk.acquire(lbox, { host: 'PC-B', pid: 77 });
+  ok('건 동안 다른 PC 는 들어오지 못한다', !b2.ok && b2.who.host === 'PC-A');
+  a.release();
+  ok('나가면 잠금을 걷는다', !existsSync(join(lbox, lk.LOCK_NAME)));
+  const c = lk.acquire(lbox, { host: 'PC-B', pid: 77 });
+  const { writeJson: wj } = await import('./store.mjs');
+  wj(join(lbox, lk.LOCK_NAME), { host: 'PC-C', pid: 5, at: Date.now() });
+  c.release();
+  ok('남이 가져간 잠금은 걷지 않는다', existsSync(join(lbox, lk.LOCK_NAME)));
+  rmSync(join(lbox, lk.LOCK_NAME), { force: true });
+
+  // 실제 서버 프로세스 — 다른 PC 가 연 상자면 서지 않는다(포트를 잡기 전에 멈춘다)
+  const sbox = join(BOX, 'lockedbox');
+  wj(join(sbox, lk.LOCK_NAME), { host: 'OTHER-PC-' + process.pid, pid: 1, at: Date.now() });
+  const run = spawnSync(process.execPath, [join(HERE, 'server.mjs')], { env: { ...process.env, SE2_DATA_DIR: sbox, SE2_PORT: '8897' }, encoding: 'utf8', timeout: 20000 });
+  ok('다른 PC 가 연 상자면 서버가 서지 않는다', run.status === 1 && /\[STOP\] This data folder is open on another PC/.test(run.stdout), String(run.status) + ' ' + run.stdout);
+  ok('멈춤 글은 ASCII 만', /^[\x00-\x7f]*$/.test(run.stdout));
+  ok('남의 잠금은 그대로 둔다', JSON.parse(readFileSync(join(sbox, lk.LOCK_NAME), 'utf8')).host.startsWith('OTHER-PC'));
+
+  // 내려쓰기 — 임시 파일을 남기지 않는다 · fsync 를 지난다
+  const st = src(join(HERE, 'store.mjs'));
+  ok('저장은 임시 파일을 디스크까지 내려 쓴 뒤 갈아끼운다', st.includes('fsyncSync(fd)') && st.indexOf('fsyncSync(fd)') < st.indexOf('renameSync(tmp, file)'));
+  const wbox = join(BOX, 'writebox');
+  wj(join(wbox, 'x.json'), { a: 1 });
+  ok('쓰고 나면 임시 파일이 남지 않는다', readdirSync(wbox).join() === 'x.json' && JSON.parse(readFileSync(join(wbox, 'x.json'), 'utf8')).a === 1);
+
+  // 백업 한 벌
+  const bbox = join(BOX, 'backupbox');
+  wj(join(bbox, 'projects', 'p_one.json'), { id: 'p_one', name: '하나' });
+  wj(join(bbox, 'projects', 'p_two.json'), { id: 'p_two', name: '둘' });
+  let br = bk.backupProjects(bbox);
+  ok('작품 파일을 한 벌 옮겨 적는다', br.copied === 2 && existsSync(join(bbox, 'backup', 'projects', 'p_one.json')));
+  const { writeFileSync: wf } = await import('node:fs');
+  wf(join(bbox, 'projects', 'p_one.json'), '{"id":"p_one","na', 'utf8');   // 뽑혀서 반쪽만 남은 파일
+  rmSync(join(bbox, 'projects', 'p_two.json'));
+  br = bk.backupProjects(bbox);
+  ok('깨진 파일은 멀쩡한 백업을 덮지 않는다', br.broken.includes('p_one.json') && JSON.parse(readFileSync(join(bbox, 'backup', 'projects', 'p_one.json'), 'utf8')).name === '하나');
+  ok('지운 작품의 백업은 걷는다', !existsSync(join(bbox, 'backup', 'projects', 'p_two.json')) && br.pruned === 1);
+  ok('작품 목록은 백업 폴더를 작품으로 읽지 않는다', !src(join(HERE, 'store.mjs')).includes("join(DATA_DIR, 'backup'"));
+  const sv = src(join(HERE, 'server.mjs'));
+  ok('서버는 켤 때 잠그고 백업한 뒤에 선다', sv.indexOf('lockData(DATA_DIR)') > 0 && sv.indexOf('lockData(DATA_DIR)') < sv.indexOf('backupProjects(DATA_DIR)') && sv.indexOf('backupProjects(DATA_DIR)') < sv.indexOf('await boot(PORT)'));
+  ok('창을 닫아도 잠금을 걷고 나간다', sv.includes("'SIGHUP'") && sv.includes("process.on('exit', lock.release)"));
+}
+
 // ---------------------------------------------------------------- 단계형 작업 흐름 (docs/WORKFLOW.md) — 순수 로직
 {
   const wf = await import('../core/workflow/stages.mjs');
