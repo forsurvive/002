@@ -88,11 +88,18 @@ node tools/usb-build.mjs --out <USB 의 폴더> --skip-download       앱 파일
 2. USB 를 꽂고 `node tools/usb-build.mjs --out <USB 의 폴더>`. 끝나면 `Done.` 과 Node · Claude 판이 찍힌다.
 3. 지금 쓰던 개인판이 있으면 그 폴더의 `data\` 를 USB 폴더의 `data\` 로 복사한다(아래 «데이터 옮기기»).
 
-### 앱 묶음(zip)으로 시작하기 — 만들기 도구를 돌릴 PC 가 없을 때
-1. 앱 묶음 `StoryEngineUSB-app.zip`(약 1MB — 앱 파일만)을 받아 **오른쪽 클릭 › 속성 › «차단 해제»**를 켠 뒤 USB 에 압축을 푼다.
-2. `https://nodejs.org/dist/v22.23.3/win-x64/node.exe` 를 받아 그 폴더의 `tools\node\` 에 넣는다(파일 하나, 약 87MB).
-3. `스토리 엔진 개인판.cmd` 더블클릭 — 폴더의 node 로 도는 창은 Claude Code 가 없으면 **PC 에 깔지 않고 `tools\claude\` 로 받아 온다**(한 번, sha512 확인 — `launch.mjs` 가 만들기 도구의 `fetchClaude` 를 쓴다). 이어서 로그인 → 앱.
-4. 나중에 Node · Claude Code 를 새로 받으려면 그 폴더에서 `tools\node\node.exe tools\usb-build.mjs --here`(앱 파일은 그대로 둔다).
+### 앱 묶음(zip)으로 시작하기 — 만들기 도구 없이 (2026-10-13)
+완성본(Node · Claude Code 포함)은 압축해도 약 143MB 라 대화로 보낼 수 있는 크기를 넘는다. 그래서 앱 묶음만 주고, **처음 한 번 실행이 나머지를 폴더 안으로 받아 와 완성본이 된다.**
+1. 앱 묶음 `StoryEngineUSB.zip`(약 0.3MB)을 받아 **오른쪽 클릭 › 속성 › «차단 해제»**를 켠 뒤 원하는 곳에 푼다 — USB 든 PC 의 폴더(바탕화면 · `C:\StoryEngine` …)든 같다.
+2. `스토리 엔진 개인판.cmd` 더블클릭. 처음 한 번만(인터넷 필요):
+   - `tools\node\node.exe` 가 없으면 `.cmd` 가 윈도우에 들어 있는 `curl` 로 nodejs.org 에서 받아 **SHA256 을 맞춰 보고**(`certutil`) 맞을 때만 넣는다(약 90MB — 만들기 도구와 같은 판 · 같은 해시).
+     받지 못하면(인터넷 없음 · curl 없는 옛 윈도우) PC 에 깔린 Node 를 쓰고, 그것도 없으면 받을 주소를 알린다.
+   - 폴더의 node 로 도는 창은 Claude Code 가 없으면 **PC 에 깔지 않고 `tools\claude\` 로 받아 온다**(sha512 — `launch.mjs` 가 만들기 도구의 `fetchClaude` 를 쓴다). 이어서 로그인 → 앱.
+3. 그 뒤로 그 폴더는 완성본이다 — 통째로 USB ↔ PC 로 복사해도 된다. Node · Claude Code 를 새로 받으려면 그 폴더에서 `tools\node\node.exe tools\usb-build.mjs --here`.
+
+### PC 에서 쓰기
+같은 폴더를 PC 의 아무 폴더에 두고 같은 `.cmd` 를 더블클릭한다 — USB 에서와 한 글자도 다르지 않다(박힌 경로 · 설치 · 레지스트리 없음). 작품은 그 폴더의 `data\` 에 쌓인다.
+USB 와 PC 에 폴더를 하나씩 두면 원고도 두 벌이 된다(저절로 맞춰지지 않는다) — 한쪽을 정본으로 정하고, 옮길 때는 `data\` 를 통째로 복사하거나 [작품 파일 내려받기 / 가져오기]를 쓴다.
 
 ### 새 PC 에서
 1. USB 를 꽂고 그 폴더의 `스토리 엔진 개인판.cmd` 를 더블클릭한다. 검은 창은 쓰는 동안 닫지 않는다.

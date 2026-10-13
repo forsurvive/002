@@ -700,7 +700,7 @@ callOnce 를 지나지 않고 곧장 부르는 에이전트 준비(`agents.prepa
 - **`.cmd` 는 ASCII 로만, CRLF 로, BOM 없이 적는다.** cmd.exe 는 배치 파일을 옛 코드페이지로 읽는다 —
   rem 줄의 한글이 다음 줄의 앞부분을 먹은 실측이 있다(D-024 와 같은 이치). 한국어 안내는 노드 쪽이 찍는다.
   `.gitattributes` 가 `.cmd` 를 CRLF 로 못박는다 — 다른 PC 의 git 설정이 줄 끝을 바꿔 놓지 않게.
-- **노드는 `%~dp0tools\node\node.exe` → PATH 의 `node` 순서로만 찾는다.** 옆 폴더는 뒤지지 않는다 —
+- **노드는 `%~dp0tools\node\node.exe` → (없으면 처음 한 번 nodejs.org 에서 그 자리로 받아 SHA256 확인 — 2026-10-13) → PATH 의 `node` 순서로만 찾는다.** 옆 폴더는 뒤지지 않는다 —
   USB 로 옮겨 가면 옆에 무엇이 있을지 모르고, 남의 판의 노드를 주워 돌면 그 판을 지우는 날 이 판이 멎는다.
 - `launch.mjs` 는 Claude Code 가 없으면 **앤트로픽의 공식 설치기로 스스로 깐다.** 옮겨 온 PC 의 첫날이 그때다.
   단 폴더의 `tools\node\node.exe` 로 도는 창(USB 휴대판)은 PC 에 깔지 않고 폴더 안(`tools\claude\`)으로 받아 온다 — 만들기 도구와 같은 곳 · 같은 sha512 확인(2026-10-13, `docs/PERSONAL_USB.md` §5).

@@ -1986,6 +1986,15 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const iPath = cmd.indexOf('where node');
   ok('동봉한 노드를 먼저 찾는다', iLocal > 0 && iPath > iLocal);
   ok('없으면 PATH 의 node', cmd.includes('set "NODE_EXE=node"'));
+  // 앱 묶음만 받은 첫날 — 폴더 안으로 node.exe 를 받아 온다(2026-10-13 «node.exe 까지 넣은 완성본» — 대화로 보낼 수 있는 파일 크기를 넘어서)
+  const ubm = await import('./usb-build.mjs');
+  const iGet = cmd.indexOf('if not defined NODE_EXE call :getnode');
+  ok('동봉한 노드가 없으면 PATH 보다 먼저 폴더 안으로 받아 온다', iGet > iLocal && iGet < iPath);
+  ok('받는 노드는 만들기 도구와 같은 판 · 같은 자리(nodejs.org)', cmd.includes('https://nodejs.org/dist/' + ubm.DEFAULT_NODE + '/win-x64/node.exe'));
+  ok('받은 노드는 SHA256 을 맞춰 보고 맞을 때만 쓴다', /set "NODE_SHA=[0-9a-f]{64}"/.test(cmd) && cmd.includes('certutil -hashfile "%NODE_TMP%" SHA256') && cmd.includes('if /i not "%GOT%"=="%NODE_SHA%" goto :getnode_bad'));
+  ok('임시 이름으로 받아 확인한 뒤에야 node.exe 로 바꿔 넣는다', cmd.indexOf('goto :getnode_bad') < cmd.indexOf('move /y "%NODE_TMP%"'));
+  ok('받는 길은 본 흐름이 끝난 뒤에 있다(떨어져 들어가지 않는다)', cmd.indexOf('exit /b 0') > 0 && cmd.indexOf('exit /b 0') < cmd.indexOf('\r\n:getnode\r\n'));
+  ok('받는 길 안에서는 %~dp0 대신 처음에 잡아 둔 자리를 쓴다', !cmd.slice(cmd.indexOf('\r\n:getnode\r\n')).includes('%~dp0') && cmd.includes('set "HERE=%~dp0"'));
   ok('둘 다 없으면 그렇다고 이르고 선다', cmd.includes('[ERROR] node.exe not found') && cmd.includes('exit /b 1'));
   ok('제 자리에서 실행기를 띄운다', cmd.includes('"%NODE_EXE%" "%~dp0tools\\launch.mjs"'));
   ok('창을 닫지 않게 이른다', cmd.includes('pause'));
