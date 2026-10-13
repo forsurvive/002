@@ -43,6 +43,19 @@ try {
   }
 } catch { /* 파일이 없으면 판정 자리만 빈다 */ }
 
+// 이야기 작품의 내장 사람(DESIGN §6-10) — 작가가 준 작법(통과의례 · 도식 · 격자 · 인물 · 장면)으로 다시 지은 자리 일곱의 이야기판과
+// 단계 템플릿이 부르는 단계 자리 여섯(tools/prompts.story.json). 아홉과 따로 둔다 — 그 아홉은 «작법 교리 없음»을 지킨다.
+// 못 읽으면 비어 있고 이야기 작품도 범용 아홉으로 돈다(단계 자리는 «문서 쓰기»로 물러선다 — prompt-pick.promptFor).
+export const STORY_BUILTIN = {};
+try {
+  for (const p of JSON.parse(readFileSync(join(HERE, 'prompts.story.json'), 'utf8')).prompts || []) {
+    STORY_BUILTIN[p.code] = { code: p.code, name: p.name, role: p.role, task: p.task, craft: p.craft };
+  }
+} catch { /* 파일이 없으면 이야기 작품도 범용 내장으로 */ }
+
+// 이야기 단계 템플릿(config/workflows/story_creation.json)의 단계가 부르는 자리 — 세계 · 도식 · 인물 · 격자 · 장면 · 본문
+export const STORY_STAGE_CODES = ['N-WORLD', 'N-PLAN', 'N-CAST', 'N-GRID', 'N-SCENE', 'N-WRITE'];
+
 // 프로그램이 부르는 집필 자리 일곱 — 자료 파일에는 이 일곱과 제어 둘, 모두 아홉만 있다.
 export const EDITABLE_CODES = ['S02', 'F-UPDATE', 'F-TALK', 'F-THREADDOC', 'F-CONTRA', 'F-REVIEW', 'F-MERGE'];
 

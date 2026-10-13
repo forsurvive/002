@@ -31,7 +31,7 @@ export const MANIFEST = '.usb-build.json';
 const TOP_FILES = ['스토리 엔진 개인판.cmd', 'README.md', 'DESIGN.md', '기획서.md'];
 const ENTRIES = ['tools/server.mjs', 'tools/launch.mjs', 'tools/usb-build.mjs'];
 // 모듈이 읽는 자료(import 가 아니라 파일로 읽는다)와 휴대판 안내
-const DATA = ['tools/prompts.data.json', 'tools/prompts.ebook.json', 'tools/books', 'config/workflows', 'config/models.json', 'docs/PERSONAL_USB.md', 'docs/WORKFLOW.md'];
+const DATA = ['tools/prompts.data.json', 'tools/prompts.ebook.json', 'tools/prompts.story.json', 'tools/books', 'config/workflows', 'config/models.json', 'docs/PERSONAL_USB.md', 'docs/WORKFLOW.md'];
 
 // 상대 경로 import(정적 · 동적) 만 따라간다. 서버가 «바깥에 열고 DB 가 있을 때만» 부르는 온라인판(new URL('../online/…'))은 따라가지 않는다 —
 // 실행기가 늘 127.0.0.1 로 띄우므로 그 길이 열리지 않는다.

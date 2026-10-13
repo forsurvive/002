@@ -16,7 +16,7 @@ import * as model from './model.mjs';
 import * as pictures from './images.mjs';
 
 // 자리마다 프롬프트 · 모델을 고르는 셈은 tools/prompt-pick.mjs 로 옮겼다(온라인 서버가 CLI 없이 쓴다) — 이름은 그대로 내보낸다.
-export { promptFor, slotModel, promptView, seatCodes, seatAgent } from './prompt-pick.mjs';
+export { promptFor, slotModel, promptView, seatCodes, seatAgent, viewCodes } from './prompt-pick.mjs';
 import { promptFor, slotModel, seatAgent } from './prompt-pick.mjs';
 
 // 참조 조립(무엇을 어느 구획에 싣나)은 core/reference/plan.mjs 로 옮겼다 — 지금까지의 이름도 그대로 내보낸다.

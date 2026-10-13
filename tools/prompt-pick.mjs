@@ -1,16 +1,21 @@
 // 자리(작법 프롬프트)마다 지금 쓸 값을 고른다 — 작가가 고친 것 › 지어진 것 › 내장.
 // 호출도 저장도 모른다. 개인판 엔진(tools/engine.mjs)과 문 표(tools/ops.mjs)가 함께 쓴다.
 
-import { BUILTIN, EBOOK_BUILTIN, EDITABLE_CODES } from './prompts.mjs';
+import { BUILTIN, EBOOK_BUILTIN, STORY_BUILTIN, STORY_STAGE_CODES, EDITABLE_CODES, CONTROL_CODES, VIEW_CODES } from './prompts.mjs';
 
-// 그 자리의 프롬프트를 찾는 순서는 셋이다 —
-//   ① 작가가 설정에서 고친 것  ② 비소설이라 즉석으로 지은 것  ③ 내장
+// 이야기 작품인가 — 용도 «전자책»이 아닌 모든 작품(적혀 있지 않은 옛 작품도 이야기). DESIGN §6-10
+export const isStoryProject = (project) => !(project && project.workflow && project.workflow.template === 'ebook');
+
+// 그 자리의 프롬프트를 찾는 순서 —
+//   ① 작가가 설정에서 고친 것  ② 비소설이라 즉석으로 지은 것  ③ 이야기 내장(이야기 작품일 때 — DESIGN §6-10)  ④ 범용 내장
 // 칸 하나하나마다 이 순서로 고른다(이름만 고치고 작법은 그대로 두는 일이 되도록).
 export function promptFor(project, code) {
   const mine = (project && project.prompts && project.prompts[code]) || null;
   const made = (project && project.agents && project.agents[code]) || null;
-  // 전자책 레일의 자리(편집장 — tools/prompts.ebook.json)는 아홉 밖에 따로 있다
-  const base = BUILTIN[code] || EBOOK_BUILTIN[code] || { code, name: '집필자', role: '글을 쓴다', task: '', craft: '' };
+  // 전자책 레일의 자리(편집장 — tools/prompts.ebook.json)는 아홉 밖에 따로 있다.
+  // 이야기 내장 파일이 없으면 단계 자리(N-*)는 범용 «문서 쓰기»로 물러선다
+  const base = (isStoryProject(project) && STORY_BUILTIN[code]) || BUILTIN[code] || EBOOK_BUILTIN[code]
+    || (STORY_STAGE_CODES.includes(code) && BUILTIN['F-UPDATE']) || { code, name: '집필자', role: '글을 쓴다', task: '', craft: '' };
   const pick = (k) => {
     const a = mine && String(mine[k] || '').trim();
     if (a) return mine[k];
@@ -38,11 +43,15 @@ export function promptView(project, code) {
   };
 }
 
-// 문서 · 스레드에 «내장 사람»으로 걸 수 있는 자리(DESIGN §6-8) — 집필 자리 일곱과, 전자책이면 편집장.
+// 문서 · 스레드에 «내장 사람»으로 걸 수 있는 자리(DESIGN §6-8) — 집필 자리 일곱과, 전자책이면 편집장 · 이야기면 단계 자리 여섯(§6-10).
 // 제어 둘(F-KIND · F-AGENT)은 답의 꼴을 프로그램이 읽는 자리라 빠진다.
 export function seatCodes(project) {
-  const book = !!(project && project.workflow && project.workflow.template === 'ebook');
-  return [...EDITABLE_CODES, ...(book ? Object.keys(EBOOK_BUILTIN) : [])];
+  return [...EDITABLE_CODES, ...(isStoryProject(project) ? STORY_STAGE_CODES : Object.keys(EBOOK_BUILTIN))];
+}
+
+// 설정에서 열어 보고 고칠 수 있는 자리 — 이야기 작품은 집필 자리 일곱 · 단계 자리 여섯 · 제어 둘, 전자책은 지금처럼 아홉(§6-10)
+export function viewCodes(project) {
+  return isStoryProject(project) ? [...EDITABLE_CODES, ...STORY_STAGE_CODES, ...CONTROL_CODES] : VIEW_CODES;
 }
 
 // 그 자리의 지금 값을 한 사람으로 — agentIds 의 `seat:<코드>` 가 이것으로 선다. 걸 수 없는 자리면 null.

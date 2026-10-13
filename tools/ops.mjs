@@ -7,7 +7,7 @@ import * as model from './model.mjs';
 import { makeBundle, readBundle } from './bundle.mjs';
 import { MODELS, newId } from '../core/ids.mjs';
 import { bookList, BOOK_CATEGORY } from './books.mjs';
-import { EDITABLE_CODES, VIEW_CODES } from './prompts.mjs';
+import { EDITABLE_CODES, VIEW_CODES, CONTROL_CODES } from './prompts.mjs';
 import * as wf from '../core/workflow/stages.mjs';
 import { SLOT_LABEL } from '../core/generation/agents.mjs';
 
@@ -43,6 +43,8 @@ export function createOps(d) {
   const workflow = d.workflow || (async () => null);
   const cardsOn = d.cardsOn || ((p) => !!(p.workflow && p.workflow.cards));
   const imgs = d.images || null;
+  // 설정에서 열어 보고 고칠 수 있는 자리 — 작품마다(이야기는 단계 자리 여섯이 더 선다 — DESIGN §6-10). 모르는 바깥(옛 engine)은 아홉
+  const codesOf = (p) => (engine.viewCodes ? engine.viewCodes(p) : VIEW_CODES);
 
   // 글과 함께 온 그림(DESIGN §6-9) — 글 속 임시 열쇠(img:k1)를 그림 id 로 바꿀 짝을 짓는다. 파일은 작품이 정해진 뒤에 쓴다(storeImages).
   // 그림을 받지 않는 자리(온라인판)는 빈 짝 — 글 속 자리는 «[그림: 설명]» 글로 남는다.
@@ -217,11 +219,11 @@ export function createOps(d) {
     'prompt.read': async (b) => {
       const p = await state.get(b.pid);
       if (!p) return bad('프로젝트를 찾을 수 없습니다');
-      if (!VIEW_CODES.includes(b.code)) return bad('없는 자리입니다');
+      if (!codesOf(p).includes(b.code)) return bad('없는 자리입니다');
       return ok({ one: engine.promptView(p, b.code) });
     },
     'prompt.write': async (b) => {
-      if (!VIEW_CODES.includes(b.code)) return bad('없는 자리입니다');
+      if (!codesOf(await state.get(b.pid)).includes(b.code)) return bad('없는 자리입니다');
       return await state.update(b.pid, (p) => {
         p.prompts = p.prompts || {};
         const cur = p.prompts[b.code] || {};
@@ -230,12 +232,12 @@ export function createOps(d) {
       });
     },
     // 되돌리면 작가가 고친 겹만 걷힌다 — 지어진 자리는 «지은 것»으로, 그 밖은 내장으로 돌아간다.
-    'prompt.reset': async (b) => (VIEW_CODES.includes(b.code)
+    'prompt.reset': async (b) => (codesOf(await state.get(b.pid)).includes(b.code)
       ? await state.update(b.pid, (p) => { if (p.prompts) delete p.prompts[b.code]; })
       : bad('없는 자리입니다')),
     // 그 자리(지어진 에이전트)가 쓸 모델. 빈 값이면 정해 둔 것을 걷어 작품의 모델을 따르게 한다.
     'prompt.model': async (b) => {
-      if (!VIEW_CODES.includes(b.code)) return bad('없는 자리입니다');
+      if (!codesOf(await state.get(b.pid)).includes(b.code)) return bad('없는 자리입니다');
       const m = String(b.model == null ? '' : b.model);
       if (m && !MODELS.includes(m)) return bad('그 모델을 쓸 수 없습니다');
       return await state.update(b.pid, (p) => {
@@ -488,13 +490,13 @@ export function createOps(d) {
       models: MODELS,
       noCount: p.noCount !== false,
       webSearch: model.webSearchOn(p),
-      prompts: VIEW_CODES.map((code) => ({
+      prompts: codesOf(p).map((code) => ({
         code,
         name: engine.promptFor(p, code).name,
         edited: !!(p.prompts && p.prompts[code]),
         made: !!(p.agents && p.agents[code]),
         model: engine.slotModel(p, code),
-        control: !EDITABLE_CODES.includes(code),
+        control: CONTROL_CODES.includes(code),
         label: SLOT_LABEL[code] || code,   // 한국어 자리 이름(설정 › 에이전트 칸 — 코드를 보이지 않는다)
       })),
       agentKind: (p.agents && p.agents.__kind) || '',

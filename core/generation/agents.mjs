@@ -17,7 +17,8 @@ import { continuing } from './continue.mjs';
 export const CRAFT_MIN = 2000; // 기획서가 못 박은 하한. 위쪽 상한은 두지 않는다.
 export const STUDY_TITLE = '자료 분석';
 // 작업 줄에 보일 자리 이름(DESIGN §6-7 — 사용자 지시 «한국어로 표시해»). 자리 코드(S02 따위)는 화면에 내보내지 않는다
-export const SLOT_LABEL = { S02: '자료 분석', 'F-UPDATE': '문서 쓰기', 'F-TALK': '논의', 'F-THREADDOC': '논의 정리', 'F-CONTRA': '모순 검사', 'F-REVIEW': '합평', 'F-MERGE': '합평 모으기', 'F-KIND': '글의 종류 가리기', 'F-AGENT': '에이전트 짓기' };   // 제어 둘은 설정 › 에이전트 칸에서만 보인다
+export const SLOT_LABEL = { S02: '자료 분석', 'F-UPDATE': '문서 쓰기', 'F-TALK': '논의', 'F-THREADDOC': '논의 정리', 'F-CONTRA': '모순 검사', 'F-REVIEW': '합평', 'F-MERGE': '합평 모으기', 'F-KIND': '글의 종류 가리기', 'F-AGENT': '에이전트 짓기',
+  'N-WORLD': '세계 설계', 'N-PLAN': '기획', 'N-CAST': '인물 설계', 'N-GRID': '구조 설계', 'N-SCENE': '장면 설계', 'N-WRITE': '본문 집필' };   // 제어 둘은 설정 › 에이전트 칸에서만 보인다 · N-* 는 이야기 작품의 단계 자리(DESIGN §6-10)
 export const slotLabel = (code) => SLOT_LABEL[code] || '에이전트';
 // 에이전트 준비를 마친 뒤 자료 분석으로 넘어갈 때 작업 줄의 말 — 지은 에이전트로 / 내장 에이전트로(소설 · 판정 실패)
 export const studyNote = (project) => { const k = project && project.agents && project.agents.__kind; return k === '소설' || k === '기본' ? '내장 에이전트로' : '에이전트 준비 끝'; };

@@ -1369,7 +1369,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('아무것도 없으면 내장', eng.promptFor(p, 'S02').name, prompts.BUILTIN.S02.name);
   p.agents = { S02: { name: '생성본 이름', role: '', task: '', craft: '생성본 작법' } };
   eq('생성본이 있으면 그것', eng.promptFor(p, 'S02').name, '생성본 이름');
-  eq('빈 칸은 내장으로 물러선다', eng.promptFor(p, 'S02').role, prompts.BUILTIN.S02.role);
+  // 2026-10-13: 내장은 «그 작품의 내장»이다 — 이야기 작품은 이야기 내장(tools/prompts.story.json), 전자책은 범용 아홉(DESIGN §6-10)
+  eq('빈 칸은 그 작품의 내장으로 물러선다(이야기)', eng.promptFor(p, 'S02').role, prompts.STORY_BUILTIN.S02.role);
+  eq('빈 칸은 그 작품의 내장으로 물러선다(전자책 — 범용)', eng.promptFor({ ...p, workflow: { template: 'ebook' } }, 'S02').role, prompts.BUILTIN.S02.role);
   p.prompts = { S02: { name: '내가 고친 이름' } };
   eq('고친 것이 가장 앞', eng.promptFor(p, 'S02').name, '내가 고친 이름');
   eq('안 고친 칸은 생성본', eng.promptFor(p, 'S02').craft, '생성본 작법');
@@ -2259,7 +2261,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 걸 수 있는 내장 사람 — 집필 자리 일곱(전자책은 편집장까지), 제어 둘은 빠진다
   const story = { workflow: { template: 'story' } };
   const book = { workflow: { template: 'ebook' } };
-  ok('내장 사람 — 이야기는 집필 자리 일곱 · 전자책은 편집장까지 · 제어 둘은 없다', pick.seatCodes(story).length === 7 && pick.seatCodes(book).includes('E-JUDGE')
+  // 2026-10-13: 이야기 작품은 단계 자리 여섯(N-*)도 내장 사람으로 선다(DESIGN §6-10)
+  ok('내장 사람 — 이야기는 집필 자리 일곱 + 단계 자리 여섯 · 전자책은 편집장까지 · 제어 둘은 없다', pick.seatCodes(story).length === 13 && pick.seatCodes(story).includes('N-PLAN') && !pick.seatCodes(book).includes('N-PLAN') && pick.seatCodes(book).includes('E-JUDGE')
     && !pick.seatCodes(book).includes('F-KIND') && !pick.seatCodes(book).includes('F-AGENT') && pick.seatAgent(story, 'F-AGENT') === null && pick.seatAgent(story, 'E-JUDGE') === null);
   const sr = pick.seatAgent(story, 'F-REVIEW');
   ok('내장 사람은 그 자리의 지금 값(이름 · 역할 · 작법)으로 선다', sr.id === 'seat:F-REVIEW' && sr.name === pick.promptFor(story, 'F-REVIEW').name && sr.craft === pick.promptFor(story, 'F-REVIEW').craft);
@@ -2299,8 +2302,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   await settle(sp.pid, 60000);
   let st = (await stateOf(sp.pid)).project;
   const raw = (await import('./state.mjs')).get(sp.pid);
-  ok('상태에 걸 수 있는 내장 사람 일곱이 실린다(id 는 seat:<코드>)', st.builtins.length === 7 && st.builtins.every((a) => a.id === 'seat:' + a.code && a.name)
-    && st.builtins.map((a) => a.code).join() === 'S02,F-UPDATE,F-TALK,F-THREADDOC,F-CONTRA,F-REVIEW,F-MERGE');
+  ok('상태에 걸 수 있는 내장 사람이 실린다(id 는 seat:<코드> — 이야기는 집필 자리 일곱 + 단계 자리 여섯)', st.builtins.length === 13 && st.builtins.every((a) => a.id === 'seat:' + a.code && a.name)
+    && st.builtins.map((a) => a.code).join() === 'S02,F-UPDATE,F-TALK,F-THREADDOC,F-CONTRA,F-REVIEW,F-MERGE,N-WORLD,N-PLAN,N-CAST,N-GRID,N-SCENE,N-WRITE');
   const pk = await post('peek', { pid: sp.pid, id: 'seat:F-REVIEW' });
   ok('고르기 창에서 내장 사람도 펼쳐 본다(peek)', pk.ok && pk.one.name === pick.promptFor(raw, 'F-REVIEW').name && pk.one.text.includes(pick.promptFor(raw, 'F-REVIEW').craft.slice(0, 30)));
   const nm = (c) => pick.promptFor(raw, c).name;
@@ -2538,6 +2541,78 @@ function tinyPng(rgb = [220, 20, 20], w = 4, h = 4) {
   globalThis.__SE2_MOCK_FN = MOCK_FN;
   await post('project.delete', { pid: sp.pid });
   ok('온라인판은 아직 그림을 붙이지 않는다(자리 지키기 규칙만)', src(join(ROOT, 'online', 'call.mjs')).includes('withImages: false'));
+}
+
+// ---------------------------------------------------------------- 이야기 모드의 내장 에이전트 — 작가의 작법으로 다시 짓다 (DESIGN §6-10, 사용자 지시 2026-10-13)
+
+{
+  const S = prompts.STORY_BUILTIN;
+  const codes = Object.keys(S);
+  ok('**이야기 내장 — 자리 일곱의 이야기판 + 단계 자리 여섯(따로 둔 파일)**', codes.join() === [...prompts.EDITABLE_CODES, ...prompts.STORY_STAGE_CODES].join()
+    && Object.keys(prompts.BUILTIN).length === 9 && !prompts.BUILTIN['N-PLAN']);
+  for (const c of codes) {
+    ok('이야기 내장 작법이 넉넉하다 ' + c, S[c].craft.length >= 2000, String(S[c].craft.length));
+    ok('이야기 내장에 «걸음»을 쓰지 않는다 · 제목 줄을 시키지 않는다 ' + c, !(S[c].craft + S[c].task).includes('걸음') && !/제목을\s*(쓴다|써라|적는다|적어라|붙여라|단다)/.test(S[c].craft + S[c].task));
+    ok('작가가 정한 것이 작법보다 앞선다고 이른다 ' + c, S[c].craft.startsWith('## 이 작품의 작법이 앉는 자리') && S[c].craft.includes('언제나 이 작법보다 앞선다'));
+  }
+  ok('작법의 칸이 자리마다 들어갔다', S['N-PLAN'].craft.includes('결함의 본질') && S['N-PLAN'].craft.includes('외적 목표는 결함을 해결하지 않고는 이룰 수 없는 것으로')
+    && S['N-GRID'].craft.includes('설정 → 위기 → 단서 → 도전') && S['N-GRID'].craft.includes('되짚기') && S['N-CAST'].craft.includes('무엇을 표상하는가')
+    && S['N-SCENE'].craft.includes('비트 분석표') && S['N-SCENE'].craft.includes('시작 가치 → 끝 가치') && S['N-WRITE'].craft.includes('설정은 서사가 아니다')
+    && S['N-WORLD'].craft.includes('세계의 결함') && S.S02.craft.includes('이야기의 씨앗을 짚어 둔다') && S['F-TALK'].craft.includes('물음의 재료'));
+  ok('보기 이야기는 «이 작품에 끌어오지 않는다»로만', ['N-PLAN', 'N-GRID'].every((c) => S[c].craft.includes('## 보기 — 이 작품에 끌어오지 않는다')));
+  // 범용 판이 지키던 것은 이야기판에서도 지킨다
+  ok('합평 — 잣대 차례 · 미션 · 배운 이론을 잣대로 삼지 않는다는 말을 지키고 «이 작품의 작법»을 그 차례 안에 둔다', S['F-REVIEW'].craft.includes('잣대는 어디서 오는가') && S['F-REVIEW'].craft.includes('네가 배운 작법 이론을 잣대로 삼지 않는다')
+    && S['F-REVIEW'].craft.includes('그것이 이번 합평의 미션이다') && S['F-REVIEW'].craft.includes('작법서') && S['F-REVIEW'].craft.includes('## 층으로 진단한다')
+    && S['F-REVIEW'].craft.indexOf('`■ 집필 기준`') < S['F-REVIEW'].craft.indexOf('«이 작품의 작법»'));
+  ok('모순 검사 — 미션을 지키고 짜임의 어긋남은 «정해 둔 것»과만 맞댄다', S['F-CONTRA'].craft.includes('그것이 이 검사의 미션이다') && S['F-CONTRA'].craft.includes('정해 두지 않은 규칙을 네가 들고 오지 않는다'));
+  ok('합평 모으기 — 층으로 세우되 무게표는 들고 오지 않는다', S['F-MERGE'].craft.includes('네가 무게표를 따로 들고 오지 마라') && S['F-MERGE'].craft.includes('## 층으로 세운다'));
+
+  // 찾는 순서 — 고친 것 › 지은 것 › 이야기 내장(이야기 작품) › 범용
+  const pick = await import('./prompt-pick.mjs');
+  const st = { workflow: { template: 'story_creation' } };
+  const bk = { workflow: { template: 'ebook' } };
+  ok('이야기 작품은 이야기 내장을, 전자책은 범용을 쓴다', pick.promptFor(st, 'F-UPDATE').craft === S['F-UPDATE'].craft && pick.promptFor(bk, 'F-UPDATE').craft === prompts.BUILTIN['F-UPDATE'].craft
+    && pick.promptFor({}, 'N-PLAN').name === '도식 짓는이');
+  ok('즉석으로 지은 것(비소설)과 작가가 고친 것이 이야기 내장보다 앞선다', pick.promptFor({ ...st, agents: { 'F-UPDATE': { craft: '지은 작법' } } }, 'F-UPDATE').craft === '지은 작법'
+    && pick.promptFor({ ...st, prompts: { 'N-PLAN': { name: '내 기획자' } } }, 'N-PLAN').name === '내 기획자' && pick.promptFor({ ...st, prompts: { 'N-PLAN': { name: '내 기획자' } } }, 'N-PLAN').craft === S['N-PLAN'].craft);
+  const keep = { ...S };
+  for (const k of Object.keys(S)) delete S[k];
+  ok('이야기 내장 파일이 없으면 단계 자리는 범용 «문서 쓰기»로 물러선다', pick.promptFor(st, 'N-GRID').craft === prompts.BUILTIN['F-UPDATE'].craft && pick.promptFor(st, 'S02').craft === prompts.BUILTIN.S02.craft);
+  Object.assign(S, keep);
+  ok('설정에서 고칠 자리 — 이야기는 일곱 + 여섯 + 제어 둘, 전자책은 아홉', pick.viewCodes(st).length === 15 && pick.viewCodes(st).includes('N-WRITE') && pick.viewCodes(bk).length === 9);
+
+  // 단계 템플릿 — 단계마다 맡는 자리
+  const tpl = JSON.parse(src(join(ROOT, 'config', 'workflows', 'story_creation.json')));
+  const writing = tpl.stages.filter((x) => x.output !== 'input' && x.output !== 'final');
+  ok('**만들 글이 있는 단계는 모두 맡는 자리가 있고, 그 자리가 이야기 내장에 있다**', writing.every((x) => x.code && S[x.code]) && writing.filter((x) => x.code.startsWith('N-')).length === writing.length - 1);
+  ok('단계와 자리가 맞물린다', ['world:N-WORLD', 'material:N-PLAN', 'plan:N-PLAN', 'plan_rev:N-PLAN', 'world_rev:N-WORLD', 'cast:N-CAST', 'leads:N-CAST', 'outline:N-GRID', 'plot:N-GRID', 'plot_rev:N-GRID', 'episodes:N-SCENE', 'scenes:N-SCENE', 'body:N-WRITE']
+    .every((x) => { const [k, c] = x.split(':'); return tpl.stages.find((y) => y.key === k).code === c; }));
+  ok('할 일이 작법의 칸 이름으로 적혔다', /결함의 본질/.test(tpl.stages.find((x) => x.key === 'plan').task) && /설정 · 위기 · 단서 · 도전/.test(tpl.stages.find((x) => x.key === 'outline').task)
+    && /비트 분석표/.test(tpl.stages.find((x) => x.key === 'scenes').task) && tpl.stages.every((x) => !String(x.task || '').includes('걸음')));
+  ok('USB 꾸러미가 이야기 내장 파일을 담는다', src(join(HERE, 'usb-build.mjs')).includes("'tools/prompts.story.json'"));
+
+  // 서버 — 기획서 단계는 도식 짓는이가 쓰고, 설정 › 에이전트 칸에 단계 자리가 선다
+  const seen = [];
+  globalThis.__SE2_MOCK_FN = (a) => { seen.push({ key: a.mockKey, sys: String(a.systemPrompt || '') }); return MOCK_FN(a); };
+  const sp = await post('project.create', { name: '작법 이야기', spec: { form: '단편' }, materials: [{ name: '자료', text: '폰만 보는 아이와 말이 없는 아버지' }] });
+  await settle(sp.pid, 60000);
+  seen.length = 0;
+  const r1 = await post('stage.start', { pid: sp.pid, key: 'plan' });
+  await settle(sp.pid);
+  const planCallSeen = seen.find((x) => x.key === 'N-PLAN');
+  ok('**기획서 단계는 도식 짓는이(N-PLAN)가 쓴다 — 시스템 프롬프트에 그 사람과 작법이 실린다**', r1.ok && !!planCallSeen && planCallSeen.sys.includes('도식 짓는이') && planCallSeen.sys.includes('결함의 본질'), JSON.stringify(r1).slice(0, 160));
+  const stP = (await stateOf(sp.pid)).project;
+  const row = stP.prompts.find((x) => x.code === 'N-PLAN');
+  ok('설정 › 에이전트 칸 — 이야기 작품은 단계 자리까지(한국어 자리 이름 · 제어는 둘뿐)', stP.prompts.length === 15 && !!row && row.label === '기획' && row.name === '도식 짓는이'
+    && stP.prompts.filter((x) => x.control).map((x) => x.code).join() === 'F-KIND,F-AGENT');
+  ok('단계 자리도 열고 고치고 모델을 정한다', (await post('prompt.read', { pid: sp.pid, code: 'N-GRID' })).ok && (await post('prompt.write', { pid: sp.pid, code: 'N-GRID', name: '내 격자' })).ok
+    && (await post('prompt.model', { pid: sp.pid, code: 'N-GRID', model: 'sonnet' })).ok && (await stateOf(sp.pid)).project.prompts.find((x) => x.code === 'N-GRID').name === '내 격자');
+  await post('project.delete', { pid: sp.pid });
+  const eb = await post('project.create', { name: '작법 책', purpose: 'ebook', spec: { form: '실용서' }, materials: [{ name: '자료', text: '사례' }] });
+  await settle(eb.pid, 60000);
+  ok('전자책 작품은 지금처럼 아홉 — 단계 자리는 열리지 않는다', (await stateOf(eb.pid)).project.prompts.length === 9 && !(await post('prompt.read', { pid: eb.pid, code: 'N-GRID' })).ok);
+  await post('project.delete', { pid: eb.pid });
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 // ---------------------------------------------------------------- 화면-서버 배선
