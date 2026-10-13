@@ -49,7 +49,7 @@ tools/
   jobs.mjs              작업 실행기(동시 실행 · 일시중지 · 이어 하기 · 삭제 · 한도 물음)
   books.mjs (+ books/)  작법서 그릇(지금 비어 있음 — 저작권 사유로 걷음)
   test.mjs              시험(순수 로직 + 실제 서버 + 화면-서버 배선 + 팔레트 + 이식성)
-web/  index.html · app.js(1301줄) · style.css · tour.js · tour.demo.js
+web/  index.html · app.js(1301줄) · style.css   (tour.js · tour.demo.js 는 2026-10-13 에 걷었다)
 data/ (저장소 밖, .gitignore)   projects/<pid>.json · auth.json
 tools/node/ · tools/claude/ (저장소 밖)   동봉 노드(v22.23.1 Windows) · 동봉 CLI
 ```
@@ -87,7 +87,7 @@ tools/node/ · tools/claude/ (저장소 밖)   동봉 노드(v22.23.1 Windows) �
 | `server.mjs` | 453 | HTTP · op 표 · 상태 뷰 · 내려받기 · 문지기 | **수정** → op 처리를 서비스로, 온라인 서버는 인증·권한을 앞에 |
 | `launch.mjs` | 79 | 윈도 원클릭 실행기 | **유지** |
 | `books.mjs` | 51 | 작법서 그릇 | **유지**(개인판 어댑터) |
-| `web/app.js` 외 | ~1800 | 화면 · 튜토리얼 | **유지**(온라인 편집기 화면으로 재사용) |
+| `web/app.js` 외 | ~1800 | 화면(튜토리얼은 2026-10-13 에 걷었다) | **유지**(온라인 편집기 화면으로 재사용) |
 | `test.mjs` | 1968 | 시험 676 | **유지 + 확장** |
 
 **폐기할 코드는 없다.** 자동 집필은 이미 사용자 지시로 걷혔고(DESIGN §5), 남은 코드는 모두 쓰인다.
@@ -213,7 +213,7 @@ sequenceDiagram
 
 ## 11. 화면(web/)
 
-- 상태 하나(`S`) + `h()` DOM 생성기 + `render()` 통째 그리기. 서버로 나가는 길은 `api()`·`pull()`·`download()` 셋뿐이고 튜토리얼이 셋 모두를 가로챈다.
+- 상태 하나(`S`) + `h()` DOM 생성기 + `render()` 통째 그리기. 서버로 나가는 길은 `api()`·`pull()`·`download()` 셋뿐이다(그 셋을 가로채던 튜토리얼은 2026-10-13 에 걷었다).
 - 1.5초 폴링(`pull`) + 1초 초침(작업 줄의 지난 시간). 상대 경로(`/api`)만 쓰므로 **어느 호스트에서 열어도 같은 출처로 붙는다**.
 - 화면이 부르는 op 는 시험(«화면-서버 배선»)이 서버의 op 표와 맞춰 본다.
 

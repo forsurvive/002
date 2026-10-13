@@ -23,7 +23,6 @@ const S = {
   askOpen: null,   // 새로 만드는 창이 «닫기 전에 물어볼 것»을 여기 걸어 둔다
   focusNext: '',   // 다시 그린 뒤 이 칸에 커서를 둔다
   redrawing: false,// 다시 그리는 중 — 그때 떨어지는 포커스는 저장이 아니다
-  tour: null,
   srcText: null,   // 지금 펼쳐 둔 작법서의 글 { id, text } — 갱신마다 오지 않으므로 열 때 한 번 받는다
   last: '',
   me: null,        // 온라인판에서 로그인한 사람 { loginId, displayName } — 개인판은 늘 null
@@ -176,8 +175,6 @@ const typedAny = (...ids) => ids.some((id) => String(S.typed[id] || '').trim());
 const firstLine = (text) => (String(text || '').split('\n').map((l) => l.trim()).find((l) => l) || '붙여 넣은 글').slice(0, 24);
 
 async function api(op, body = {}) {
-  // 튜토리얼이 도는 동안에는 서버로 한 걸음도 나가지 않는다 — 문 서른 남짓이 모두 이 한 곳을 지난다.
-  if (S.tour) return S.tour.api(op, body);
   const r = await fetch('/api', {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ op, pid: S.pid, ...body }),
@@ -220,7 +217,6 @@ function runsBox() {
 
 // 작품 파일(.story-project.json · 개인판 project.json) → 새 작품. 온라인판은 큰 파일을 받는 문(/api/import)으로.
 function importProjectFile() {
-  if (S.tour) return;
   const pick = h('input', { type: 'file', accept: '.json,application/json' });
   pick.onchange = async () => {
     const f = pick.files && pick.files[0];
@@ -246,7 +242,6 @@ async function logout() {
 }
 
 function download(kind, id, fmt = 'md') {
-  if (S.tour) return;   // 가짜 pid 로 내려받으러 가지 않는다
   const a = h('a', { href: '/api/download?pid=' + encodeURIComponent(S.pid) + '&kind=' + kind + '&id=' + encodeURIComponent(id) + '&fmt=' + fmt, download: '' });
   document.body.appendChild(a); a.click(); a.remove();
 }
@@ -268,7 +263,6 @@ function mdView(id, text, onclick) {
 // ---------------------------------------------------------------- 상태 받아오기
 
 async function pull(force) {
-  if (S.tour) return;   // 1.5초마다 도는 갱신도 멈춘다(가짜 pid 를 물으면 튜토리얼이 튕긴다)
   const url = S.pid ? '/api/state?pid=' + encodeURIComponent(S.pid) : '/api/state';
   let d;
   let status = 0;
@@ -337,7 +331,6 @@ function render() {
   $('root').replaceChildren(S.pid && S.project ? app() : projectList());
   $('layer1').replaceChildren(...(S.open ? [layerOne()] : []));
   $('layer2').replaceChildren(...(S.pick ? [pickLayer()] : S.confirm ? [confirmLayer()] : []));
-  $('layer3').replaceChildren(...(S.tour ? [tourLayer()] : []));
   S.redrawing = false;
   if (S.pid && S.project && S.project.readOnly) lockReadOnly();
   if (same1 && $('layer1').firstChild) $('layer1').firstChild.classList.add('still');
@@ -357,8 +350,6 @@ function render() {
       try { n.setSelectionRange(keep.s, keep.e); } catch {}
     }
   }
-  // 눈길 모으는 테는 스크롤을 되돌린 뒤에 잡는다 — 그 앞에서 잡으면 되돌리기가 지워 버린다.
-  if (S.tour) tourFocus();
   if (S.focusNext) {
     const n = $(S.focusNext);
     S.focusNext = '';
@@ -412,9 +403,7 @@ function projectList() {
         // 개인판 — 작품을 만들기 전에도 이 PC 의 설정(무엇으로 · 키 · ChatGPT · Gemini 모델)을 고친다
         S.me ? null : h('button', { class: 'btn-line', text: '설정', onclick: settingsOpen }),
         // 다른 PC · 개인판에서 내려받은 작품 파일 열기 — «+»(새 작품)와 헷갈리지 않게 위쪽 단추 줄에
-        h('button', { class: 'btn-line', text: W('작품 파일 가져오기'), onclick: importProjectFile }),
-        // 튜토리얼은 소설 작업을 보여 준다 — 전자책 오토(전자책 집필만 하는 앱)에는 세우지 않는다
-        isBook() ? null : h('button', { class: 'btn-line', text: '튜토리얼 보기', onclick: () => startTour() }))),
+        h('button', { class: 'btn-line', text: W('작품 파일 가져오기'), onclick: importProjectFile }))),
     // 새 작품 «+» — 화면 한가운데(좁은 창에서도 잘리지 않게 줄을 따로 둔다)
     h('div', { class: 'new-row' }, h('button', { class: 'plus big', text: '+', title: W('새 작품'), onclick: newProjectOpen })),
     S.homeSay ? h('div', { class: 'new-row' }, h('div', { class: 'notice', text: S.homeSay })) : null,
@@ -823,7 +812,7 @@ function threadSection() {
 // 온라인판 — 이 작품에 쓸 AI 회사. 개인 작품은 주인이 고르고, 수업 작품은 기관이 정한 것을 보여 준다(개인판에는 없다).
 const AI_CO = { anthropic: 'Claude', openai: 'ChatGPT', google: 'Gemini' };
 function aiCompany(p) {
-  if (!p.ai || S.tour) return null;
+  if (!p.ai) return null;
   const a = p.ai;
   const keys = new Set(a.keys || []);
   const name = (x) => AI_CO[x] || '';
@@ -957,7 +946,6 @@ function authSection(a, limit) {
 // ---- 등록 — 구독은 로그인 상태를 보이고 [로그인] 한 번, API 키는 ① 페이지 열기 ② 붙여 넣기 ③ 저절로(2026-10-13 «클릭과 복붙 몇 번으로»)
 // 로그인 상태는 서버가 실행기에 물어 준다(login.status). 상태를 묻는 일로 작품 상태를 다시 받지 않도록 조용한 문을 쓴다.
 async function quiet(op, body = {}) {
-  if (S.tour) return null;
   try {
     const r = await fetch('/api', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op, ...body }) });
     return await r.json();
@@ -1139,7 +1127,7 @@ function authRow(a) {
 // 화면에 보이는 모델 이름 — 온라인판은 등급(High Reasoning / Balanced)만 보인다(CLAUDE.md 원칙 4 — 실제 모델은 회사 · 설정이 정한다).
 // 개인판은 지금처럼 별칭(opus · sonnet · fable) 그대로.
 const TIER_NAME = { opus: 'High Reasoning', sonnet: 'Balanced', fable: 'High Reasoning' };
-const modelName = (m) => (S.me && !S.tour ? TIER_NAME[m] || m : m);
+const modelName = (m) => (S.me ? TIER_NAME[m] || m : m);
 
 function modelRow(list, cur, pick, follow) {
   const opts = (follow ? [''] : []).concat(list || []);
@@ -1501,7 +1489,7 @@ function docPanel(close) {
       h('span', { class: 'lab', style: 'margin:0', text: '확정본' }),
       h('button', { class: 'tg' + (d.isFinal ? ' on' : ''), onclick: () => api('doc.final', { ids: [d.id], on: !d.isFinal }) }),
       dlButton('doc:' + d.id, (fmt) => download('doc', d.id, fmt)),
-      S.me && !S.tour ? h('button', { class: 'btn-text', text: S.open.runs ? '만든 기록 닫기' : '만든 기록', onclick: () => toggleRuns(d.id) }) : null,
+      S.me ? h('button', { class: 'btn-text', text: S.open.runs ? '만든 기록 닫기' : '만든 기록', onclick: () => toggleRuns(d.id) }) : null,
       h('button', { class: 'btn-text red', text: '삭제', onclick: async () => { await api('doc.delete', { ids: [d.id] }); close(); } }),
       h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
@@ -1979,12 +1967,10 @@ function confirmLayer() {
 // ---------------------------------------------------------------- 시작
 
 document.addEventListener('click', (e) => {
-  if (S.tour) return;   // 각본이 세워 둔 차림표를 바깥 클릭이 닫지 않게
   if (S.menu && !e.target.closest('.menu') && !e.target.closest('.plus')) { S.menu = false; render(); }
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (S.tour) return tourExit();   // 튜토리얼에서는 Esc 가 «나가기»다
   if (S.pick) { S.pick = null; S.pickOpen = null; render(); }
   else if (S.confirm) { const f = S.confirm.onClose; S.confirm = null; render(); if (f) f(); }
   else if (S.open) closeLayer();
@@ -1997,7 +1983,7 @@ try { const q = new URLSearchParams(location.search).get('pid'); if (q) S.pid = 
 // 개인판(로그인 없음 — S.me 가 없다)은 붙지 않는다. 서버가 알림을 못 쓰면(503 · LISTEN 불가) 1분 뒤에 다시 붙어 본다.
 const EV = { es: null, pid: null, ok: false, retryAt: 0, lastPull: 0 };
 function events() {
-  if (!S.me || S.tour || typeof EventSource === 'undefined') return;
+  if (!S.me || typeof EventSource === 'undefined') return;
   const want = S.pid || '';
   if (EV.es && EV.pid === want) return;
   if (EV.es) { EV.es.close(); EV.es = null; EV.ok = false; }

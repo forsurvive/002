@@ -472,35 +472,6 @@ details summary:hover { opacity: .7; }
   font-size: 14px; line-height: 1.6; color: var(--dim);
 }
 
-/* ---------------------------------------------------------------- 튜토리얼 */
-/* 진짜 화면 위에 얹히는 세 번째 겹. 말풍선은 아래 한가운데 붙박이고 움직이지 않는다
-   — 영상으로 찍히므로 장면마다 흔들리면 안 된다. 움직이는 것은 눈길 모으는 테뿐이다. */
-.tour {
-  position: fixed; inset: 0; z-index: 40; pointer-events: none;
-  display: grid; align-items: end; justify-items: center; padding: 0 28px 28px;
-}
-/* 구멍 뚫린 막 — 바깥은 어둡고 테 안쪽만 밝다. 그림자 하나로 낸다. */
-.tour-ring {
-  position: fixed; border-radius: var(--r-m); pointer-events: none;
-  /* 창의 막(.32)보다 조금 짙다 — 밝은 바탕 위에서도 눈길이 한 자리에 모여야 한다(영상으로 찍힌다). */
-  box-shadow: var(--focus), 0 0 0 9999px rgba(28, 28, 30, .45);
-  transition: top .28s ease, left .28s ease, width .28s ease, height .28s ease;
-}
-/* 자리를 가진 테가 나중 형제보다 위에 그려지므로, 말풍선은 제 자리를 갖고 한 켜 위로 올라선다. */
-.tour-card { position: relative; z-index: 1; width: min(680px, 100%); max-height: none; pointer-events: auto; animation: none; }
-.tour-card .panel-body { gap: 16px; }
-.tour-say { font-size: 15.5px; line-height: 1.72; white-space: pre-wrap; color: var(--ink); }
-.tour-foot { justify-content: flex-end; }
-.tour-foot .btn-line { margin-right: auto; }
-/* 각본이 도는 동안에는 진짜 화면에 손이 닿지 않는다 — 눈으로는 다 보인다. */
-body.tour-on #root, body.tour-on #layer1, body.tour-on #layer2 { pointer-events: none; }
-/* 각본이 도는 동안 창은 위로 붙고 말풍선 위까지만 선다 — 아래쪽은 말풍선 자리이기 때문이다(--tour-h 는 tour.js 가 잰다).
-   잘린 아래는 휠 · 손가락 끌기로 내려 본다(tour.js «보기만 하는 스크롤»). 화면 끝도 말풍선 위로 올라올 만큼 여백을 둔다. */
-body.tour-on .layer { align-items: start; padding-top: 24px; }
-body.tour-on .panel { max-height: calc(100vh - var(--tour-h, 260px) - 64px); }
-body.tour-on .tour-card { max-height: none; }
-body.tour-on .body { padding-bottom: calc(var(--tour-h, 260px) + 60px); }
-
 /* ---------------------------------------------------------------- 읽기 쪽(소개 · 개인정보처리방침 · 이용약관 — 로그인 없이 연다) */
 .doc { max-width: 760px; margin-inline: auto; padding: 48px 24px 96px; }
 .doc h1 { font-size: 28px; letter-spacing: -.02em; margin: 0 0 6px; }

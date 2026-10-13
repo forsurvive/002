@@ -1016,7 +1016,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('화면이 상점 문을 부르지 않는다', !/api\('cloud\./.test(app) && !app.includes('S.cloud'));
   ok('홈에 구독하기·상점 단추가 없다', !app.includes('function shopButton') && !app.includes('shopButton()'));
   ok('상점에 이어졌다는 줄이 없다', !app.includes('function shopLine') && !app.includes('shopLine()'));
-  const screens = [app, src(join(ROOT, 'web', 'tour.js')), src(join(ROOT, 'web', 'tour.demo.js')),
+  const screens = [app,
     src(join(ROOT, 'web', 'index.html')), src(join(ROOT, 'web', 'style.css'))].join('\n');
   const leftover = (screens.match(/상점|구독하기|라이선스|브리지|text: '잇기'/g) || []);
   ok('화면에 상점·잇기·라이선스·브리지가 남아 있지 않다', leftover.length === 0, leftover.join(' '));
@@ -1775,7 +1775,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('고르기 창에 따로 선 «자료» 칸이 없다(카테고리로 선다)', !app.includes('p.materials'));
   ok('지어진 에이전트 창에 모델 칸이 있다', app.includes("api('prompt.model'") && app.includes("'작품 모델 따름 ('"));
   ok('목록에 자리의 모델이 보인다', app.includes("pr.model ? h('span', { class: 'mark', text: modelName(pr.model) })"));
-  ok('온라인 화면은 모델 별칭 대신 등급 이름을 보인다', app.includes("opus: 'High Reasoning', sonnet: 'Balanced'") && app.includes('const modelName = (m) => (S.me && !S.tour'));
+  ok('온라인 화면은 모델 별칭 대신 등급 이름을 보인다', app.includes("opus: 'High Reasoning', sonnet: 'Balanced'") && app.includes('const modelName = (m) => (S.me ? TIER_NAME[m]'));
 }
 
 // ---------------------------------------------------------------- 화면-서버 배선
@@ -1898,13 +1898,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('팔레트 토큰', rootHex.sort().join(','), ['#1c1c1e', '#ffffff', '#007aff', '#5ac8fa', '#ff3b30', '#ff9f9a'].sort().join(','));
   const strays = (css.replace(root, '').match(/#[0-9a-f]{3,8}/gi) || []).map((x) => x.toLowerCase()).filter((x) => !rootHex.includes(x));
   ok('팔레트 밖의 색을 쓰지 않는다', strays.length === 0, strays.join(' '));
-  // 튜토리얼도 같은 그물 안에 둔다 — 화면 코드가 둘로 갈렸다고 규칙이 갈리지 않는다.
-  const tour = src(join(ROOT, 'web', 'tour.js'));
-  const tourDemo = src(join(ROOT, 'web', 'tour.demo.js'));
   // 온라인판의 로그인 화면도 같은 그물 안에 둔다(같은 style.css · 같은 팔레트)
   const login = existsSync(join(ROOT, 'web', 'login.js')) ? src(join(ROOT, 'web', 'login.js')) : '';
   const school = existsSync(join(ROOT, 'web', 'school.js')) ? src(join(ROOT, 'web', 'school.js')) : '';
-  const screens = app + '\n' + tour + '\n' + tourDemo + '\n' + login + '\n' + school;
+  const screens = app + '\n' + login + '\n' + school;
   const strayApp = (screens.match(/#[0-9a-f]{3,8}/gi) || []);
   ok('화면 코드에 색을 박지 않는다', strayApp.length === 0, strayApp.join(' '));
   // 화면이 붙이는 반 이름이 style.css 에 실제로 있어야 한다 — 어긋나면 꾸밈이 통째로 죽는다(폰에서 실제로 났다).
@@ -1912,23 +1909,14 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   for (const m of screens.matchAll(/class: '([^']+)'/g)) for (const c of m[1].split(/\s+/)) if (c) usedClasses.add(c);
   const deadClasses = [...usedClasses].filter((c) => !css.includes('.' + c));
   ok('화면이 쓰는 반이 모두 style.css 에 있다', deadClasses.length === 0, deadClasses.join(' '));
-  // 튜토리얼 (사용자 지시, 2026-09-19) — 가상 작품으로 기능을 차례로 보여 주는 소개 시퀀스
-  ok('첫 화면에 튜토리얼 문이 있다', /text: '튜토리얼 보기', onclick: (\(\) => )?startTour/.test(app));
-  ok('세 번째 겹을 그린다', app.includes("$('layer3').replaceChildren") && /<div id="layer3">/.test(src(join(ROOT, 'web', 'index.html'))));
-  ok('튜토리얼 파일을 함께 부른다', /src="tour\.demo\.js"/.test(src(join(ROOT, 'web', 'index.html'))) && /src="tour\.js"/.test(src(join(ROOT, 'web', 'index.html'))));
-  // 서버로 나가는 길 셋이 모두 막혔는가 — 구독을 쓰지 않고 데이터에 쓰지 않는다는 약속의 전부다
-  ok('튜토리얼은 서버를 부르지 않는다', /async function api\(op, body = \{\}\) \{[\s\S]{0,200}if \(S\.tour\) return S\.tour\.api/.test(app));
-  ok('갱신도 멈춘다', /async function pull\(force\) \{\n  if \(S\.tour\) return;/.test(app));
-  ok('내려받기도 막는다', /function download\(kind, id, fmt = 'md'\) \{\n  if \(S\.tour\) return;/.test(app));
-  ok('각본이 도는 동안 손이 닿지 않는다', css.includes('body.tour-on #root') && tour.includes("classList.add('tour-on')"));
-  ok('Esc 는 나가기다', app.includes('if (S.tour) return tourExit();'));
-  ok('언제든 나갈 수 있다', /function tourExit\(/.test(tour) && tour.includes("text: '튜토리얼 나가기'"));
-  ok('나가면 있던 자리로 돌아온다', /Object\.assign\(S, t\.back\)/.test(tour));
-  ok('걸음마다 처음부터 되짚는다', /for \(let k = 0; k <= n; k\+\+\) t\.steps\[k\]\.act\(\)/.test(tour));
-  ok('걸음이 열은 넘는다', (tour.match(/\n      title: '/g) || []).length >= 10);
-  ok('데모 작품이 실린다', /function tourProject\(/.test(tourDemo) && tourDemo.includes('대리 상주'));
-  ok('데모 산출물이 갖춰졌다', ['TOUR_STUDY', 'TOUR_TREAT', 'TOUR_EP1', 'TOUR_CONTRA', 'TOUR_REVIEW', 'TOUR_TALK'].every((k) => tourDemo.includes('const ' + k)));
-  ok('데모가 진짜 프롬프트 자리 이름을 쓴다', ['F-UPDATE', 'F-CONTRA', 'F-REVIEW', 'F-MERGE'].every((c) => tourDemo.includes(c)));
+  // 튜토리얼 — 걷었다(사용자 지시, 2026-10-13 «튜토리얼 보기 기능 지워»). 2026-09-19 에 들였던 소개 시퀀스와 그 빗장이 다시 서지 않게
+  const html = src(join(ROOT, 'web', 'index.html'));
+  ok('첫 화면에 튜토리얼 문이 없다', !app.includes('튜토리얼') && !/startTour|tourExit|tourLayer|tourFocus/.test(app));
+  ok('튜토리얼 파일이 없고 부르지도 않는다', !existsSync(join(ROOT, 'web', 'tour.js')) && !existsSync(join(ROOT, 'web', 'tour.demo.js')) && !/tour(\.demo)?\.js/.test(html));
+  ok('튜토리얼만 쓰던 세 번째 겹 · 꾸밈이 없다', !html.includes('layer3') && !app.includes('layer3') && !css.includes('tour'));
+  ok('튜토리얼 빗장(S.tour)이 남아 있지 않다', !app.includes('S.tour'));
+  // 빗장을 걷어도 서버로 나가는 길 셋은 그대로다
+  ok('서버로 나가는 길 셋은 그대로', /async function api\(op, body = \{\}\) \{\n  const r = await fetch\('\/api'/.test(app) && /async function pull\(force\) \{\n  const url = S\.pid/.test(app) && /function download\(kind, id, fmt = 'md'\) \{\n  const a = h\('a'/.test(app));
   // 애플 꼴로 리뉴얼 (사용자 지시, 2026-09-19) — 갈래는 여전히 넷
   ok('애플 글꼴을 먼저 부른다', /-apple-system/.test(css) && /SF Pro Text/.test(css));
   ok('띠가 흐릿하게 비친다', /backdrop-filter/.test(css));
@@ -2691,7 +2679,7 @@ process.stdin.on('end', () => {
   ok('단계 화면의 회차 말은 템플릿이 정한다(전자책 — 장)', app.includes("const ew = w.episodeWord || '화';") && app.includes("text: '몇 ' + ew") && app.includes('st.episodes.length + ew') && !app.includes("'화 ' + (STAGE_MARK"));
   ok('끌 단계가 없는 템플릿(전자책)에는 «본문 단계» 스위치가 서지 않는다', app.includes('w.stages.some((x) => x.optional) ? ['));
   ok('전자책의 분량 안내는 «책의 설계»가 정한다고', app.includes("'분량은 비워 두면 «책의 설계»에서 AI 가 자료를 보고 정합니다'") && app.includes("'분량은 비워 두면 회차 수를 스스로 정합니다'"));
-  ok('**전자책 오토(전자책 집필만 하는 앱)에는 소설 튜토리얼을 세우지 않는다**', app.includes("isBook() ? null : h('button', { class: 'btn-line', text: '튜토리얼 보기'"));
+  ok('**전자책 오토(전자책 집필만 하는 앱)에는 소설 튜토리얼이 없다**(2026-10-13 — 어느 판에도 없다)', !app.includes('튜토리얼 보기'));
   ok('서문이 꺼진 까닭을 단계 창에 한 줄로(자료 분석의 판단)', app.includes('st.when && st.when.state !== true') && app.includes("josa(st.when.label, '을', '를')"));
   // 긴 글(EBOOK_EDITION §5-1) — 저장이 거절돼도(너무 큼 · 연결) 쓴 글을 잃지 않는다
   ok('**문서 저장이 거절되면 쓴 글을 칸에 되살리고 까닭을 보인다**', app.includes('Object.assign(S.typed, kept);') && app.includes("'저장하지 못했습니다 — '") && /try \{ r = await api\('doc\.write', body\); \} catch/.test(app));
