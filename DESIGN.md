@@ -15,7 +15,9 @@
 - 부르는 값은 이 PC 의 Claude 구독에서 나간다(`claude` 실행기). 가입·결제·관리자 페이지는 없다.
 - 클로드 호출: `-p --system-prompt-file <파일> --output-format stream-json --verbose --tools ""` + stdin 프롬프트 → 마지막 `result` 이벤트의 텍스트. (`tools/call.mjs`, 실측 검증된 계약 — 손대지 않는다.)
   더한 것 하나(2026-10-13): 실행기의 `--help` 에 `--no-session-persistence` 가 있으면 그것도 싣는다 — 원고가 든 호출 기록을 그 PC 의 사용자 폴더에 남기지 않게(USB 로 여러 PC 를 옮겨 다닌다). 모르는 실행기에는 싣지 않는다.
-- **ChatGPT 구독**(2026-10-13): 설정 › 무엇으로 › [ChatGPT 구독] 이면 같은 한 자리(`engine.callModel`)에서 Codex CLI(`codex exec … -`)로 간다. 돌려주는 꼴 · 고삐 · 실패 갈래는 같다. 모델은 Codex 가 정한다. 로그인은 PC 마다(`docs/PERSONAL_USB.md` §8). Gemini 구독은 약관 문제로 만들지 않았다(같은 곳 §8-2).
+- **ChatGPT 구독 · Gemini API 키**(2026-10-13): 설정 › 무엇으로 › [ChatGPT 구독] 이면 같은 한 자리(`engine.callModel`)에서 Codex CLI(`codex exec … -`)로, [Gemini API 키] 면 Gemini 어댑터(`ai/local-gemini.mjs`)로 간다.
+  돌려주는 꼴 · 고삐 · 실패 갈래는 같다. ChatGPT 모델은 Codex 제 목록에서(`auth.models` — 맨 앞 «Codex 기본»), Gemini 모델은 카탈로그의 등급을 표시 이름으로 고른다. 고른 것 · Gemini 키는 `data/auth.json`(키는 화면에 내려 주지 않는다).
+  화면의 갈래 이름: 그대로 · Claude 구독 · Claude API 키 · ChatGPT 구독 · Gemini API 키. ChatGPT 로그인은 PC 마다. Gemini 는 구독 로그인을 쓰지 않는다(약관 — `docs/PERSONAL_USB.md` §8).
 - `SE2_MOCK=1` 이면 호출 없이 가짜 응답(시험용).
 
 ### 파일
@@ -25,10 +27,11 @@
 tools/launch.mjs      Claude Code 탐색·설치 → 로그인 확인 → 서버 → 브라우저
 tools/claude-cli.mjs  실행기 탐색(실측본) · 없을 때 공식 설치기 돌리기
 tools/call.mjs        호출 하나
-tools/auth.mjs        무엇으로 부르는가(그대로 · 구독 · API 키 · ChatGPT 구독)
+tools/auth.mjs        무엇으로 부르는가(그대로 · Claude 구독 · Claude API 키 · ChatGPT 구독 · Gemini API 키)
 tools/codex-cli.mjs   ChatGPT 구독 길 — Codex CLI 찾기 · 로그인 확인 · 인자 짓기 · 출력 읽기(띄우기는 call.mjs runCodexCall)
 tools/datalock.mjs    자료 상자 잠금(data/.lock) — 같은 상자를 두 곳에서 열지 않게
 tools/backup.mjs      켤 때마다 작품 파일 한 벌(data/backup/projects/)
+tools/catalog-local.mjs 모델 카탈로그(config/models.json) 읽기 — Gemini 등급 → model id
 tools/usb-build.mjs   USB 휴대판 만들기 · 업데이트(앱 · 휴대용 Node · Claude Code · 고르면 Codex — 해시 확인)
 tools/engine.mjs      호출 하나를 짓는 자리(프롬프트 고르기 · 구획 채우기 · 한도 물음)
 tools/state.mjs       메모리가 정본, 파일은 그림자

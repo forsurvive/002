@@ -67,7 +67,10 @@ if (viaChatGPT) {
   line();
 }
 
-const before = viaChatGPT ? { loggedIn: true } : await authStatus(R.cli);
+// Gemini API 키로 돌면(설정 › 무엇으로) 실행기 로그인이 필요 없다 — 키가 없으면 앱이 첫 호출에서 이른다
+const viaGemini = auth.read().mode === 'gemini';
+if (viaGemini) line('  Gemini      : API key ' + (auth.read().geminiKey ? 'set' : 'NOT SET - put it in Settings') + '\n');
+const before = viaChatGPT || viaGemini ? { loggedIn: true } : await authStatus(R.cli);
 if (!before.loggedIn) {
   line('  ------------------------------------------------------------');
   line('   ONE-TIME LOGIN (first run on this computer)');

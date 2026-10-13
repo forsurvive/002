@@ -17,6 +17,9 @@ import { killAllCalls, lastLimit } from './call.mjs';
 import * as auth from './auth.mjs';
 import { createOps } from './ops.mjs';
 import { baseTemplate, templateKeyOf } from './workflow.mjs';
+import { codexModels } from './codex-cli.mjs';
+import { CODEX } from './call.mjs';
+import { geminiChoices } from './catalog-local.mjs';
 import { normalizeProject, saveProject, newId, DATA_DIR } from './store.mjs';
 import { acquire as lockData } from './datalock.mjs';
 import { backupProjects } from './backup.mjs';
@@ -50,6 +53,8 @@ async function prepareThenStudy(pid, ctx, request = '') {
 }
 // 작품마다 제 용도의 단계 템플릿(이야기 만들기 · 전자책) — 적혀 있지 않은 작품은 이야기 만들기(지금까지의 모든 작품)
 const workflowOf = async (pid) => baseTemplate(templateKeyOf(state.get(pid)));
+// 모의 실행에서는 Codex 를 띄우지 않는다 — 고르기 화면을 시험하는 가짜 목록
+const MOCK_MODELS = process.env.SE2_MOCK === '1' ? [{ id: 'mock-gpt', name: 'Mock GPT' }] : null;
 const LOCAL_DEPS = { ...engine.LOCAL, prepare: prepareThenStudy, workflow: workflowOf };
 jobs.useRunner((kind, params, ctx) => runKind(LOCAL_DEPS, kind, params, ctx));
 
@@ -69,7 +74,9 @@ function importProject(raw) {
   return { pid: p.id };
 }
 
-const { OPS, stateOf, downloadOf } = createOps({ state, jobs, engine, auth, limit: lastLimit, prepared, startAgentPrep, workflow: workflowOf, importProject, purposeChoice: true });
+const { OPS, stateOf, downloadOf } = createOps({ state, jobs, engine, auth, limit: lastLimit, prepared, startAgentPrep, workflow: workflowOf, importProject, purposeChoice: true,
+  // ChatGPT 는 그 PC 의 Codex 가 아는 목록(없으면 빈 목록 — 화면은 «Codex 기본»만), Gemini 는 카탈로그
+  authModels: async () => ({ chatgpt: MOCK_MODELS || await codexModels(CODEX.cli), gemini: geminiChoices() }) });
 
 export const OP_NAMES = Object.keys(OPS);
 

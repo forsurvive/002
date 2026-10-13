@@ -27,6 +27,8 @@ const S = {
   srcText: null,   // 지금 펼쳐 둔 작법서의 글 { id, text } — 갱신마다 오지 않으므로 열 때 한 번 받는다
   last: '',
   me: null,        // 온라인판에서 로그인한 사람 { loginId, displayName } — 개인판은 늘 null
+  authModels: null,        // 개인판 — ChatGPT · Gemini 고를 모델 목록(auth.models, 한 번 받는다)
+  authModelsLoading: false,
 };
 
 const KIND_MARK = { check: '모순 검사', review: '합평회' };
@@ -893,7 +895,7 @@ function settings() {
       h('div', { class: 'lab', text: '무엇으로' }),
       authRow(p.auth),
       h('div', { class: 'line', style: 'margin-top:8px' },
-        textbox('set-key', 'API 키', '', {
+        textbox('set-key', 'Claude API 키', '', {
           onblur: async () => {
             const v = String(S.typed['set-key'] || '').trim();
             if (!v) return;
@@ -904,6 +906,7 @@ function settings() {
         p.auth && p.auth.hasKey
           ? h('button', { class: 'btn-text red', text: '키 지우기', onclick: () => api('auth.write', { apiKey: '' }) })
           : null),
+      authMore(p.auth),
       p.limit ? h('div', { class: 'when', text: limitSay(p.limit) }) : null),
     // 누름을 click 이 아니라 mousedown 으로 받는다 — 위 칸에 글을 치던 중이면 click 이 오기 전에 다시 그려진다.
     h('div', { class: 'line' },
@@ -939,7 +942,50 @@ function openAgent(id, back) { S.open = { type: 'agent', id, model: null, back: 
 //   구독   : 물려받은 API 키를 지워 구독으로만 돌린다
 //   API 키 : 담아 둔 키로 돈다
 //   ChatGPT 구독 : 그 PC 에 로그인한 Codex CLI 로 돈다(모델은 Codex 가 정한다 — 위 «모델»은 클로드에만)
-const AUTH_SAY = { auto: '그대로', sub: '구독', api: 'API 키', chatgpt: 'ChatGPT 구독' };
+//   Gemini API 키 : Gemini 는 구독이 아니라 키로(2026-10-13 사용자 결정) — 키 · 모델은 아래 authMore 에서
+const AUTH_SAY = { auto: '그대로', sub: 'Claude 구독', api: 'Claude API 키', chatgpt: 'ChatGPT 구독', gemini: 'Gemini API 키' };
+
+// 고를 모델 목록은 한 번 받아 둔다(ChatGPT — 그 PC 의 Codex 가 아는 것 · Gemini — 카탈로그의 표시 이름)
+function authModels() {
+  if (S.authModels || S.authModelsLoading) return S.authModels;
+  S.authModelsLoading = true;
+  api('auth.models').then((r) => { S.authModels = (r && r.ok && r.models) || { chatgpt: [], gemini: [] }; S.authModelsLoading = false; render(); });
+  return null;
+}
+
+// 하나만 켜지는 네모 줄 — 모델 고르기
+function pickRow(list, cur, pick) {
+  return h('div', { class: 'line', style: 'flex-wrap:wrap' }, list.map((m) => h('div', {
+    class: 'line', style: 'gap:6px;cursor:pointer', title: m.note || '',
+    onmousedown: () => pick(m.id),
+  }, h('button', { class: 'ck' + (cur === m.id ? ' on' : '') }), h('span', { text: m.name }))));
+}
+
+// ChatGPT 구독 · Gemini API 키를 골랐을 때만 — 모델(과 Gemini 키)
+function authMore(a) {
+  if (!a || (a.mode !== 'chatgpt' && a.mode !== 'gemini')) return null;
+  const ms = authModels();
+  if (a.mode === 'chatgpt') {
+    const list = [{ id: '', name: 'Codex 기본' }, ...((ms && ms.chatgpt) || [])];
+    return h('div', { style: 'margin-top:8px' },
+      h('div', { class: 'lab', text: 'ChatGPT 모델' }),
+      pickRow(list, a.chatgptModel || '', (id) => api('auth.write', { chatgptModel: id })),
+      ms && !(ms.chatgpt || []).length ? h('div', { class: 'when', text: 'Codex 의 모델 목록을 읽지 못했습니다 — Codex 기본으로 돕니다' }) : null);
+  }
+  return h('div', { style: 'margin-top:8px' },
+    h('div', { class: 'lab', text: 'Gemini 모델' }),
+    pickRow((ms && ms.gemini) || [], a.geminiModel || '', (id) => api('auth.write', { geminiModel: id })),
+    h('div', { class: 'line', style: 'margin-top:8px' },
+      textbox('set-gkey', a.hasGeminiKey ? 'Gemini API 키 — 들어 있음' : 'Gemini API 키', '', {
+        onblur: async () => {
+          const v = String(S.typed['set-gkey'] || '').trim();
+          if (!v) return;
+          clearTyped('set-gkey');
+          await api('auth.write', { geminiKey: v });
+        },
+      }),
+      a.hasGeminiKey ? h('button', { class: 'btn-text red', text: '키 지우기', onclick: () => api('auth.write', { geminiKey: '' }) }) : null));
+}
 
 function authRow(a) {
   const cur = (a && a.mode) || 'auto';

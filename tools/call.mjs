@@ -380,7 +380,8 @@ export async function runCodexCall({ systemPrompt, prompt, mockKey, signal, mode
     const outFile = join(dir, 'last-message.txt');
     writeFileSync(spFile, String(systemPrompt || ''), 'utf8');
     // ChatGPT 길에는 클로드의 키가 쓰일 일이 없다 — 물려받은 ANTHROPIC_API_KEY · CLAUDE_* 를 걷는 같은 손질만 한다
-    p = spawn(exe, buildCodexArgs({ dir, systemPromptFile: spFile, outFile }), { env: childEnv({ mode: 'sub' }), windowsHide: true, cwd: dir });
+    // 모델은 사람이 고른 것(설정 › 무엇으로 › ChatGPT 구독) — 작품의 모델(opus · sonnet …)은 클로드의 것이라 넘기지 않는다
+    p = spawn(exe, buildCodexArgs({ dir, systemPromptFile: spFile, outFile, model: auth.read().chatgptModel }), { env: childEnv({ mode: 'sub' }), windowsHide: true, cwd: dir });
     LIVE.add(p);
     p.stdin.on('error', () => {});
     try { p.stdin.write(String(prompt), 'utf8'); } catch {}
@@ -427,4 +428,11 @@ export async function runCodexCall({ systemPrompt, prompt, mockKey, signal, mode
     if (dir) { try { rmSync(dir, { recursive: true, force: true }); } catch {} }
     release();
   }
+}
+
+// 실행기를 띄우지 않는 부르기(Gemini API 키 — ai/local-gemini.mjs)도 같은 고삐를 지난다. fn(signal) 의 결과를 그대로 돌려준다.
+export async function withSeat(signal, fn) {
+  const got = await acquire(signal);
+  if (!got) return null;
+  try { return await fn(); } finally { release(); }
 }

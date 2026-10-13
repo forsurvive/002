@@ -1217,7 +1217,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   let a = await post('auth.read');
   eq('손대지 않는 것이 기본이다', a.auth.mode, 'auto');
   eq('키는 없다', a.auth.hasKey, false);
-  ok('고를 수 있는 갈래 넷(ChatGPT 구독이 더해졌다 — 2026-10-13)', a.auth.modes.join(',') === 'auto,sub,api,chatgpt');
+  ok('고를 수 있는 갈래 다섯(ChatGPT 구독 · Gemini API 키가 더해졌다 — 2026-10-13)', a.auth.modes.join(',') === 'auto,sub,api,chatgpt,gemini');
 
   a = await post('auth.write', { mode: 'api', apiKey: 'sk-ant-시험-키' });
   eq('갈래가 바뀐다', a.auth.mode, 'api');
@@ -2226,13 +2226,14 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 const fs = require('node:fs');
 const a = process.argv.slice(2);
 if (a[0] === 'login') process.exit(fs.existsSync(${JSON.stringify(flag)}) ? 0 : 1);
+if (a[0] === 'debug') { console.log(JSON.stringify({ models: [{ slug: 'gpt-a', display_name: 'GPT-A', visibility: 'list' }, { slug: 'hidden-x', display_name: 'H', visibility: 'hide' }, { slug: 'bad slug!', display_name: 'B' }] })); process.exit(0); }
 let input = '';
 process.stdin.on('data', (d) => { input += d; });
 process.stdin.on('end', () => {
   const sp = JSON.parse(a[a.indexOf('-c') + 1].replace(/^model_instructions_file=/, ''));
   const sys = fs.readFileSync(sp, 'utf8');
   if (input.includes('LIMIT')) { console.log(JSON.stringify({ type: 'turn.failed', error: { message: "You've hit your usage limit. Try again later." } })); process.exit(1); }
-  fs.writeFileSync(a[a.indexOf('-o') + 1], '답[' + sys + '] ' + input);
+  fs.writeFileSync(a[a.indexOf('-o') + 1], (a.includes('-m') ? '(m=' + a[a.indexOf('-m') + 1] + ')' : '') + '답[' + sys + '] ' + input);
   console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 7, output_tokens: 2, cached_input_tokens: 1 } }));
 });
 `.replace(/^\n/, ''));
@@ -2246,6 +2247,14 @@ process.stdin.on('end', () => {
     ok('사용량을 같은 꼴로', r.usage && r.usage.input === 7 && r.usage.output === 2 && r.usage.cacheRead === 1);
     r = await call.runCodexCall({ systemPrompt: '작법', prompt: 'LIMIT', cli: fake });
     ok('구독 한도는 같은 갈래(quota-session)로', !r.ok && r.reason === 'quota-session' && r.error.includes('ChatGPT 구독 한도'), JSON.stringify(r));
+    // 모델 고르기(2026-10-13 «챗 지피티도 모델을 고를 수 있도록») — 목록은 Codex 제 목록에서, 고른 것은 -m 으로
+    const ml = await cx.codexModels(fake);
+    ok('ChatGPT 모델 목록은 Codex 가 내보이는 것만(숨긴 것 · 이상한 이름은 뺀다)', ml.length === 1 && ml[0].id === 'gpt-a' && ml[0].name === 'GPT-A', JSON.stringify(ml));
+    const authM = await import('./auth.mjs');
+    authM.write({ chatgptModel: 'gpt-a' });
+    r = await call.runCodexCall({ systemPrompt: '작법', prompt: '쓰라', cli: fake });
+    ok('고른 ChatGPT 모델이 실행기에 실린다', r.ok && r.text === '(m=gpt-a)답[작법] 쓰라', JSON.stringify(r));
+    authM.write({ chatgptModel: '' });
     const calls = () => readdirSync(tmpdir()).filter((f) => f.startsWith('se2-call-')).length;
     const before = calls();
     await call.runCodexCall({ systemPrompt: '작법', prompt: '한 번 더', cli: fake });
@@ -2255,11 +2264,69 @@ process.stdin.on('end', () => {
   const { isProvider } = await import('../ai/provider.mjs');
   ok('ChatGPT 길도 Provider 계약을 지킨다', isProvider(prov.localCodexProvider));
   const engSrc = src(join(HERE, 'engine.mjs'));
-  ok('«ChatGPT 구독»을 고르면 같은 한 자리(callModel)에서 Codex 로 간다', engSrc.includes("generator === localCliProvider && auth.read().mode === 'chatgpt' ? localCodexProvider : generator"));
+  ok('«ChatGPT 구독» · «Gemini API 키»를 고르면 같은 한 자리(callModel)에서 그 길로 간다', engSrc.includes("const BY_MODE = { chatgpt: localCodexProvider, gemini: localGeminiProvider };")
+    && engSrc.includes("generator === localCliProvider ? BY_MODE[auth.read().mode] || generator : generator"));
   const la = src(join(HERE, 'launch.mjs'));
-  ok('ChatGPT 구독이면 실행기가 Codex 로그인을 본다(그 PC 에서 처음 한 번)', la.includes("auth.read().mode === 'chatgpt'") && la.includes('codexLogin(C.cli)') && la.includes('viaChatGPT ? { loggedIn: true }'));
+  ok('ChatGPT 구독이면 실행기가 Codex 로그인을 본다(그 PC 에서 처음 한 번)', la.includes("auth.read().mode === 'chatgpt'") && la.includes('codexLogin(C.cli)') && la.includes('viaChatGPT || viaGemini ? { loggedIn: true }'));
   ok('Codex 는 폴더에 담아 온 것 → PATH 순서로만 찾는다', /join\(HERE, 'codex', 'bin', EXE\), join\(HERE, 'codex', EXE\)/.test(src(join(HERE, 'codex-cli.mjs'))));
   ok('화면에 «ChatGPT 구독» 갈래', src(join(ROOT, 'web', 'app.js')).includes("chatgpt: 'ChatGPT 구독'"));
+}
+
+// ---------------------------------------------------------------- ChatGPT 모델 · Gemini API 키 (2026-10-13 사용자 결정)
+{
+  const cx = await import('./codex-cli.mjs');
+  const withM = cx.buildCodexArgs({ dir: 'd', systemPromptFile: 's', outFile: 'o', model: 'gpt-a' });
+  ok('고른 모델은 -m 으로(프롬프트 stdin 은 늘 맨 끝)', withM[withM.indexOf('-m') + 1] === 'gpt-a' && withM[withM.length - 1] === '-');
+  eq('목록이 아니면 빈 목록', cx.parseCodexModels('not json').length, 0);
+
+  const authM = await import('./auth.mjs');
+  let v = authM.write({ chatgptModel: 'gpt-a' });
+  eq('ChatGPT 모델을 적는다', v.chatgptModel, 'gpt-a');
+  v = authM.write({ chatgptModel: 'rm -rf /' });
+  eq('이상한 모델 이름은 받지 않는다(지금 값을 지킨다)', v.chatgptModel, 'gpt-a');
+  v = authM.write({ chatgptModel: '' });
+  eq('빈 값은 «Codex 기본»', v.chatgptModel, '');
+  v = authM.write({ geminiModel: 'fast' });
+  eq('Gemini 는 등급으로 고른다', v.geminiModel, 'fast');
+  v = authM.write({ geminiModel: 'gemini-9-ultra' });
+  eq('모델 id 로는 고르지 않는다(카탈로그의 등급만)', v.geminiModel, 'fast');
+  const KEY = 'AIza-test-key-123456';
+  let r = await post('auth.write', { geminiKey: KEY });
+  ok('Gemini 키는 들어 있는지만 이른다', r.ok && r.auth.hasGeminiKey === true && !JSON.stringify(r).includes(KEY));
+  const anyPid = (await post('project.list')).projects.map((x) => x.id)[0];
+  if (anyPid) ok('상태에도 키가 실리지 않는다', !JSON.stringify(await stateOf(anyPid)).includes(KEY));
+  r = await post('auth.models');
+  ok('고를 모델 목록(모의 — Codex 를 띄우지 않는다)', r.ok && r.models.chatgpt[0].id === 'mock-gpt' && r.models.gemini.length === 3);
+  const cat = JSON.parse(readFileSync(join(ROOT, 'config', 'models.json'), 'utf8')).models.filter((m) => m.provider === 'google');
+  ok('Gemini 고르기는 카탈로그의 표시 이름 · 등급만(model id 는 내려 주지 않는다)', r.models.gemini.every((g) => ['high_reasoning', 'balanced', 'fast'].includes(g.id)) && !cat.some((m) => JSON.stringify(r).includes(m.modelId)));
+
+  // Gemini 길 — 키 · 등급 → model id(카탈로그) · 같은 어댑터
+  const lg = await import('../ai/local-gemini.mjs');
+  const { createCatalog } = await import('../ai/catalog.mjs');
+  const seen = [];
+  const fakeGem = { id: 'g', generate: async (x) => { seen.push(x); return { ok: true, text: '제미니 답', usage: {}, finishReason: 'stop' }; } };
+  const catalog = () => createCatalog(cat);
+  let prov = lg.createLocalGeminiProvider({ gemini: fakeGem, catalog, read: () => ({ geminiKey: '', geminiModel: 'balanced' }), mock: false });
+  let g = await prov.generate({ systemPrompt: 's', userPrompt: 'u' });
+  ok('키가 없으면 부르지 않고 «키가 없습니다»', !g.ok && g.reason === 'auth' && seen.length === 0);
+  prov = lg.createLocalGeminiProvider({ gemini: fakeGem, catalog, read: () => ({ geminiKey: KEY, geminiModel: 'balanced' }), mock: false });
+  g = await prov.generate({ systemPrompt: 's', userPrompt: 'u' });
+  const want = cat.find((m) => m.tier === 'balanced');
+  ok('고른 등급의 카탈로그 model id 로 · 키는 credential 로만', g.ok && g.text === '제미니 답' && seen[0].model === want.modelId && seen[0].credential.apiKey === KEY && seen[0].systemPrompt === 's' && seen[0].userPrompt === 'u');
+  prov = lg.createLocalGeminiProvider({ gemini: fakeGem, catalog: () => createCatalog([]), read: () => ({ geminiKey: KEY, geminiModel: 'balanced' }), mock: false });
+  g = await prov.generate({ systemPrompt: 's', userPrompt: 'u' });
+  ok('카탈로그에 없으면 «모델 없음»으로 물러선다', !g.ok && g.reason === 'model');
+  const { isProvider } = await import('../ai/provider.mjs');
+  ok('Gemini 길도 Provider 계약을 지킨다', isProvider(lg.localGeminiProvider));
+  ok('Gemini 길도 같은 고삐를 지난다', src(join(ROOT, 'ai', 'local-gemini.mjs')).includes('withSeat(signal'));
+  await post('auth.write', { geminiKey: '' });
+  authM.write({ mode: 'auto', geminiModel: 'balanced' });
+
+  const app = src(join(ROOT, 'web', 'app.js'));
+  ok('화면 — ChatGPT 를 고르면 모델 고르기(맨 앞 «Codex 기본»)', app.includes("[{ id: '', name: 'Codex 기본' }, ...((ms && ms.chatgpt) || [])]") && app.includes("api('auth.write', { chatgptModel: id })"));
+  ok('화면 — Gemini 를 고르면 모델 · 키 칸', app.includes("gemini: 'Gemini API 키'") && app.includes("api('auth.write', { geminiModel: id })") && app.includes("api('auth.write', { geminiKey: v })"));
+  const la = src(join(HERE, 'launch.mjs'));
+  ok('Gemini API 키로 돌면 실행기 로그인을 묻지 않는다', la.includes('viaChatGPT || viaGemini ? { loggedIn: true }'));
 }
 
 // ---------------------------------------------------------------- USB 휴대판 — 만들기 도구 (망 없이 순수 부분만)
@@ -2291,10 +2358,12 @@ process.stdin.on('end', () => {
   ok('담는 앱 파일에 실행기 · 서버 · 화면 · Core · 단계 템플릿이 있다', ['스토리 엔진 개인판.cmd', 'tools/launch.mjs', 'tools/server.mjs', 'web/index.html', 'core/workflow/stages.mjs', 'config/workflows/ebook.json', 'tools/prompts.data.json'].every((f) => files.includes(f)));
   // 결제 관련 부가 기능은 USB 판에 싣지 않는다(사용자 지시, 2026-10-13) — 저장소에서는 지우지 않는다(온라인 앱 · 그 시험이 쓴다)
   ok('**결제 · 이용권 · 체험 · 환불 · 계정 · 운영 화면은 USB 에 싣지 않는다**', ['web/account.html', 'web/manage.html', 'web/login.html', 'web/login.js', 'web/school.html', 'web/school.js', 'web/terms.html', 'web/privacy.html', 'web/about.html', 'web/policy.js'].every((f) => !files.includes(f) && existsSync(join(ROOT, f))));
-  ok('온라인 어댑터 · 온라인 문서도 싣지 않는다', !files.some((f) => /^ai\/(router|anthropic|openai|gemini|credentials|subscription|catalog)\.mjs$/.test(f) || /^docs\/(OPEN_EDITION|REPLIT_DEPLOYMENT|SECURITY|ERD|API)\.md$/.test(f)));
+  // Gemini 어댑터 · 카탈로그는 «Gemini API 키» 길이 쓴다(2026-10-13) — 그 밖의 온라인 어댑터는 싣지 않는다
+  ok('Gemini API 키 길이 쓰는 어댑터 · 카탈로그는 싣는다', ['ai/gemini.mjs', 'ai/catalog.mjs', 'ai/local-gemini.mjs', 'config/models.json'].every((f) => files.includes(f)));
+  ok('온라인 어댑터 · 온라인 문서도 싣지 않는다', !files.some((f) => /^ai\/(router|anthropic|openai|credentials|subscription)\.mjs$/.test(f) || /^docs\/(OPEN_EDITION|REPLIT_DEPLOYMENT|SECURITY|ERD|API)\.md$/.test(f)));
   const payWords = /그로블|이용권|환불|정기결제|무료 체험|subscription_inactive|billing_refs/;
-  const paid = files.filter((f) => /\.(mjs|js|html|md)$/.test(f) && f !== 'web/app.js' && payWords.test(readFileSync(join(ROOT, ...f.split('/')), 'utf8')));
-  ok('담는 파일에 결제 이야기가 없다(app.js 는 온라인판과 함께 쓰는 화면 — 아래)', paid.length === 0, paid.join(' '));
+  const paid = files.filter((f) => /\.(mjs|js|html|md)$/.test(f) && f !== 'web/app.js' && f !== 'docs/PERSONAL_USB.md' && payWords.test(readFileSync(join(ROOT, ...f.split('/')), 'utf8')));
+  ok('담는 파일에 결제 이야기가 없다(app.js 는 온라인판과 함께 쓰는 화면 — 아래 · 휴대판 안내는 «무엇을 뺐는가»를 적는다)', paid.length === 0, paid.join(' '));
   ok('개인판 화면(app.js)의 이용권 줄은 로그인한 온라인 사용자에게만 선다(개인판은 S.me 가 늘 null)', src(join(ROOT, 'web', 'app.js')).includes("S.me && S.me.edition === 'open' && S.me.pass === false"));
   ok('담는 모듈은 서로의 import 를 빠짐없이 품는다', files.filter((f) => f.endsWith('.mjs')).every((f) => ub.moduleClosure(ROOT, [f]).every((g) => files.includes(g))));
   ok('온라인판으로 넘어가는 길(바깥에 열고 DB 가 있을 때만)은 따라가지 않는다', !files.some((f) => f.startsWith('online/')));

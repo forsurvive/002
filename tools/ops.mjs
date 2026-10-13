@@ -31,6 +31,7 @@ const pickModel = (v, fallback) => (MODELS.includes(String(v || '')) ? String(v 
  *   prepared(p) · startAgentPrep(pid, request)
  *   workflow(pid) : 그 프로젝트에 쓸 단계 템플릿(개인판은 설정 파일, 온라인은 고쳐 쓴 것까지) — 없으면 단계 기능이 서지 않는다
  *   cardsOn(p)    : 작업 중 강의 카드를 보이는가(개인판 기본 꺼짐 · 기관 프로젝트는 기관 설정)
+ *   authModels()  : 개인판의 ChatGPT · Gemini 고를 모델 목록 { chatgpt:[{id,name}], gemini:[{id,name}] }
  *   purposeChoice : 새 작품을 만들 때 용도(purpose: 'ebook')를 받는가 — 개인판만. 온라인판은 앱의 용도(templateKey)가 정한다
  */
 export function createOps(d) {
@@ -354,7 +355,9 @@ export function createOps(d) {
 
     // 무엇으로 돈이 나가는가 — 사람이 고른다. 키는 내려 주지 않는다(들어 있는지만 이른다).
     'auth.read': async () => ok({ auth: auth.view() }),
-    'auth.write': async (b) => ok({ auth: auth.write({ mode: b.mode, apiKey: b.apiKey }) }),
+    'auth.write': async (b) => ok({ auth: auth.write({ mode: b.mode, apiKey: b.apiKey, chatgptModel: b.chatgptModel, geminiKey: b.geminiKey, geminiModel: b.geminiModel }) }),
+    // 고를 수 있는 모델 — ChatGPT(Codex 제 목록) · Gemini(카탈로그의 표시 이름). 개인판만 넣는다(온라인판은 빈 목록)
+    'auth.models': async () => ok({ models: d.authModels ? await d.authModels() : { chatgpt: [], gemini: [] } }),
   };
 
   // ---------------------------------------------------------------- 상태
