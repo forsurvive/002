@@ -1366,7 +1366,9 @@ function promptPanel(close) {
 const FILE_MAX = 2 * 1024 * 1024;
 const DOC_MAX = 20 * 1024 * 1024;
 const TEXT_EXT = /\.(txt|md|markdown|text)$/i;
-const DOC_EXT = /\.(docx|pdf)$/i;
+const DOC_EXT = /\.(docx|pdf|hwpx)$/i;
+const ZIP_EXT = /\.zip$/i;
+const ZIP_MAX = 100 * 1024 * 1024;
 const PIC_EXT = /\.(png|jpe?g|gif|webp)$/i;
 // 꺼낸 그림 → 올릴 꼴(긴 변 1600px · base64)
 async function picsOf(list) {
@@ -1374,45 +1376,84 @@ async function picsOf(list) {
   for (const x of list || []) out.push({ key: x.key, ...(await picOf(new Blob([x.bytes], { type: x.mime }), x.name)) });
   return out;
 }
-function fileButton(onRead, onBad = (m) => { S.open.err = m; render(); }) {
+function fileButton(onRead, onBad = (m) => { S.open.err = m; render(); }, onNote = null) {
   const pics = !S.me;   // 그림은 개인판만(온라인판은 아직 그림을 두지 않는다)
+  // 파일 하나 — as 는 넣을 때의 이름(압축 안에서 온 것이면 «압축 이름/안의 경로»)
+  function one(f, as = f.name) {
+    if (DOC_EXT.test(f.name) || (pics && PIC_EXT.test(f.name))) {
+      if (f.size > DOC_MAX) { onBad(as + ' — 파일이 너무 큽니다(20MB 까지)'); return; }
+      if (!window.SEText) { onBad(as + ' — 문서 파일을 읽는 부분을 불러오지 못했습니다'); return; }
+      (pics ? window.SEText.contentOf(f) : window.SEText.textOf(f).then((text) => ({ text, images: [], skipped: 0 }))).then(async (r) => {
+        if (r.text.length > FILE_MAX) return onBad(as + ' — 뽑은 글이 너무 깁니다(2MB 까지) — 나눠서 넣어 주세요');
+        onRead(as.replace(DOC_EXT, '').replace(PIC_EXT, ''), r.text, await picsOf(r.images), r.skipped || 0);
+      }).catch((err) => onBad(as + ' — ' + String((err && err.message) || err)));
+      return;
+    }
+    if (/\.hwpx?$/i.test(f.name)) { onBad(as + ' — 한글(hwp) 파일은 읽지 못합니다. 한글에서 docx · pdf · txt 로 저장해 넣어 주세요'); return; }
+    if (!TEXT_EXT.test(f.name) && !/^text\//.test(f.type || '')) { onBad(as + ' — txt · md · docx · pdf · hwpx · zip 파일만 넣을 수 있습니다'); return; }
+    // 그림을 담은 md(개인판)는 파일이 클 수 있다 — 그림을 꺼낸 뒤의 글로 2MB 를 잰다
+    const mdPics = pics && /\.(md|markdown)$/i.test(f.name);
+    if (f.size > (mdPics ? DOC_MAX : FILE_MAX)) { onBad(as + ' — 파일이 너무 큽니다(' + (mdPics ? '20MB' : '2MB') + ' 까지)'); return; }
+    const rd = new FileReader();
+    rd.onload = () => {
+      const t = String(rd.result || '');
+      // 깨진 글자(�)가 많거나 NUL 이 있으면 글 파일이 아니다(인코딩이 다르거나 바이너리)
+      if (t.includes('\u0000') || (t.match(/\uFFFD/g) || []).length > Math.max(3, t.length / 100)) return onBad(as + ' — 글로 읽을 수 없습니다(UTF-8 txt · md 로 저장해 주세요)');
+      // md 속에 담겨 온 그림(data:)은 꺼내 그림으로(개인판)
+      if (!mdPics || !window.SEText || !window.SEText.mdContent) return onRead(as, t);
+      const md = window.SEText.mdContent(t);
+      if (md.text.length > FILE_MAX) return onBad(as + ' — 글이 너무 깁니다(그림을 빼고 2MB 까지) — 나눠서 넣어 주세요');
+      picsOf(md.images).then((imgs) => onRead(as, md.text, imgs, 0)).catch((err) => onBad(as + ' — ' + String((err && err.message) || err)));
+    };
+    rd.readAsText(f, 'utf-8');
+  }
+  // 압축 파일 — 브라우저 안에서 풀고, 안의 파일마다 내용으로 종류를 가려 one 으로 넘긴다(DESIGN §3 «압축 파일»).
+  // 이름은 «압축 이름/안의 경로». 무엇을 넣었는지 한 줄로 알리고(onNote), 넣지 못한 것은 이름과 까닭을 모아 알린다.
+  async function unzip(f) {
+    if (f.size > ZIP_MAX) return onBad(f.name + ' — 압축 파일이 너무 큽니다(100MB 까지)');
+    if (!window.SEText || !window.SEText.zipFiles) return onBad(f.name + ' — 압축을 푸는 부분을 불러오지 못했습니다');
+    let r;
+    try { r = await window.SEText.zipFiles(new Uint8Array(await f.arrayBuffer())); } catch (err) { return onBad(f.name + ' — ' + String((err && err.message) || err)); }
+    const base = f.name.replace(ZIP_EXT, '');
+    const skipped = r.skipped.slice();
+    const took = { text: 0, doc: 0, pic: 0 };
+    for (const x of r.files) {
+      const leaf = x.path.split('/').pop();
+      const as = base + '/' + x.path.replace(/\.hwpx$/i, '');
+      if (x.text != null) {
+        // 글(인코딩을 가려 푼 것) · hwpx 에서 뽑은 글 — UTF-8 글 파일로 같은 길을 지난다
+        one(new File([x.text], TEXT_EXT.test(leaf) ? leaf : leaf.replace(/\.hwpx$/i, '') + '.txt', { type: 'text/plain' }), as);
+        took.text += 1;
+      } else if (x.kind === 'image') {
+        if (!pics) { skipped.push({ path: x.path, why: '그림은 개인판에서만 넣습니다' }); continue; }
+        const mime = window.SEText.sniff(x.bytes);
+        one(new File([x.bytes], PIC_EXT.test(leaf) ? leaf : leaf + '.' + (mime.split('/')[1] === 'jpeg' ? 'jpg' : mime.split('/')[1]), { type: mime }), as);
+        took.pic += 1;
+      } else {
+        const ext = x.kind === 'pdf' ? '.pdf' : '.docx';
+        one(new File([x.bytes], leaf.toLowerCase().endsWith(ext) ? leaf : leaf + ext), as);
+        took.doc += 1;
+      }
+    }
+    const miss = skipped.length ? ' · 넣지 못한 것: ' + skipped.slice(0, 4).map((x) => x.path + '(' + x.why + ')').join(', ') + (skipped.length > 4 ? ' 외 ' + (skipped.length - 4) + '개' : '') : '';
+    const n = took.text + took.doc + took.pic;
+    if (!n) return onBad(f.name + ' — 압축 안에 넣을 수 있는 파일이 없습니다' + miss);
+    const what = [took.text ? '글 ' + took.text : '', took.doc ? '문서 ' + took.doc : '', took.pic ? '그림 ' + took.pic : ''].filter(Boolean).join(' · ');
+    const say = f.name + '에서 ' + n + '개를 넣었습니다 — ' + what + miss;
+    if (onNote) onNote(say); else if (skipped.length) onBad(say);
+  }
   const input = h('input', {
-    type: 'file', style: 'display:none', multiple: true, accept: '.txt,.md,.markdown,.text,.docx,.pdf,text/plain,text/markdown,application/pdf' + (pics ? ',.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp' : ''),
+    type: 'file', style: 'display:none', multiple: true, accept: '.txt,.md,.markdown,.text,.docx,.pdf,text/plain,text/markdown,application/pdf' + ',.hwpx,.zip,application/zip,application/x-zip-compressed' + (pics ? ',.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp' : ''),
     onchange: (e) => {
       for (const f of e.target.files) {
-        if (DOC_EXT.test(f.name) || (pics && PIC_EXT.test(f.name))) {
-          if (f.size > DOC_MAX) { onBad(f.name + ' — 파일이 너무 큽니다(20MB 까지)'); continue; }
-          if (!window.SEText) { onBad(f.name + ' — 문서 파일을 읽는 부분을 불러오지 못했습니다'); continue; }
-          (pics ? window.SEText.contentOf(f) : window.SEText.textOf(f).then((text) => ({ text, images: [], skipped: 0 }))).then(async (r) => {
-            if (r.text.length > FILE_MAX) return onBad(f.name + ' — 뽑은 글이 너무 깁니다(2MB 까지) — 나눠서 넣어 주세요');
-            onRead(f.name.replace(DOC_EXT, '').replace(PIC_EXT, ''), r.text, await picsOf(r.images), r.skipped || 0);
-          }).catch((err) => onBad(f.name + ' — ' + String((err && err.message) || err)));
-          continue;
-        }
-        if (/\.hwpx?$/i.test(f.name)) { onBad(f.name + ' — 한글(hwp) 파일은 읽지 못합니다. 한글에서 docx · pdf · txt 로 저장해 넣어 주세요'); continue; }
-        if (!TEXT_EXT.test(f.name) && !/^text\//.test(f.type || '')) { onBad(f.name + ' — txt · md · docx · pdf 파일만 넣을 수 있습니다'); continue; }
-        // 그림을 담은 md(개인판)는 파일이 클 수 있다 — 그림을 꺼낸 뒤의 글로 2MB 를 잰다
-        const mdPics = pics && /\.(md|markdown)$/i.test(f.name);
-        if (f.size > (mdPics ? DOC_MAX : FILE_MAX)) { onBad(f.name + ' — 파일이 너무 큽니다(' + (mdPics ? '20MB' : '2MB') + ' 까지)'); continue; }
-        const rd = new FileReader();
-        rd.onload = () => {
-          const t = String(rd.result || '');
-          // 깨진 글자(�)가 많거나 NUL 이 있으면 글 파일이 아니다(인코딩이 다르거나 바이너리)
-          if (t.includes('\u0000') || (t.match(/\uFFFD/g) || []).length > Math.max(3, t.length / 100)) return onBad(f.name + ' — 글로 읽을 수 없습니다(UTF-8 txt · md 로 저장해 주세요)');
-          // md 속에 담겨 온 그림(data:)은 꺼내 그림으로(개인판)
-          if (!mdPics || !window.SEText || !window.SEText.mdContent) return onRead(f.name, t);
-          const md = window.SEText.mdContent(t);
-          if (md.text.length > FILE_MAX) return onBad(f.name + ' — 글이 너무 깁니다(그림을 빼고 2MB 까지) — 나눠서 넣어 주세요');
-          picsOf(md.images).then((imgs) => onRead(f.name, md.text, imgs, 0)).catch((err) => onBad(f.name + ' — ' + String((err && err.message) || err)));
-        };
-        rd.readAsText(f, 'utf-8');
+        if (ZIP_EXT.test(f.name)) unzip(f);
+        else one(f);
       }
       e.target.value = '';
     },
   });
   return h('span', null, input, h('button', { class: 'btn-line', text: '파일 선택', onclick: () => input.click() }));
 }
-
 // ---------------------------------------------------------------- 휴지통
 
 function trash() {
@@ -1894,7 +1935,7 @@ function newProjectPanel(close) {
         area('n-mat', '자료'),
         h('div', { class: 'line', style: 'margin-top:8px' },
           h('button', { class: 'btn-line', text: '추가', onclick: () => { const t = $('n-mat').value; clearTyped('n-mat'); add('', t); } }),
-          fileButton(add))),
+          fileButton(add, undefined, (m) => { S.open.note = m; render(); }))),
       h('div', { style: 'padding-top:6px' },
         h('div', { class: 'line' },
           h('button', { class: 'btn', text: '생성', onclick: makeProject }),

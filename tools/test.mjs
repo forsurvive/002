@@ -4522,7 +4522,61 @@ process.stdin.on('end', () => {
   // 화면 — [파일 선택]
   ok('[파일 선택] — 개인판은 그림 파일도 받고 · 그림을 꺼내 줄여 글과 함께 넘긴다', appSrc.includes("(pics ? ',.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp' : '')")
     && appSrc.includes('window.SEText.contentOf(f)') && appSrc.includes('await picsOf(r.images), r.skipped || 0') && appSrc.includes('window.SEText.mdContent(t)'));
-  ok('새 작품 자료 · 파일로 만드는 문서가 그림을 함께 보낸다', appSrc.includes('...(images && images.length ? { images } : {})') && appSrc.includes("api('doc.create', { title: name.replace(/\\.[^.]+$/, ''), body: text, ...(images && images.length ? { images } : {}) })")
+  // ---- 압축 파일 · hwpx(DESIGN §3 «압축 파일», 사용자 지시 2026-10-13) — 안의 파일을 내용으로 가려 꺼낸다
+  tctx.Set = Set;
+  // 이름 바이트 · 꾸밈 비트 · 압축 방식을 손으로 정하는 zip
+  const zipRaw = (items) => {
+    const parts = [], central = []; let off = 0;
+    for (const it of items) {
+      const nb = Buffer.isBuffer(it.name) ? it.name : Buffer.from(it.name, 'utf8');
+      const raw = Buffer.isBuffer(it.data) ? it.data : Buffer.from(it.data || '', 'utf8');
+      const comp = it.method === 0 ? raw : deflateRawSync(raw);
+      const method = it.method === 0 ? 0 : 8, flags = it.flags || 0;
+      const lh = Buffer.alloc(30); lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(flags, 6); lh.writeUInt16LE(method, 8); lh.writeUInt32LE(comp.length, 18); lh.writeUInt32LE(raw.length, 22); lh.writeUInt16LE(nb.length, 26);
+      parts.push(lh, nb, comp);
+      const ch = Buffer.alloc(46); ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(flags, 8); ch.writeUInt16LE(method, 10); ch.writeUInt32LE(comp.length, 20); ch.writeUInt32LE(raw.length, 24); ch.writeUInt16LE(nb.length, 28); ch.writeUInt32LE(off, 42);
+      central.push(ch, nb); off += 30 + nb.length + comp.length;
+    }
+    const cd = Buffer.concat(central); const e = Buffer.alloc(22); e.writeUInt32LE(0x06054b50, 0); e.writeUInt16LE(items.length, 8); e.writeUInt16LE(items.length, 10); e.writeUInt32LE(cd.length, 12); e.writeUInt32LE(off, 16);
+    return Buffer.concat([...parts, cd, e]);
+  };
+  const cp949Name = Buffer.from([0xc7, 0xd1, 0xb1, 0xdb, 0x2e, 0x74, 0x78, 0x74]);            // «한글.txt» 를 한국어 윈도 꼴로
+  const cp949Text = Buffer.from([0xb0, 0xa1, 0xb3, 0xaa, 0xb4, 0xd9, 0x20, 0xb6, 0xf3]);      // «가나다 라»
+  const hwpx = zipRaw([{ name: 'mimetype', data: 'application/hwp+zip', method: 0 },
+    { name: 'Contents/section1.xml', data: '<hs:sec><hp:p><hp:run><hp:t>둘째 구역</hp:t></hp:run></hp:p></hs:sec>' },
+    { name: 'Contents/section0.xml', data: '<hs:sec><hp:p id="1"><hp:run><hp:t>첫 문단 &amp; </hp:t><hp:t>이어서</hp:t></hp:run></hp:p><hp:p><hp:run><hp:t>둘째</hp:t><hp:lineBreak/><hp:t>줄</hp:t></hp:run></hp:p></hs:sec>' }]);
+  const inner = zipRaw([{ name: 'deep.md', data: '# 안쪽\n깊은 글' }]);
+  const big = zipRaw([
+    { name: '자료/1장.txt', data: '첫 장 글', flags: 0x800 },
+    { name: cp949Name, data: cp949Text },
+    { name: '자료/utf16.txt', data: Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('유티에프 십육', 'utf16le')]) },
+    { name: '__MACOSX/자료/._1장.txt', data: 'x' }, { name: '자료/.DS_Store', data: 'x' }, { name: '자료/', data: '' },
+    { name: '보고서.docx', data: docxPic }, { name: '책', data: Buffer.from(pdfPics) }, { name: '그림파일', data: png, method: 0 },
+    { name: '안쪽.zip', data: inner }, { name: '한글문서.hwpx', data: hwpx },
+    { name: '옛문서.hwp', data: Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.alloc(32)]) },
+    { name: '실행.exe', data: Buffer.concat([Buffer.from('MZ'), Buffer.alloc(64)]) },
+    { name: '잠김.txt', data: '비밀', flags: 1 },
+  ]);
+  const z = await T.zipFiles(new Uint8Array(big));
+  const by = Object.fromEntries(z.files.map((x) => [x.path, x]));
+  ok('**압축 — 글은 인코딩까지 가려 푼다(UTF-8 표시 · UTF-8 · 한국어 윈도 CP949 · UTF-16) · 이름도 CP949 를 읽는다**', by['자료/1장.txt'] && by['자료/1장.txt'].text === '첫 장 글'
+    && by['한글.txt'] && by['한글.txt'].kind === 'text' && by['한글.txt'].text === '가나다 라' && by['자료/utf16.txt'].text === '유티에프 십육', JSON.stringify(Object.keys(by)));
+  ok('**압축 — 이름이 아니라 내용으로 종류를 가린다(확장자 없는 PDF · 그림)**', by['보고서.docx'].kind === 'docx' && by['책'].kind === 'pdf' && by['그림파일'].kind === 'image' && Buffer.from(by['그림파일'].bytes).equals(png));
+  ok('압축 안의 압축은 풀어 들어간다(경로는 «안쪽.zip/…»)', by['안쪽.zip/deep.md'] && by['안쪽.zip/deep.md'].text === '# 안쪽\n깊은 글');
+  ok('**hwpx — 구역 차례대로 문단 · 줄바꿈을 살려 글을 뽑는다**', by['한글문서.hwpx'] && by['한글문서.hwpx'].kind === 'hwpx' && by['한글문서.hwpx'].text === '첫 문단 & 이어서\n둘째\n줄\n둘째 구역', JSON.stringify(by['한글문서.hwpx']));
+  ok('폴더 · 맥과 윈도의 군더더기는 건너뛴다', !Object.keys(by).some((k) => /__MACOSX|DS_Store|\/$/.test(k)) && !z.skipped.some((x) => /__MACOSX|DS_Store/.test(x.path)));
+  const zWhy = Object.fromEntries(z.skipped.map((x) => [x.path, x.why]));
+  ok('**넣지 못한 것은 이름과 까닭을 모은다 — hwp · 바이너리 · 암호**', /한글\(hwp\)/.test(zWhy['옛문서.hwp'] || '') && /글이 아닌/.test(zWhy['실행.exe'] || '') && /암호/.test(zWhy['잠김.txt'] || ''), JSON.stringify(zWhy));
+  let tooMany = '';
+  try { await T.zipFiles(new Uint8Array(zipRaw(Array.from({ length: 1001 }, (_, i) => ({ name: 'f' + i + '.txt', data: 'x', method: 0 }))))); } catch (e) { tooMany = e.message; }
+  ok('터지는 압축은 받지 않는다(파일 1,000개 · 풀린 크기 300MB)', /너무 많거나 큽니다/.test(tooMany));
+  let notZip = ''; try { await T.zipFiles(new Uint8Array(Buffer.from('그냥 글'))); } catch (e) { notZip = e.message; }
+  ok('압축이 아니면 까닭을 말한다', /압축\(zip\) 파일이 아닙니다/.test(notZip));
+  eq('hwpx 를 파일 하나로 넣어도 글을 뽑는다(글만 · 그림 길 둘 다)', await T.textOf({ name: '기획.hwpx', arrayBuffer: async () => hwpx.buffer.slice(hwpx.byteOffset, hwpx.byteOffset + hwpx.byteLength) }), '첫 문단 & 이어서\n둘째\n줄\n둘째 구역');
+  ok('[파일 선택] — zip · hwpx 를 받고, 압축은 안의 파일마다 같은 길로 넣고 무엇을 넣었는지 알린다', appSrc.includes("',.hwpx,.zip,application/zip,application/x-zip-compressed'") && appSrc.includes('window.SEText.zipFiles(new Uint8Array(await f.arrayBuffer()))')
+    && appSrc.includes("if (ZIP_EXT.test(f.name)) unzip(f);") && appSrc.includes("'에서 ' + n + '개를 넣었습니다 — '") && appSrc.includes('fileButton(add, undefined, (m) => { S.open.note = m; render(); })')
+    && appSrc.includes('const DOC_EXT = /\\.(docx|pdf|hwpx)$/i;'));
+  ok('새 작품 자료 · 파일로 만드는 문서가 그림을 함께 보낸다',appSrc.includes('...(images && images.length ? { images } : {})') && appSrc.includes("api('doc.create', { title: name.replace(/\\.[^.]+$/, ''), body: text, ...(images && images.length ? { images } : {}) })")
     && appSrc.includes("'그림 ' + skipped + '장은 읽지 못해 뺐습니다'"));
 }
 

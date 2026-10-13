@@ -112,6 +112,128 @@
   }
   async function docxText(u8) { return (await docxContent(u8)).text; }
 
+  // ---------------------------------------------------------------- 한글 hwpx — zip 안의 Contents/section*.xml(OWPML)에서 문단(hp:p)마다 글(hp:t)을 잇는다
+  async function hwpxText(u8) {
+    const list = zipDir(u8).filter((e) => /^Contents\/section\d+\.xml$/i.test(e.name))
+      .sort((a, b) => Number(a.name.match(/\d+/)[0]) - Number(b.name.match(/\d+/)[0]));
+    if (!list.length) throw new Error('hwpx 안에 본문(Contents/section*.xml)이 없습니다');
+    const out = [];
+    for (const e of list) {
+      const xml = new TextDecoder().decode(await zipData(u8, e));
+      for (const p of xml.match(/<hp:p[\s>][\s\S]*?<\/hp:p>/g) || []) {
+        let t = '';
+        const re = /<hp:t(?:\s[^>]*)?>([\s\S]*?)<\/hp:t>|<hp:lineBreak\s*\/>|<hp:tab\s*\/>/g;
+        let m;
+        while ((m = re.exec(p))) t += m[1] != null ? unxml(m[1].replace(/<[^>]+>/g, '')) : /tab/.test(m[0]) ? '\t' : '\n';
+        out.push(t);
+      }
+    }
+    return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  // ---------------------------------------------------------------- 압축 파일(zip) — 안의 파일을 자동으로 가려 꺼낸다(DESIGN §3 «압축 파일»)
+  // 중앙 디렉터리를 읽어 항목 목록을 낸다. 이름은 UTF-8 표시(비트 11)가 있으면 UTF-8, 없으면 UTF-8 로 읽어 보고 안 되면 한국어 윈도(CP949).
+  function zipName(bytes, utf8) {
+    if (utf8) return new TextDecoder().decode(bytes);
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { /* 아래 */ }
+    try { return new TextDecoder('euc-kr').decode(bytes); } catch { return latin1(bytes); }
+  }
+  function zipDir(u8) {
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    let eocd = -1;
+    for (let i = u8.length - 22; i >= Math.max(0, u8.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    if (eocd < 0) throw new Error('압축(zip) 파일이 아닙니다');
+    const count = dv.getUint16(eocd + 10, true);
+    let p = dv.getUint32(eocd + 16, true);
+    const out = [];
+    for (let n = 0; n < count && p + 46 <= u8.length; n++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) break;
+      const flags = dv.getUint16(p + 8, true), method = dv.getUint16(p + 10, true);
+      const csize = dv.getUint32(p + 20, true), usize = dv.getUint32(p + 24, true);
+      const nlen = dv.getUint16(p + 28, true), xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+      const local = dv.getUint32(p + 42, true);
+      out.push({ name: zipName(u8.subarray(p + 46, p + 46 + nlen), !!(flags & 0x800)), flags, method, csize, usize, local });
+      p += 46 + nlen + xlen + clen;
+    }
+    return out;
+  }
+  async function zipData(u8, e) {
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    if (e.local + 30 > u8.length || dv.getUint32(e.local, true) !== 0x04034b50) throw new Error('깨진 압축입니다');
+    const at = e.local + 30 + dv.getUint16(e.local + 26, true) + dv.getUint16(e.local + 28, true);
+    const data = u8.subarray(at, at + e.csize);
+    if (e.method === 0) return data;
+    if (e.method === 8) return inflate(data, true);
+    throw new Error('풀 수 없는 압축 방식입니다');
+  }
+
+  // 글로 읽기 — BOM(UTF-8 · UTF-16)을 먼저 보고, 그다음 UTF-8, 안 되면 한국어 윈도(CP949). 바이너리(NUL)면 null.
+  function decodeText(u8) {
+    if (u8[0] === 0xef && u8[1] === 0xbb && u8[2] === 0xbf) return new TextDecoder().decode(u8.subarray(3));
+    if (u8[0] === 0xff && u8[1] === 0xfe) return new TextDecoder('utf-16le').decode(u8.subarray(2));
+    if (u8[0] === 0xfe && u8[1] === 0xff) return new TextDecoder('utf-16be').decode(u8.subarray(2));
+    if (u8.subarray(0, 8192).includes(0)) return null;
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(u8); } catch { /* 아래 */ }
+    try {
+      const t = new TextDecoder('euc-kr').decode(u8);
+      return (t.match(/�/g) || []).length > Math.max(3, t.length / 100) ? null : t;
+    } catch { return null; }
+  }
+
+  // 내용으로 종류를 가린다 — 이름(확장자)은 마지막 단서다
+  const OLE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+  function kindOf(name, u8) {
+    if (latin1(u8.subarray(0, 5)) === '%PDF-') return 'pdf';
+    if (u8[0] === 0x50 && u8[1] === 0x4b && u8[2] === 0x03 && u8[3] === 0x04) {
+      let names = [];
+      try { names = zipDir(u8).map((e) => e.name); } catch { return 'zip'; }
+      if (names.includes('word/document.xml')) return 'docx';
+      if (names.some((x) => /^Contents\/section\d+\.xml$/i.test(x))) return 'hwpx';
+      if (names.some((x) => /^(xl|ppt)\//.test(x))) return 'office';
+      return 'zip';
+    }
+    if (sniff(u8)) return 'image';
+    if (OLE.every((b, i) => u8[i] === b) || latin1(u8.subarray(0, 17)) === 'HWP Document File') return /\.hwp$/i.test(name) || latin1(u8.subarray(0, 3)) === 'HWP' ? 'hwp' : 'oldoffice';
+    return decodeText(u8) == null ? 'binary' : 'text';
+  }
+
+  const JUNK = (path) => /(^|\/)__MACOSX\//.test(path) || /(^|\/)\._/.test(path) || /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini)$/i.test(path);
+  const WHY = { hwp: '한글(hwp)은 읽지 못합니다 — hwpx · docx 로 저장해 넣어 주세요', oldoffice: '옛 오피스 문서는 읽지 못합니다 — docx · pdf 로', office: '엑셀 · 파워포인트는 읽지 못합니다 — pdf 로', binary: '글이 아닌 파일' };
+  const LIMIT = { files: 1000, bytes: 300 * 1024 * 1024 };
+
+  // 압축 하나 → { files: [{ path, kind, bytes? , text? }], skipped: [{ path, why }] }
+  //   kind: 'text'(text 에 풀어 둔 글) · 'hwpx'(text 에 뽑은 글) · 'pdf' · 'docx' · 'image'(bytes 그대로)
+  // 압축 안의 압축은 세 겹까지 풀어 들어간다(경로는 «바깥.zip/안의 경로»).
+  async function zipFiles(u8, depth = 0, prefix = '', acc = null) {
+    const top = !acc;
+    acc = acc || { files: [], skipped: [], seen: 0, bytes: 0 };
+    const list = zipDir(u8);
+    for (const e of list) {
+      const path = prefix + e.name;
+      if (/\/$/.test(e.name) || JUNK(e.name)) continue;
+      acc.seen += 1; acc.bytes += e.usize;
+      if (acc.seen > LIMIT.files || acc.bytes > LIMIT.bytes) throw new Error('압축 안의 파일이 너무 많거나 큽니다(파일 1,000개 · 풀린 크기 300MB 까지)');
+      if (e.flags & 1) { acc.skipped.push({ path, why: '암호가 걸려 있습니다' }); continue; }
+      if (e.csize === 0xffffffff || e.usize === 0xffffffff) { acc.skipped.push({ path, why: '너무 큰 압축 꼴(zip64)은 풀지 못합니다' }); continue; }
+      if (e.method !== 0 && e.method !== 8) { acc.skipped.push({ path, why: '풀 수 없는 압축 방식입니다' }); continue; }
+      let bytes;
+      try { bytes = new Uint8Array(await zipData(u8, e)); } catch (err) { acc.skipped.push({ path, why: String((err && err.message) || err) }); continue; }
+      const kind = kindOf(e.name, bytes);
+      if (kind === 'zip') {
+        if (depth >= 2) { acc.skipped.push({ path, why: '압축이 너무 여러 겹입니다' }); continue; }
+        try { await zipFiles(bytes, depth + 1, path + '/', acc); } catch (err) { acc.skipped.push({ path, why: String((err && err.message) || err) }); }
+        continue;
+      }
+      if (kind === 'text') acc.files.push({ path, kind, text: decodeText(bytes) });
+      else if (kind === 'hwpx') {
+        try { acc.files.push({ path, kind, text: await hwpxText(bytes) }); } catch (err) { acc.skipped.push({ path, why: String((err && err.message) || err) }); }
+      } else if (kind === 'pdf' || kind === 'docx' || kind === 'image') acc.files.push({ path, kind, bytes });
+      else acc.skipped.push({ path, why: WHY[kind] || '읽지 않는 꼴' });
+    }
+    if (top) return { files: acc.files, skipped: acc.skipped };
+    return acc;
+  }
+
   // ---------------------------------------------------------------- pdf
   // 낱말 자르기 — 이름 · 수 · 글줄 · 16진 글줄 · 배열 · 사전 · 연산자
   function lexer(s) {
@@ -432,7 +554,8 @@
     let t = '';
     if (/\.docx$/i.test(name)) t = await docxText(u8);
     else if (/\.pdf$/i.test(name)) t = await pdfText(u8);
-    else throw new Error('docx · pdf 만 읽습니다');
+    else if (/\.hwpx$/i.test(name)) t = await hwpxText(u8);
+    else throw new Error('docx · pdf · hwpx 만 읽습니다');
     if (!t.trim()) throw new Error(/\.pdf$/i.test(name) ? '글을 뽑지 못했습니다(스캔한 그림 PDF 는 읽을 수 없습니다)' : '글이 없습니다');
     return t;
   }
@@ -452,7 +575,8 @@
     let r;
     if (/\.docx$/i.test(name)) r = await docxContent(u8, { images: true });
     else if (/\.pdf$/i.test(name)) r = await pdfContent(u8, { images: true });
-    else throw new Error('docx · pdf · 그림 파일만 읽습니다');
+    else if (/\.hwpx$/i.test(name)) r = { text: await hwpxText(u8), images: [], skipped: 0 };
+    else throw new Error('docx · pdf · hwpx · 그림 파일만 읽습니다');
     if (!r.text.trim()) throw new Error(/\.pdf$/i.test(name) ? '글도 그림도 뽑지 못했습니다' : '글이 없습니다');
     return r;
   }
@@ -470,5 +594,5 @@
     return { text: out, images, skipped: 0 };
   }
 
-  root.SEText = { textOf, docxText, pdfText, contentOf, mdContent, sniff };
+  root.SEText = { textOf, docxText, pdfText, hwpxText, contentOf, mdContent, sniff, zipFiles, kindOf, decodeText };
 })(typeof window !== 'undefined' ? window : globalThis);
