@@ -2445,6 +2445,8 @@ function tinyPng(rgb = [220, 20, 20], w = 4, h = 4) {
     && appSrc.includes("const imageUrl = (id) => (S.me || !S.pid ? '' : '/api/image?pid='"));
   ok('화면 — 본문 칸에 붙여넣기 · 끌어다 놓기(올리고 자리를 넣고 곧바로 저장)', appSrc.includes("onpaste: pasteInto('d-body', saveFields), ondrop: pasteInto('d-body', saveFields)") && appSrc.includes("api('image.add', await picOf(x, x.name))")
     && appSrc.includes('const PIC_EDGE = 1600;'));
+  // 화면 확인에서 잡힌 것(2026-10-13): 커서를 둔 칸은 다시 그릴 때 화면 글이 이겨 넣은 그림 자리가 사라졌다 — 화면 칸에도 넣는다
+  ok('붙여넣은 그림 자리를 커서 칸에도 넣는다(다시 그릴 때 옛 글이 덮지 않게)', appSrc.includes('if (el) { el.value = next; try { el.setSelectionRange(a + ins.length, a + ins.length); }'));
   const css = src(join(ROOT, 'web', 'style.css'));
   ok('그림 반 이름이 style.css 에', css.includes('.md .md-img') && css.includes('.md .md-noimg'));
 }

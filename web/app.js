@@ -298,7 +298,12 @@ function pasteInto(id, save) {
       if (!r || !r.ok) { if (S.open) S.open.err = '그림을 넣지 못했습니다 — ' + ((r && r.error) || '연결을 확인해 주세요'); render(); return; }
       refs.push('![' + picAlt(x.name) + '](img:' + r.id + ')');
     }
-    S.typed[id] = before.slice(0, a) + (a && before[a - 1] !== '\n' ? '\n' : '') + refs.join('\n') + '\n' + before.slice(b);
+    const ins = (a && before[a - 1] !== '\n' ? '\n' : '') + refs.join('\n') + '\n';
+    const next = before.slice(0, a) + ins + before.slice(b);
+    S.typed[id] = next;
+    // 커서를 둔 칸은 다시 그릴 때 화면의 글이 이긴다(render 의 keep) — 화면 칸에도 넣고 커서를 그림 뒤로
+    const el = $(id);
+    if (el) { el.value = next; try { el.setSelectionRange(a + ins.length, a + ins.length); } catch { /* 칸이 바뀌었으면 그만 */ } }
     render();
     await save();
   };
