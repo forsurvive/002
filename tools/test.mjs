@@ -2618,6 +2618,54 @@ function tinyPng(rgb = [220, 20, 20], w = 4, h = 4) {
   globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
+// ---------------------------------------------------------------- 단계 창에서도 에이전트를 고른다 (DESIGN §6-8, 사용자 지시 2026-10-13)
+
+{
+  const pick = await import('./prompt-pick.mjs');
+  const seen = [];
+  globalThis.__SE2_MOCK_FN = (a) => { seen.push({ key: a.mockKey, sys: String(a.systemPrompt || '') }); return MOCK_FN(a); };
+  const sp = await post('project.create', { name: '단계 에이전트', spec: { form: '단편' }, materials: [{ name: '자료', text: '자료 본문' }] });
+  await settle(sp.pid, 60000);
+  let st = (await stateOf(sp.pid)).project;
+  const plan = st.workflow.stages.find((x) => x.key === 'plan');
+  ok('**단계 목록에 단계마다 맡는 자리가 실린다(이야기 — 기획서는 도식 짓는이)**', plan.code === 'N-PLAN' && st.workflow.stages.find((x) => x.key === 'study').code === 'S02' && plan.position === '');
+  const mine = await post('agent.create', { pid: sp.pid, name: '날카로운 눈', role: '약한 칸을 찾는다', craft: '짚는다' });
+  const raw = (await import('./state.mjs')).get(sp.pid);
+  const nm = (c) => pick.promptFor(raw, c).name;
+  seen.length = 0;
+  const r1 = await post('stage.start', { pid: sp.pid, key: 'plan', agentIds: ['seat:F-CONTRA', mine.id, 'g_없는사람'], seatOff: true });
+  await settle(sp.pid);
+  st = (await stateOf(sp.pid)).project;
+  const doc = st.docs.find((d) => d.id === st.workflow.stages.find((x) => x.key === 'plan').docId);
+  const call1 = seen.find((x) => x.key === 'N-PLAN');
+  const head1 = call1 ? call1.sys.split('\n\n')[0] : '';
+  ok('**[생성] 때 고른 사람이 그 단계 문서에 남는다(없는 사람은 거른다)**', r1.ok && !!doc && doc.agentIds.join() === 'seat:F-CONTRA,' + mine.id && doc.seatOff === true, JSON.stringify(doc && { a: doc.agentIds, s: doc.seatOff }));
+  ok('**그 생성은 고른 사람이 쓴다 — 자리 사람(도식 짓는이)을 뗐으면 빠지고 할 일은 그 단계 것**', !!call1 && head1.includes(nm('F-CONTRA')) && head1.includes('날카로운 눈') && !head1.includes(nm('N-PLAN') + ' — ')
+    && call1.sys.includes('■ 작법'), head1);
+  seen.length = 0;
+  await post('stage.start', { pid: sp.pid, key: 'plan' });
+  await settle(sp.pid);
+  const keep = (await stateOf(sp.pid)).project.docs.find((d) => d.id === doc.id);
+  ok('고르지 않고 생성하면 문서에 걸린 것을 그대로 쓴다', keep.agentIds.join() === doc.agentIds.join() && keep.seatOff === true && seen.some((x) => x.key === 'N-PLAN' && x.sys.split('\n\n')[0].includes('날카로운 눈')));
+  seen.length = 0;
+  await post('stage.start', { pid: sp.pid, key: 'plan', agentIds: [], seatOff: false });
+  await settle(sp.pid);
+  const call3 = seen.find((x) => x.key === 'N-PLAN');
+  ok('자리 사람을 다시 붙이고 나머지를 비우면 그 단계의 자리 사람만 쓴다', !!call3 && call3.sys.startsWith('■ 에이전트\n' + nm('N-PLAN') + ' — ') && !call3.sys.split('\n\n')[0].includes('날카로운 눈'));
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  await post('project.delete', { pid: sp.pid });
+  const eb = await post('project.create', { name: '단계 에이전트 책', purpose: 'ebook', spec: { form: '실용서' }, materials: [{ name: '자료', text: '사례' }] });
+  await settle(eb.pid, 60000);
+  const design = (await stateOf(eb.pid)).project.workflow.stages.find((x) => x.key === 'design');
+  ok('전자책 단계는 포지션도 실린다(앉힌 사람이 먼저)', design.code === 'F-UPDATE' && design.position === 'E-PLAN');
+  await post('project.delete', { pid: eb.pid });
+
+  const app = src(join(ROOT, 'web', 'app.js'));
+  ok('단계 창 — 참조 아래 «에이전트» 줄(처음엔 문서에 걸린 것, 없으면 그 단계의 자리 사람)', app.includes('stageAgentLine(st),') && app.includes("const agentIds = doc ? [...(doc.seatOff ? [] : [own]), ...(doc.agentIds || [])] : [own];")
+    && app.includes("const stageOwn = (st) => 'seat:' + (st.code || 'F-UPDATE');"));
+  ok('[생성] 때 고른 것을 보낸다 — 자리 사람은 seatOff 로, 앉힌 포지션이 있으면 떼지 않는다', app.includes('...stageAgentsBody(st),') && app.includes("seatOff: !stageSeated(st).length && !ids.includes(own)"));
+}
+
 // ---------------------------------------------------------------- 문서 창 — 누르기만으로 고치지 않는다 · 단추와 입력란은 늘 보인다 (사용자 지시, 2026-10-13)
 
 {

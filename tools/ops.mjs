@@ -169,6 +169,13 @@ export function createOps(d) {
       const keep = !!b.keepRequest && !!once.trim();
       const r = await state.update(b.pid, (p) => {
         made = wf.startStage(p, t, b.key, { episode: ep, refIds: Array.isArray(b.refIds) ? b.refIds : null });
+        // 이번 생성에 쓸 사람(단계 창의 «에이전트» 줄 — DESIGN §6-8) — 그 단계 문서의 에이전트 · 자리 사람 떼기로 남긴다(없는 사람은 거른다)
+        if (made && made.ok && (Array.isArray(b.agentIds) || b.seatOff != null)) {
+          model.docWrite(p, made.docId, {
+            ...(Array.isArray(b.agentIds) ? { agentIds: b.agentIds.filter((id) => model.agentKnown(p, id)) } : {}),
+            ...(b.seatOff != null ? { seatOff: !!b.seatOff } : {}),
+          });
+        }
         const dd = made && made.ok && keep ? model.findDoc(p, made.docId) : null;
         if (dd) model.docWrite(p, dd.id, { request: [dd.request, once].filter((x) => String(x || '').trim()).join('\n\n') });
       });
@@ -527,7 +534,8 @@ export function createOps(d) {
           positions: (t.positions || []).map(({ key, name, duty }) => ({ key, name, duty })),   // 전자책 — 사람을 앉힐 자리
           stages: wf.view(p, t, { bodyOn }).map((v) => {
             const s = defs.get(v.key);
-            return { ...v, task: wf.stageTask(s, 0), ...(cards && s.card ? { card: s.card } : {}) };
+            // code — 그 단계가 맡긴 자리(단계 창의 «에이전트» 줄이 자리 사람으로 세운다), position — 전자책의 포지션(앉힌 사람이 먼저)
+            return { ...v, task: wf.stageTask(s, 0), code: (s && s.code) || 'F-UPDATE', position: (s && s.position) || '', ...(cards && s.card ? { card: s.card } : {}) };
           }),
         };
       })(),

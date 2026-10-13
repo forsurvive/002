@@ -582,7 +582,10 @@ function openStage(key, episode) {
   const doc = (S.project.docs || []).find((d) => d.id === ((ep || st).docId));
   // 참조는 문서에 이미 걸린 것이 있으면 그것을, 없으면 앞 단계에서 추천한 것을 체크된 채로 보인다(사람이 확인한다)
   const refIds = doc && (doc.refIds || []).length ? doc.refIds.slice() : ((ep || st).refs || []).slice();
-  S.open = { type: 'stage', key, episode: episode || 0, refIds, final: false };
+  // 이번 생성에 쓸 사람 — 문서에 걸린 것(자리 사람을 뗐는지까지), 없으면 그 단계가 맡긴 자리 사람(DESIGN §6-8)
+  const own = 'seat:' + (st.code || 'F-UPDATE');
+  const agentIds = doc ? [...(doc.seatOff ? [] : [own]), ...(doc.agentIds || [])] : [own];
+  S.open = { type: 'stage', key, episode: episode || 0, refIds, agentIds, final: false };
   clearTyped('st-once', 'st-ep');
   render();
 }
@@ -647,7 +650,7 @@ function stagePanel(close) {
   const readOnly = !!S.project.readOnly;
   const go = async () => {
     const episode = per ? (S.open.episode || Number(($('st-ep') || {}).value) || 0) : 0;
-    const r = await api('stage.start', { key: st.key, episode, refIds: S.open.refIds, requestOnce: ($('st-once') || {}).value || '', keepRequest: !!S.open.keepReq });
+    const r = await api('stage.start', { key: st.key, episode, refIds: S.open.refIds, ...stageAgentsBody(st), requestOnce: ($('st-once') || {}).value || '', keepRequest: !!S.open.keepReq });
     if (!r.ok) { S.open.err = r.error; render(); return; }
     S.open.err = ''; S.open.episode = episode; S.open.keepReq = false; clearTyped('st-once');
     render();
@@ -680,6 +683,7 @@ function stagePanel(close) {
       st.output === 'final' ? h('div', { class: 'when', text: '다 쓴 원고를 모순 검사 · 합평으로 점검하고 내려받습니다. 점검을 마쳤으면 승인하세요.' }) : null,
       st.output !== 'input' && st.output !== 'final' ? [
         refLine('참조(앞 단계에서 추천 — 빼거나 더할 수 있습니다)', S.open.refIds, byId, (ids) => { S.open.refIds = ids; render(); }, docId),
+        stageAgentLine(st),
         h('div', null, h('div', { class: 'lab', text: '이번 요청사항(이번 한 번만 — 저장되지 않습니다)' }), area('st-once', '이번 생성에만 덧붙일 말')),
         readOnly ? null : h('div', { class: 'line', style: 'gap:6px;cursor:pointer', onmousedown: () => { S.open.keepReq = !S.open.keepReq; render(); } },
           h('button', { class: 'ck' + (S.open.keepReq ? ' on' : '') }), h('span', { text: '이 요청을 문서의 요청사항으로도 남기기(다음 생성에도 계속)' })),
@@ -703,6 +707,31 @@ function stagePanel(close) {
         doc ? h('div', { class: 'line', style: 'gap:6px;cursor:pointer', onmousedown: () => { S.open.final = !S.open.final; render(); } },
           h('button', { class: 'ck' + (S.open.final ? ' on' : '') }), h('span', { text: '이 문서를 확정본으로도 켜기' })) : null) : null,
       !readOnly && status === 'approved' ? h('button', { class: 'btn-text', text: '승인 풀기(다시 고치기)', onclick: () => api('stage.reopen', { key: st.key, episode: ep }) }) : null));
+}
+
+// 단계 창의 «에이전트» 줄 — 이번 생성에 쓸 사람을 고른다(사용자 지시, 2026-10-13 · DESIGN §6-8). 고른 것은 [생성] 때 그 단계 문서에 실린다(문서 창의 줄과 같은 칸).
+// 자리 사람은 그 단계가 맡긴 자리(이야기 — 도식 짓는이 따위)로 서고 × 로 뗀다. 전자책에서 포지션에 사람을 앉혔으면 그 사람이 «자리»로 선다 — 여기서는 떼지 못한다(자동 실행 창의 «자리»).
+// 온라인판은 아직 내장 사람을 걸지 못한다 — 만든 사람만 더한다.
+const stageOwn = (st) => 'seat:' + (st.code || 'F-UPDATE');
+const stageSeated = (st) => (st.position ? ((S.project.positions || {})[st.position] || []) : []);
+function stageAgentLine(st) {
+  const own = stageOwn(st);
+  const ids = S.open.agentIds || [own];
+  const save = (next) => { S.open.agentIds = next; render(); };
+  if (S.me) return refLine('에이전트', ids.filter((x) => !String(x).startsWith('seat:')), crewIndex(), save, null, 'agent', seatNames([st.code || 'F-UPDATE']));
+  const seated = stageSeated(st);
+  if (seated.length) {
+    const names = seated.map((id) => ((S.project.crew || []).find((a) => a.id === id) || {}).name).filter(Boolean);
+    return refLine('에이전트', ids.filter((x) => x !== own), crewIndex(), save, null, 'agent', names);
+  }
+  return refLine('에이전트', ids, crewIndex(own), save, null, 'agent');
+}
+// [생성] 때 실어 보낼 꼴 — 자리 사람은 목록에 넣지 않고 seatOff 로(문서 창과 같다)
+function stageAgentsBody(st) {
+  const own = stageOwn(st);
+  const ids = S.open.agentIds || [own];
+  if (S.me) return { agentIds: ids.filter((x) => !String(x).startsWith('seat:')) };
+  return { agentIds: ids.filter((x) => x !== own), seatOff: !stageSeated(st).length && !ids.includes(own) };
 }
 
 // 작업 중 강의 카드 — 단계 생성이 도는 동안 «무엇인가 · 볼 점 · 질문»을, 끝나면 «볼 점» 체크리스트를 보인다.
