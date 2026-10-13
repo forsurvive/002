@@ -2408,6 +2408,26 @@ process.stdin.on('end', () => {
   loggedIn = true; child.emit('close', 0); await sleep(20);
   ok('끝나면 로그인되었는지 다시 본다', L.view().done && L.view().ok);
   ok('모르는 로그인은 띄우지 않는다', !L.start('gemini').ok);
+  // 실행기가 없으면 먼저 폴더로 받고(그동안 «받는 중»), 다 받으면 그 자리의 실행기를 띄운다(2026-10-13 윈도우 실측 — 없을 때 «실행기를 띄우지 못했습니다»로 멎었다)
+  let got = null; let spawnedCli = '';
+  const L2 = lg.createLogin({ plans: { chatgpt: { cli: () => (got ? 'C:/box/tools/codex/bin/codex.exe' : 'codex'), args: ['login'], prepare: () => (got ? null : new Promise((r) => setTimeout(() => { got = true; r(); }, 20))), preparing: '받는 중', missing: 'Codex 없음' } },
+    check: { chatgpt: async () => true }, spawnImpl: (cli, ...rest) => { spawnedCli = cli; return fakeSpawn(cli, ...rest); } });
+  ok('없으면 먼저 받는다 — 그동안 «도는 중»', L2.start('chatgpt').ok && L2.view().running && L2.view().step === '받는 중' && !spawnedCli);
+  await sleep(60);
+  ok('다 받으면 받은 실행기로 로그인을 띄운다', spawnedCli === 'C:/box/tools/codex/bin/codex.exe' && L2.view().running && !L2.view().step);
+  child.emit('close', 0); await sleep(20);
+  ok('받아서 로그인까지 마친다', L2.view().done && L2.view().ok);
+  const L3 = lg.createLogin({ plans: { chatgpt: { cli: 'codex', args: [], prepare: () => Promise.reject(new Error('받지 못했습니다 — 인터넷')) } }, check: { chatgpt: async () => false }, spawnImpl: fakeSpawn });
+  L3.start('chatgpt'); await sleep(20);
+  ok('받지 못하면 까닭을 보인다', L3.view().done && L3.view().error === '받지 못했습니다 — 인터넷');
+  const L4 = lg.createLogin({ plans: { chatgpt: { cli: 'codex', args: [], missing: 'Codex 를 찾지 못했습니다' } }, check: { chatgpt: async () => false },
+    spawnImpl: () => { const c = new EventEmitter(); setTimeout(() => { c.emit('error', new Error('spawn codex ENOENT')); c.emit('close', -4058); }, 5); return c; } });
+  L4.start('chatgpt'); await sleep(40);
+  ok('실행 파일이 없으면 무엇이 없는지 말한다', L4.view().done && L4.view().error === 'Codex 를 찾지 못했습니다');
+  const sv = src(join(HERE, 'server.mjs'));
+  ok('서버 — Codex 가 없으면 이 폴더로 받아 로그인을 잇는다', sv.includes('prepare: () => (CODEX.found ? null : codexHere())') && sv.includes('codexIntoFolder()') && sv.includes('refreshCodex()'));
+  ok('검은 창 — ChatGPT 구독인데 Codex 가 없으면 폴더로 받는다', src(join(HERE, 'launch.mjs')).includes('await codexIntoFolder(line)'));
+  ok('화면 — 받는 동안 그 단계를 보인다', src(join(ROOT, 'web', 'app.js')).includes("if (L.step) return h('div'"));
   const ls = await post('login.status');
   ok('로그인 상태를 묻는다(모의 — 실행기를 띄우지 않는다)', ls.ok && ls.claude === true && ls.chatgpt === false);
   const st = await post('login.start', { who: 'chatgpt' });

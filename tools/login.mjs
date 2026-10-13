@@ -20,12 +20,14 @@ export function loginUrlOf(text) {
 }
 
 /**
- * plans = { claude: { cli, args, env }, chatgpt: { cli, args, env } } — 띄울 것
+ * plans = { claude: { cli, args, env }, chatgpt: { cli, args, env } } — 띄울 것(cli 는 함수여도 된다 — 띄우는 순간에 읽는다)
+ *   prepare: () => null | Promise — 띄우기 전에 할 일(실행기가 없으면 폴더로 받기). 할 일이 없으면 null. 실패는 Error(화면에 보일 말)로 던진다
+ *   preparing: 그동안 화면에 보일 말 · missing: 실행기를 찾지 못했을 때의 말
  * check = { claude: async () => bool, chatgpt: async () => bool } — 로그인되어 있는가
  */
 export function createLogin({ plans, check, spawnImpl = spawn, timeoutMs = LOGIN_TIMEOUT_MS }) {
-  let cur = null;   // { who, p, out, url, needsCode, done, ok, error, at }
-  const view = () => (cur ? { who: cur.who, running: !cur.done, url: cur.url, needsCode: cur.needsCode, done: cur.done, ok: cur.ok, error: cur.error } : null);
+  let cur = null;   // { who, p, out, url, needsCode, step, done, ok, error, at }
+  const view = () => (cur ? { who: cur.who, running: !cur.done, url: cur.url, needsCode: cur.needsCode, step: cur.step, done: cur.done, ok: cur.ok, error: cur.error } : null);
 
   function start(who) {
     const plan = plans[who];
@@ -34,12 +36,26 @@ export function createLogin({ plans, check, spawnImpl = spawn, timeoutMs = LOGIN
       if (cur.who === who) return { ok: true, login: view() };   // 이미 도는 중 — 같은 것을 다시 띄우지 않는다
       stop();
     }
-    const me = { who, p: null, out: '', url: '', needsCode: false, done: false, ok: false, error: '', at: Date.now() };
+    const me = { who, p: null, out: '', url: '', needsCode: false, step: '', done: false, ok: false, error: '', at: Date.now() };
     cur = me;
+    const need = plan.prepare ? plan.prepare() : null;
+    if (need && typeof need.then === 'function') {
+      // 받는 동안은 «도는 중»이다 — 화면이 2초마다 묻고, 끝나면 그대로 실행기를 띄운다
+      me.step = plan.preparing || '';
+      need.then(() => { me.step = ''; if (cur === me && !me.done) launch(me, plan); },
+        (e) => { Object.assign(me, { step: '', done: true, error: String((e && e.message) || e || '') || '실행기를 준비하지 못했습니다' }); });
+      return { ok: true, login: view() };
+    }
+    const r = launch(me, plan);
+    return r.ok ? { ok: true, login: view() } : r;
+  }
+
+  function launch(me, plan) {
+    const fail = plan.missing || '실행기를 띄우지 못했습니다';
     try {
-      me.p = spawnImpl(plan.cli, plan.args, { env: plan.env || process.env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      me.p = spawnImpl(typeof plan.cli === 'function' ? plan.cli() : plan.cli, plan.args, { env: plan.env || process.env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) {
-      Object.assign(me, { done: true, error: '실행기를 띄우지 못했습니다' });
+      Object.assign(me, { done: true, error: fail });
       return { ok: false, error: me.error };
     }
     const read = (s) => {
@@ -52,14 +68,16 @@ export function createLogin({ plans, check, spawnImpl = spawn, timeoutMs = LOGIN
     if (me.p.stdin) me.p.stdin.on('error', () => {});
     const timer = setTimeout(() => { if (!me.done) { me.error = '10분 안에 끝나지 않아 멈췄습니다 — 다시 눌러 주세요'; try { me.p.kill(); } catch {} } }, timeoutMs);
     if (timer.unref) timer.unref();
-    me.p.on('error', () => { clearTimeout(timer); Object.assign(me, { done: true, error: me.error || '실행기를 띄우지 못했습니다' }); });
+    // 실행 파일이 없으면(ENOENT) 'error' 만 오고 'close' 는 오지 않을 수 있다 — 그 자리에서 끝낸다
+    me.p.on('error', () => { clearTimeout(timer); Object.assign(me, { done: true, error: me.error || fail }); });
     me.p.on('close', async () => {
       clearTimeout(timer);
+      if (me.done) return;   // 이미 'error' 로 끝났다
       let good = false;
-      try { good = await check[who](); } catch { good = false; }
+      try { good = await check[me.who](); } catch { good = false; }
       Object.assign(me, { done: true, ok: good, error: good ? '' : me.error || '로그인이 끝나지 않았습니다 — 다시 눌러 주세요' });
     });
-    return { ok: true, login: view() };
+    return { ok: true };
   }
 
   // 사람이 브라우저에서 받은 코드를 실행기에 건넨다(Claude 의 «Paste code here»). 글자 · 숫자 · 몇 가지 기호만

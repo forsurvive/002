@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveCliDetailed, childEnv, authStatus, installClaudeCode, INSTALL_URL } from './claude-cli.mjs';
 import { resolveCodex, codexLoggedIn, codexLogin } from './codex-cli.mjs';
-import { fetchClaude } from './usb-build.mjs';
+import { fetchClaude, codexIntoFolder } from './usb-build.mjs';
 import * as auth from './auth.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -64,7 +64,17 @@ line();
 // ChatGPT 구독으로 돌게 골라 두었으면(설정 › 무엇으로) 클로드 대신 Codex 의 로그인을 본다(docs/PERSONAL_USB.md §8)
 const viaChatGPT = auth.read().mode === 'chatgpt';
 if (viaChatGPT) {
-  const C = resolveCodex();
+  let C = resolveCodex();
+  // Codex 가 없으면 PC 에 깔지 않고 이 폴더(tools\codex\)로 받아 온다 — 화면의 [ChatGPT 로그인]과 같은 길(usb-build codexIntoFolder)
+  if (!C.found && process.platform === 'win32' && process.arch === 'x64') {
+    line('  ------------------------------------------------------------');
+    line('   ChatGPT (Codex) is not in this folder yet. Downloading it into');
+    line('   tools\\codex\\ (once - about 460MB unpacked, checked with sha512).');
+    line('  ------------------------------------------------------------');
+    try { await codexIntoFolder(line); } catch (e) { line('  [WARN] ' + String((e && e.message) || e).replace(/[^\x20-\x7e]/g, '?')); }
+    line();
+    C = resolveCodex();
+  }
   line('  ChatGPT     : ' + C.cli + '  (via: ' + C.via + ')');
   if (!(await codexLoggedIn(C.cli))) {
     line('  ------------------------------------------------------------');

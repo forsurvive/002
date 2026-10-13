@@ -1005,6 +1005,8 @@ function loginBox(st) {
   if (S.loginSay) return h('div', { class: 'notice', style: 'margin-top:6px', text: S.loginSay });
   if (!L) return null;
   if (L.done) return h('div', { class: L.ok ? 'notice good' : 'notice', style: 'margin-top:6px', text: L.ok ? LOGIN_NAME[L.who] + ' 로그인 — 등록되었습니다' : L.error });
+  // 실행기가 없어 폴더로 받는 중(ChatGPT — Codex). 다 받으면 그대로 로그인으로 이어진다
+  if (L.step) return h('div', { class: 'card-box', style: 'margin-top:8px' }, h('div', { class: 'lab', text: L.step }), h('div', { class: 'when', text: '다 받으면 로그인 브라우저가 열립니다' }));
   const send = async (raw) => {
     const r = await quiet('login.code', { code: String(raw || '').trim() });
     S.loginSay = r && r.ok ? '' : (r && r.error) || '건네지 못했습니다';

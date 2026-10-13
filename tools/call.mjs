@@ -351,6 +351,8 @@ export async function runClaudeCall({ systemPrompt, prompt, mockKey, signal, mod
 // 같은 고삐 · 같은 임시 폴더 한 벌 · 같은 끊기. 실패 갈래도 같은 classify 로 가른다(문구만 본다 — Codex 는 구조화된 한도 칸을 주지 않는다).
 // cli 는 시험이 가짜 실행기를 넘긴다.
 export const CODEX = resolveCodex();
+// 폴더로 Codex 를 받은 뒤 다시 찾는다 — 같은 물건(CODEX)을 고쳐 쓰므로 들고 있던 쪽도 새 자리를 본다
+export const refreshCodex = () => Object.assign(CODEX, resolveCodex());
 const SAY_CODEX = { auth: 'ChatGPT 로그인이 필요합니다 — 프로그램을 끄고 다시 켜면 검은 창이 로그인을 띄웁니다', 'quota-session': 'ChatGPT 구독 한도를 다 썼습니다' };
 export async function runCodexCall({ systemPrompt, prompt, mockKey, signal, model, cli = null } = {}) {
   // 모의 실행은 클로드 쪽과 같은 가짜 응답을 낸다(구독 소모 0)

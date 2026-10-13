@@ -153,7 +153,10 @@ USB 에 `tools\claude\` 가 없으면(만들기 도구 없이 복사만 한 폴�
   부르기 전에 로그인을 본다 — 로그인이 없으면 Codex 는 실패하지 않고 «다시 잇는 중»으로 오래 버티므로(조사에서 확인), 띄우지 않고 «ChatGPT 로그인이 필요합니다»로 물러선다.
   돌려주는 꼴 · 동시 고삐(3) · 임시 폴더 · 끊기 · 실패 갈래는 클로드와 같다(한도 문구 «usage limit» → `quota-session`). 한도의 남은 양은 Codex 가 구조화해 주지 않아 보이지 않는다.
 - **USB 에 담기**: `node tools/usb-build.mjs --out <USB 의 폴더> --with-codex` — OpenAI 가 npm 에 올린 `@openai/codex` 의 윈도우 판(dist-tag `win32-x64`)을 sha512 로 맞춰 보고
-  `vendor/x86_64-pc-windows-msvc/` 를 `tools\codex\` 에 통째로 푼다(`bin\codex.exe` 와 곁 파일, 0.162.1 기준 약 460MB). 한 번 담으면 다음 업데이트 때 함께 바뀐다. 담지 않았으면 PATH 의 `codex` 를 쓴다.
+  `vendor/x86_64-pc-windows-msvc/` 를 `tools\codex\` 에 통째로 푼다(`bin\codex.exe` 와 곁 파일, 0.162.1 기준 약 460MB). 한 번 담으면 다음 업데이트 때 함께 바뀐다. 담지 않았으면 그 PC 에 깔린 Codex 를 쓴다.
+  **담지 않았고 그 PC 에도 없으면 처음 쓸 때 받는다**(2026-10-13 윈도우 실측 — 없을 때 [ChatGPT 로그인]이 «실행기를 띄우지 못했습니다»로 멎었다):
+  화면의 [ChatGPT 로그인]이나 ChatGPT 구독으로 켠 검은 창이 같은 곳 · 같은 sha512 확인으로 `tools\codex\` 에 받고(`usb-build.codexIntoFolder` — 휴대판 목록이 있으면 적어 두어 다음 업데이트 때 함께 바뀐다) 이어서 로그인을 띄운다.
+  받는 동안 화면은 «ChatGPT 실행기(Codex)를 이 폴더로 받는 중». PC 에 깔지 않는다. 윈도우 x64 밖에서는 받지 않고 `npm i -g @openai/codex` 를 이른다.
 - **확인 못 한 것**(로그인 없이 `--help` · 빈 HOME 으로만 조사): 실제 로그인 뒤의 끝 글 · 사용량 칸, `model_instructions_file` 이 기본 지시문을 «갈음»하는지(깃발은 받는 것을 확인), 윈도우의 `read-only` 모래 상자가 관리자 권한 없이 서는지(`codex-windows-sandbox-setup.exe` 가 곁에 있다), USB 에서 띄운 codex.exe 가 PC 에 무엇을 남기는지(`%USERPROFILE%\.codex\` — 로그인 · `installation_id` 등).
 
 - **모델 고르기**(사용자 지시, 2026-10-13 «챗 지피티도 모델을 고를 수 있도록 해»): [ChatGPT 구독]을 고르면 그 밑에 «ChatGPT 모델» 줄이 선다 — 맨 앞 [Codex 기본] + 그 PC 의 Codex 가 `codex debug models` 로 내보이는 모델(visibility «list» 만 · 표시 이름).

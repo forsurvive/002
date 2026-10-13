@@ -206,6 +206,15 @@ export async function fetchCodex(out, ver, log, prev = null) {
   return { version: meta.version, integrity: dist.integrity, sha256: hex };
 }
 
+// 이 폴더 자체로 Codex 를 받는다 — [ChatGPT 로그인]을 눌렀거나 ChatGPT 구독으로 켰는데 Codex 가 없을 때(2026-10-13 윈도우 실측: 없으면 로그인이 «실행기를 띄우지 못했습니다»로 멎었다).
+// 받는 곳 · 확인은 --with-codex 와 같다. 휴대판 목록(.usb-build.json)이 있으면 적어 두어 다음 업데이트 때 함께 바뀌게 한다.
+export async function codexIntoFolder(log = () => {}) {
+  const prev = (() => { try { return JSON.parse(readFileSync(join(ROOT, MANIFEST), 'utf8')); } catch { return null; } })();
+  const codex = await fetchCodex(ROOT, 'latest', log, prev && prev.codex);
+  if (prev) writeText(join(ROOT, MANIFEST), JSON.stringify({ ...prev, codex }, null, 1));
+  return codex;
+}
+
 // 앱 파일을 옮겨 적는다. 지난번에 적은 것 가운데 이번에 없는 것(지워진 코드)은 걷는다 — 지난 목록(MANIFEST)에 있던 것만.
 export function copyApp(out, { root = ROOT, log = () => {} } = {}) {
   const files = appFiles(root);

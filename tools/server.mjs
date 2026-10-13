@@ -21,7 +21,8 @@ import { codexModels, codexLoggedIn, forgetCodexLogin } from './codex-cli.mjs';
 import { authStatus, childEnv } from './claude-cli.mjs';
 import { createLogin } from './login.mjs';
 import { testKey, keyCompany, cleanKey } from './keytest.mjs';
-import { CODEX, CLI } from './call.mjs';
+import { CODEX, CLI, refreshCodex } from './call.mjs';
+import { codexIntoFolder } from './usb-build.mjs';
 import { geminiChoices, keyChoices } from './catalog-local.mjs';
 import { normalizeProject, saveProject, newId, DATA_DIR } from './store.mjs';
 import { acquire as lockData } from './datalock.mjs';
@@ -94,7 +95,9 @@ const login = MOCK_RUN
   : createLogin({
     plans: {
       claude: { cli: CLI, args: ['auth', 'login', '--claudeai'], env: childEnv() },
-      chatgpt: { cli: CODEX.cli, args: ['login'], env: process.env },
+      chatgpt: { cli: () => CODEX.cli, args: ['login'], env: process.env, prepare: () => (CODEX.found ? null : codexHere()),
+        preparing: 'ChatGPT 실행기(Codex)를 이 폴더로 받는 중 — 처음 한 번, 몇 분 걸립니다',
+        missing: 'ChatGPT 실행기(Codex)를 찾지 못했습니다' },
     },
     check: {
       claude: async () => { claudeSeen.at = 0; return claudeLoggedIn(); },
@@ -102,6 +105,18 @@ const login = MOCK_RUN
       chatgpt: async () => { forgetCodexLogin(); const good = await chatgptLoggedIn(); if (good) auth.write({ mode: 'chatgpt' }); return good; },
     },
   });
+// Codex 가 없으면 이 폴더(tools/codex/)로 받는다 — 윈도우 x64 만(OpenAI 의 npm 윈도우 판). 동시에 두 벌 받지 않는다
+let codexGetting = null;
+function codexHere() {
+  if (process.platform !== 'win32' || process.arch !== 'x64') return Promise.reject(new Error('ChatGPT 실행기(Codex)가 이 PC 에 없습니다 — npm i -g @openai/codex 로 깐 뒤 다시 눌러 주세요'));
+  if (!codexGetting) {
+    codexGetting = codexIntoFolder()
+      .catch(() => { throw new Error('ChatGPT 실행기(Codex)를 받지 못했습니다 — 인터넷을 확인하고 다시 눌러 주세요'); })
+      .then(() => { refreshCodex(); forgetCodexLogin(); if (!CODEX.found) throw new Error('ChatGPT 실행기(Codex)를 찾지 못했습니다'); })
+      .finally(() => { codexGetting = null; });
+  }
+  return codexGetting;
+}
 async function loginStatus() {
   const [claude, chatgpt] = await Promise.all([claudeLoggedIn(), chatgptLoggedIn()]);
   return { login: login.view(), claude, chatgpt };
