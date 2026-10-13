@@ -1,6 +1,7 @@
 // 생성 실행 — 문서 갱신(문서 · 모순 검사 · 합평회) · 합평 패널 · 논의 한 마디 · 논의 정리.
 // tools/engine.mjs 의 run* 을 의미 그대로 옮겼다(온라인화 Phase 1 — Core 분리).
 // 저장(store: get/update)과 호출(call: 재시도·한도 물음까지 맡은 한 번의 부르기)은 바깥이 넣어 준다 —
+// seatOf(project, 코드) 는 문서에 건 내장 사람(`seat:<코드>`)의 지금 값(DESIGN §6-8) — 없으면 내장 사람은 빠진다(온라인판은 아직 잇지 않았다).
 // 개인판은 state.mjs 와 engine.callAsking(CLI), 온라인판은 PostgreSQL 과 Provider worker 가 맡는다.
 // store 는 동기(개인판 메모리)여도 비동기(온라인 DB)여도 된다 — 늘 await 로 받는다.
 
@@ -9,10 +10,11 @@ import * as wf from '../workflow/stages.mjs';
 import { saveCheckpoint } from './reading.mjs';
 
 const KIND_CODE = { doc: 'F-UPDATE', check: 'F-CONTRA', review: 'F-REVIEW' };
+const seatsOf = (seatOf, project) => (seatOf ? (code) => seatOf(project, code) : null);
 
 // 갱신 — 문서·모순 검사·합평회가 모두 이 길을 쓴다.
 // modelPick 은 작가가 «어느 모델로 모을지»를 고른 값(비어 있으면 평소대로).
-export async function runUpdate({ store, call }, pid, docId, ctx, { modelPick = '' } = {}) {
+export async function runUpdate({ store, call, seatOf }, pid, docId, ctx, { modelPick = '' } = {}) {
   const project = await store.get(pid);
   const d = project && model.findDoc(project, docId);
   if (!d) return { ok: false, error: '문서를 찾을 수 없습니다' };
@@ -23,9 +25,12 @@ export async function runUpdate({ store, call }, pid, docId, ctx, { modelPick = 
     : (d.targetIds || []).slice();
   const refIds = (d.refIds || []).filter((id) => id !== d.id);
   const agentIds = (d.agentIds || []).slice();
+  // 자리 사람을 뗐으면(DESIGN §6-8) 걸린 사람만 쓴다 — 아무도 없으면 부르지 않는다
+  const off = !!d.seatOff;
+  if (off && !model.agentsByIds(project, agentIds, seatsOf(seatOf, project)).length) return { ok: false, error: '필수 항목 누락 — 에이전트' };
   const common = {
     pid, refIds, targetIds, request: d.request || '',
-    finalFirst: d.kind === 'check', keepSeat: true, modelPick,
+    finalFirst: d.kind === 'check', keepSeat: !off, dropSeat: off, modelPick,
     signal: ctx && ctx.signal,
   };
 
@@ -33,7 +38,7 @@ export async function runUpdate({ store, call }, pid, docId, ctx, { modelPick = 
   if (ctx && ctx.gate) await ctx.gate();
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   const r = d.kind === 'review' && agentIds.length > 1
-    ? await runPanelReview({ store, call }, pid, d, agentIds, common, ctx)
+    ? await runPanelReview({ store, call, seatOf }, pid, d, agentIds, common, ctx)
     : await call({ ...common, code: KIND_CODE[d.kind] || 'F-UPDATE', agentIds }, ctx);
   if (!r.ok) return r;
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
@@ -46,9 +51,9 @@ export async function runUpdate({ store, call }, pid, docId, ctx, { modelPick = 
 // 합평회 — 걸린 사람마다 한 호출씩 제 합평을 내고, 마지막 한 호출이 그것들을 하나로 모은다.
 // 체크포인트: 바깥이 ctx.save 를 주면 한 사람의 합평이 끝날 때마다 남기고, ctx.resume 에 남은 것이 있으면 그 사람은 다시 부르지 않는다
 // (온라인 worker 가 일시중지 · 재시도 · 회수 뒤에 잇는 자리. 개인판은 둘 다 없어 지금과 같다).
-async function runPanelReview({ store, call }, pid, d, agentIds, common, ctx) {
+async function runPanelReview({ store, call, seatOf }, pid, d, agentIds, common, ctx) {
   const project = await store.get(pid);
-  const crew = model.agentsByIds(project, agentIds);
+  const crew = model.agentsByIds(project, agentIds, seatsOf(seatOf, project));
   if (crew.length < 2) return call({ ...common, code: 'F-REVIEW', agentIds }, ctx);
 
   const prev = ctx && ctx.resume && ctx.resume.panel && ctx.resume.panel.docId === d.id ? ctx.resume.panel.heard || [] : [];
@@ -160,7 +165,7 @@ export async function runThreadDoc({ store, call }, pid, threadId, request, ctx,
 // 지금의 갱신과 같은 길(같은 자리 · 같은 참조 · 같은 확정본 규칙)이고, 단계는 할 일 한 문단과 이번 요청사항만 얹는다.
 // deps.workflow(pid) 는 그 프로젝트에 쓸 템플릿(고쳐 쓴 것 포함)을 돌려준다.
 // requestOnce 는 이번 한 번만 — 문서에 저장하지 않는다(생성 기록에만 남는다).
-export async function runStage({ store, call, workflow }, pid, { stageKey, episode = 0, requestOnce = '', modelPick = '' } = {}, ctx) {
+export async function runStage({ store, call, workflow, seatOf }, pid, { stageKey, episode = 0, requestOnce = '', modelPick = '' } = {}, ctx) {
   const t = await workflow(pid);
   const s = t && wf.stageOf(t, stageKey);
   if (!s) return { ok: false, error: '없는 단계입니다' };
@@ -175,11 +180,14 @@ export async function runStage({ store, call, workflow }, pid, { stageKey, episo
   // 포지션에 사용자가 사람을 앉혔으면(전자책 — position.set) 그 사람이 이 걸음의 자리를 «대신한다»(이름 · 역할 · 작법 · 모델).
   // 걸음의 할 일과 출력 꼴은 그대로다. 앉힌 사람이 없으면 지금처럼 자리 사람 옆에 문서에 건 사람이 더해진다(keepSeat). DESIGN §5-1
   const seated = s.position ? model.agentsByIds(project, ((project.positions || {})[s.position]) || []).map((a) => a.id) : [];
+  // 문서에서 자리 사람을 뗐으면(DESIGN §6-8) 걸린 사람만 — 앉힌 사람이 있으면 그것이 먼저라 뗄 것이 없다
+  const off = !seated.length && !!d.seatOff;
+  if (off && !model.agentsByIds(project, d.agentIds || [], seatsOf(seatOf, project)).length) return { ok: false, error: '필수 항목 누락 — 에이전트' };
   const r = await call({
     pid, code: s.code || 'F-UPDATE',
     refIds: (d.refIds || []).filter((id) => id !== d.id), targetIds: String(d.body || '').trim() ? [d.id] : [],
     agentIds: [...new Set([...seated, ...(d.agentIds || [])])], request, requestOnce, taskExtra: wf.stageTask(s, ep),
-    materials: !!s.materials, allFinals: !!s.materials, keepSeat: !seated.length, modelPick, stageKey, stageTier: String(s.tier || ''),
+    materials: !!s.materials, allFinals: !!s.materials, keepSeat: !seated.length && !off, dropSeat: off, modelPick, stageKey, stageTier: String(s.tier || ''),
     signal: ctx && ctx.signal,
   }, ctx);
   if (!r.ok) return r;

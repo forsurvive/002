@@ -1427,6 +1427,8 @@ function refIndex() {
 
 // 그 문서를 지으려면 무엇이 있어야 하는가 — 없으면 그 이름들을 돌려준다.
 function missingFor(d) {
+  // 자리 사람을 떼고 아무도 걸지 않았으면 쓸 사람이 없다(DESIGN §6-8) — 서버도 같은 말로 막는다
+  const noOne = !!d.seatOff && !(d.agentIds || []).length;
   // 합평회와 모순 검사는 «이번에 무엇을 보라»는 말이 있어야 선다 — 요청사항이 그 자리의 미션이다(사용자 지시).
   // 모순 검사는 거기에 더해 맞댈 것이 둘은 있어야 한다(대상 둘, 또는 대상 하나에 참조 하나).
   if (d.kind === 'check' || d.kind === 'review') {
@@ -1434,10 +1436,11 @@ function missingFor(d) {
     if (!(d.targetIds || []).length) miss.push('대상');
     else if (d.kind === 'check' && (d.targetIds || []).length + (d.refIds || []).length < 2) miss.push('대상 또는 참조');
     if (!String(d.request || '').trim()) miss.push('요청사항');
+    if (noOne) miss.push('에이전트');
     return miss.join(' · ');
   }
   const has = String(d.body || '').trim() || String(d.request || '').trim() || (d.refIds || []).length;
-  return has ? '' : '요청사항 또는 참조';
+  return [has ? '' : '요청사항 또는 참조', noOne ? '에이전트' : ''].filter(Boolean).join(' · ');
 }
 
 // 작법서는 가리키기만 하는 문서다 — 본문이 갱신에 실려 오지 않으므로 열 때 한 번 받아 둔다.
@@ -1547,8 +1550,7 @@ function docPanel(close) {
       d.src ? null : h('div', null, h('div', { class: 'lab', text: '요청사항' }), area('d-req', '요청사항', d.request, { onblur: saveFields })),
       d.src || d.kind === 'doc' ? null : refLine('대상', d.targetIds, byId, (ids) => api('doc.write', { id: d.id, targetIds: ids }), d.id),
       d.src ? null : refLine('참조', d.refIds, byId, (ids) => api('doc.write', { id: d.id, refIds: ids }), d.id),
-      d.src ? null : refLine('에이전트', d.agentIds, crewIndex(), (ids) => api('doc.write', { id: d.id, agentIds: ids }), null, 'agent',
-        seatNames(d.kind === 'review' && (d.agentIds || []).length > 1 ? KIND_SEAT.review : [KIND_SEAT[d.kind][0]])),
+      d.src ? null : docAgentLine(d),
       d.src ? null : h('div', { class: 'line' }, S.open.err ? h('span', { class: 'notice', text: S.open.err }) : null, h('button', {
         class: 'btn', text: busy ? verb + ' 중' : verb, disabled: busy,
         onclick: async () => {
@@ -1591,11 +1593,29 @@ function catPicker(d) {
   });
 }
 
-// 작가가 지은 에이전트 — 이름으로 칩을 세운다.
-function crewIndex() {
+// 걸 수 있는 사람 — 내장 사람(`seat:<코드>`)과 작가가 지은 사람, 이름으로 칩을 세운다(DESIGN §6-8).
+// own 은 그 문서 자신의 자리 사람 — 칩에 «자리» 표, 다른 내장 사람은 «내장» 표.
+function crewIndex(own) {
   const m = new Map();
+  for (const a of S.project.builtins || []) m.set(a.id, { title: a.name, mark: a.id === own ? '자리' : '내장' });
   for (const a of S.project.crew || []) m.set(a.id, { title: a.name });
   return m;
+}
+
+// 문서의 «에이전트» 줄 — 그 문서 종류의 자리 사람도 × 로 떼고, 고르기 창에서 내장 · 만든 사람 모두를 고른다(DESIGN §6-8).
+// 자리 사람은 목록에 넣지 않고 seatOff 를 뒤집는다. 합평회에 둘 이상 걸리면 모으는 자리가 늘 선다(뗄 수 없다).
+// 온라인판은 아직 잇지 않았다 — 지금처럼 자리 칩은 뗄 수 없고 만든 사람만 고른다.
+function docAgentLine(d) {
+  const panel = d.kind === 'review' && (d.agentIds || []).length > 1;
+  if (S.me) {
+    return refLine('에이전트', d.agentIds, crewIndex(), (ids) => api('doc.write', { id: d.id, agentIds: ids }), null, 'agent',
+      seatNames(panel ? KIND_SEAT.review : [KIND_SEAT[d.kind][0]]));
+  }
+  const own = 'seat:' + KIND_SEAT[d.kind][0];
+  const ids = [...(d.seatOff ? [] : [own]), ...(d.agentIds || [])];
+  return refLine('에이전트', ids, crewIndex(own),
+    (next) => api('doc.write', { id: d.id, seatOff: !next.includes(own), agentIds: next.filter((x) => x !== own) }), null, 'agent',
+    panel ? seatNames(['F-MERGE']) : []);
 }
 
 // 걸린 사람들이 저마다 다른 모델을 쓰면 어느 것으로 모을지 묻는다(사용자 지시).
@@ -1603,7 +1623,7 @@ function crewIndex() {
 function splitModels(agentIds) {
   const p = S.project;
   if (!p || (agentIds || []).length < 2) return [];
-  const byId = new Map((p.crew || []).map((a) => [a.id, a]));
+  const byId = new Map([...(p.builtins || []), ...(p.crew || [])].map((a) => [a.id, a]));   // 내장 사람은 그 자리에 정해 둔 모델
   const seen = [];
   for (const id of agentIds) {
     const a = byId.get(id);
@@ -1638,8 +1658,8 @@ function seatNames(codes) {
 }
 
 // pool 이 'agent' 면 고르는 창이 문서가 아니라 사람을 펼친다.
-// fixed 는 «늘 서는 자리 사람» — 뗄 수 없으므로 × 를 붙이지 않는다.
-function refLine(label, ids, byId, save, selfId, pool, fixed) {
+// fixed 는 «늘 서는 자리 사람» — 뗄 수 없으므로 × 를 붙이지 않는다. hide 는 고르기 창에 세우지 않을 id(이미 늘 서는 자리 사람).
+function refLine(label, ids, byId, save, selfId, pool, fixed, hide) {
   return h('div', null,
     h('div', { class: 'lab', text: label }),
     h('div', { class: 'line' },
@@ -1649,10 +1669,11 @@ function refLine(label, ids, byId, save, selfId, pool, fixed) {
       (ids || []).map((id) => {
         const t = byId.get(id);
         return h('span', { class: 'chip' + (t && t.isFinal ? ' final' : '') },
+          t && t.mark ? h('span', { class: 'mark', text: t.mark }) : null,
           h('span', { text: t ? t.title : '없음' }),
           h('button', { text: '×', onclick: () => save((ids || []).filter((x) => x !== id)) }));
       }),
-      h('button', { class: 'plus', style: 'width:26px;height:26px', text: '+', onclick: () => { S.pick = { ids: (ids || []).slice(), save, selfId, label, pool }; render(); } })));
+      h('button', { class: 'plus', style: 'width:26px;height:26px', text: '+', onclick: () => { S.pick = { ids: (ids || []).slice(), save, selfId, label, pool, hide }; render(); } })));
 }
 
 function threadPanel(close) {
@@ -1727,7 +1748,7 @@ function threadPanel(close) {
     h('div', { class: 'panel-body' },
       refLine('참조', t.refIds, byId, (ids) => api('thread.refs', { id: t.id, refIds: ids }), null),
       refLine('에이전트', t.agentIds, crewIndex(), (ids) => api('thread.agents', { id: t.id, agentIds: ids }), null, 'agent',
-        seatNames(['F-TALK', 'F-THREADDOC'])),
+        seatNames(['F-TALK', 'F-THREADDOC']), ['seat:F-TALK', 'seat:F-THREADDOC']),
       h('div', { class: 'talk' }, flow),
       S.open.err ? h('div', { class: 'notice', text: S.open.err }) : null,
       h('div', { class: 'send' },
@@ -1934,18 +1955,25 @@ function pickLayer() {
   const close = () => { S.pick = null; S.pickOpen = null; render(); };
   if (S.pick.pool === 'agent') {
     const crew = p.crew || [];
+    // 있는 사람 모두가 고를 거리다 — 내장 사람(집필 자리 · 전자책은 편집장)과 만든 사람(DESIGN §6-8). 켜지는 것은 고른 것뿐이다.
+    // 온라인판은 아직 내장 사람을 걸지 못한다(그 DB 의 줄이 만든 사람만 가리킨다).
+    const hide = new Set(S.pick.hide || []);
+    const builtins = S.me ? [] : (p.builtins || []).filter((a) => !hide.has(a.id));
+    const row = (a) => [
+      h('div', { class: 'row', onclick: () => peekOne(a.id) },
+        h('button', { class: 'ck' + (chosen.has(a.id) ? ' on' : ''), onclick: (e) => { stop(e); flip(a.id); } }),
+        h('div', { class: 'name', text: a.name }),
+        h('div', { class: 'when', text: a.role })),
+      peekBox(a.id),
+    ];
     return h('div', { class: 'layer two', onclick: (e) => { if (e.target.classList.contains('layer')) close(); } },
       h('div', { class: 'panel narrow' },
         h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '에이전트' }), h('button', { class: 'x', text: '×', onclick: close })),
         h('div', { class: 'panel-body' },
+          builtins.length ? [h('div', { class: 'lab', text: '내장' }), builtins.map(row)] : null,
+          builtins.length && crew.length ? h('div', { class: 'lab', text: '만든 사람' }) : null,
           crew.length
-            ? crew.map((a) => [
-              h('div', { class: 'row', onclick: () => peekOne(a.id) },
-                h('button', { class: 'ck' + (chosen.has(a.id) ? ' on' : ''), onclick: (e) => { stop(e); flip(a.id); } }),
-                h('div', { class: 'name', text: a.name }),
-                h('div', { class: 'when', text: a.role })),
-              peekBox(a.id),
-            ])
+            ? crew.map(row)
             // 아직 아무도 짓지 않았으면 그 자리에서 지을 수 있게 한다(막다른 골목을 두지 않는다).
             : h('button', {
               class: 'btn',

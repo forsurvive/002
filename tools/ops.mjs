@@ -26,7 +26,7 @@ const pickModel = (v, fallback) => (MODELS.includes(String(v || '')) ? String(v 
  * d = { state, jobs, engine, auth, limit, prepared, startAgentPrep }
  *   state  : get · update · create · remove · list (tools/state.mjs 꼴)
  *   jobs   : start · pause · resume · remove · answer · stopProject · isTargetRunning · isKindRunning
- *   engine : promptView · promptFor · slotModel
+ *   engine : promptView · promptFor · slotModel (· seatCodes · seatAgent — 문서에 거는 내장 사람, 개인판만 · DESIGN §6-8)
  *   auth   : view · write — 무엇으로 돈이 나가는가(키는 내려 주지 않는다)
  *   limit  : () => 마지막으로 본 한도
  *   prepared(p) · startAgentPrep(pid, request)
@@ -219,7 +219,8 @@ export function createOps(d) {
       if (!p) return bad('프로젝트를 찾을 수 없습니다');
       const d = model.findDoc(p, b.id);
       if (d) return ok({ one: { id: d.id, name: d.title, text: model.bodyOf(d) } });
-      const a = model.findAgent(p, b.id);
+      // 내장 사람(`seat:<코드>`)은 그 자리의 지금 값으로 편다(DESIGN §6-8)
+      const a = model.findAgent(p, b.id) || (model.isSeatId(b.id) && engine.seatAgent ? engine.seatAgent(p, model.seatCodeOf(b.id)) : null);
       if (a) return ok({ one: { id: a.id, name: a.name, text: [a.role, a.craft].filter((x) => String(x || '').trim()).join('\n\n') } });
       return bad('없습니다');
     },
@@ -269,6 +270,7 @@ export function createOps(d) {
         model.docWrite(p, b.id, {
           title: b.title, body: b.body, request: b.request,
           refIds: b.refIds, targetIds: b.targetIds, agentIds: b.agentIds,
+          seatOff: b.seatOff == null ? null : !!b.seatOff,
           categoryId: b.categoryId === undefined ? undefined : b.categoryId,
         });
       });
@@ -394,12 +396,17 @@ export function createOps(d) {
       id: p.id, name: p.name, spec: p.spec, standard: p.standard, request: p.request,
       categories: model.categoriesView(p),
       crew: (p.crew || []).map((a) => ({ id: a.id, name: a.name, role: a.role, craft: a.craft, model: a.model || '' })),
+      // 문서 · 스레드에 걸 수 있는 내장 사람(DESIGN §6-8) — 고르기 창이 만든 사람과 함께 세운다. 작법은 peek 이 푼다
+      builtins: engine.seatCodes && engine.seatAgent
+        ? engine.seatCodes(p).map((code) => engine.seatAgent(p, code)).filter(Boolean).map((a) => ({ id: a.id, code: a.code, name: a.name, role: a.role, model: a.model }))
+        : [],
       docs: p.docs.map((d) => ({
         // 가리키는 문서(작법서)는 본문을 내려 주지 않는다 — 펼쳐 볼 때 peek 이 푼다.
         id: d.id, kind: d.kind, title: d.title, body: d.src ? '' : d.body, src: d.src || '', chars: d.src ? model.bodyOf(d).length : 0,
         isFinal: d.isFinal,
         categoryId: d.categoryId, request: d.request, refIds: d.refIds, targetIds: d.targetIds,
         agentIds: d.agentIds || [],
+        seatOff: !!d.seatOff,
         versions: (d.versions || []).map((v, i) => ({ i, at: v.at, title: v.title, body: v.body })),
         updatedAt: d.updatedAt,
       })),

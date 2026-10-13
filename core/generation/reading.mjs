@@ -161,7 +161,7 @@ async function inParts(call, plan, project, args, ctx, { piece, budget, last = f
   const fixedDigests = {};
   // 읽는 호출이 받는 것 — 그 자리 · 사람 · 모델 · 요청사항 · 할 일은 본래 호출과 같다
   const base = () => ({
-    pid: args.pid, code: args.code, agentIds: args.agentIds, keepSeat: args.keepSeat, modelPick: args.modelPick, noCount: args.noCount,
+    pid: args.pid, code: args.code, agentIds: args.agentIds, keepSeat: args.keepSeat, dropSeat: args.dropSeat, modelPick: args.modelPick, noCount: args.noCount,
     request: args.request, requestOnce: args.requestOnce, stageKey: args.stageKey, stageTier: args.stageTier,
     taskExtra: args.taskExtra, targetIds: args.targetIds, talk: args.talk, signal: args.signal,
     ...(Object.keys(fixedDigests).length ? { fixedDigests } : {}),
@@ -304,7 +304,7 @@ async function inParts(call, plan, project, args, ctx, { piece, budget, last = f
     if (ctx && ctx.step) ctx.step(T.name + ' — 부분 사이 견주기');
     // 원고 대신 부분 보고들을 대상으로 — 이것도 넘치면 바깥의 나눠 읽기(again)가 보고를 나눠 읽는다
     const r = await again({
-      pid: args.pid, code: args.code, agentIds: args.agentIds, keepSeat: args.keepSeat, modelPick: args.modelPick, noCount: args.noCount,
+      pid: args.pid, code: args.code, agentIds: args.agentIds, keepSeat: args.keepSeat, dropSeat: args.dropSeat, modelPick: args.modelPick, noCount: args.noCount,
       request: args.request, stageKey: args.stageKey, stageTier: args.stageTier, signal: args.signal,
       targetIds: [], refIds: [], extraTargets: outs.map((t, i) => ({ id: '', name: T.name + ' — ' + (i + 1) + '/' + outs.length + ' 부분의 보고', text: t })),
       taskExtra: [args.taskExtra, ACROSS_TASK].filter((x) => String(x || '').trim()).join('\n\n'),

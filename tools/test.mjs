@@ -2240,6 +2240,115 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   if (imp.ok) await post('project.delete', { pid: imp.pid });
 }
 
+// ---------------------------------------------------------------- 문서의 에이전트 — 내장 · 만든 사람 모두 넣고 뺀다 (DESIGN §6-8, 사용자 지시 2026-10-13)
+
+{
+  const pick = await import('./prompt-pick.mjs');
+  const { planCall } = await import('../core/reference/plan.mjs');
+  // 걸 수 있는 내장 사람 — 집필 자리 일곱(전자책은 편집장까지), 제어 둘은 빠진다
+  const story = { workflow: { template: 'story' } };
+  const book = { workflow: { template: 'ebook' } };
+  ok('내장 사람 — 이야기는 집필 자리 일곱 · 전자책은 편집장까지 · 제어 둘은 없다', pick.seatCodes(story).length === 7 && pick.seatCodes(book).includes('E-JUDGE')
+    && !pick.seatCodes(book).includes('F-KIND') && !pick.seatCodes(book).includes('F-AGENT') && pick.seatAgent(story, 'F-AGENT') === null && pick.seatAgent(story, 'E-JUDGE') === null);
+  const sr = pick.seatAgent(story, 'F-REVIEW');
+  ok('내장 사람은 그 자리의 지금 값(이름 · 역할 · 작법)으로 선다', sr.id === 'seat:F-REVIEW' && sr.name === pick.promptFor(story, 'F-REVIEW').name && sr.craft === pick.promptFor(story, 'F-REVIEW').craft);
+
+  // 모델 — seat:<코드> 는 풀어 줄 것이 있어야 선다 · 휴지통을 지나도 남는다
+  const mp = { docs: [], threads: [], categories: [], trash: [], crew: [] };
+  const g = model.agentCreate(mp, { name: '갑', role: '쓴다', craft: '갑의 결' });
+  const seatOf = (c) => pick.seatAgent(story, c);
+  ok('agentsByIds — 내장 사람은 seatOf 로 풀리고, 없으면 빠진다', model.agentsByIds(mp, ['seat:F-CONTRA', g.id], seatOf).map((a) => a.id).join() === 'seat:F-CONTRA,' + g.id
+    && model.agentsByIds(mp, ['seat:F-CONTRA', g.id]).length === 1 && model.agentsByIds(mp, ['seat:F-KIND'], seatOf).length === 0);
+  const md = model.docCreate(mp, { title: '가', agentIds: ['seat:F-CONTRA', g.id] });
+  const at0 = md.updatedAt;
+  model.docWrite(mp, md.id, { seatOff: true });
+  ok('자리 사람 떼기는 seatOff — 문서가 «갓 만든 것»이 아니게 된다', model.findDoc(mp, md.id).seatOff === true && !model.docIsFresh(model.findDoc(mp, md.id)) && model.findDoc(mp, md.id).updatedAt >= at0);
+  model.docWrite(mp, md.id, { seatOff: false });
+  ok('다시 붙이면 적힌 것을 걷는다', !('seatOff' in model.findDoc(mp, md.id)));
+  model.docDelete(mp, md.id);
+  model.trashRestore(mp, mp.trash[0].id);
+  ok('휴지통을 지나도 내장 사람은 남는다(지워지지 않는 사람이다)', model.findDoc(mp, md.id).agentIds.join() === 'seat:F-CONTRA,' + g.id);
+
+  // 호출 계획 — 떼면 자리의 이름 · 역할 · 작법이 빠지고 할 일은 그대로
+  const pr = { name: '자리이', role: '자리 역할', task: '자리의 할 일', craft: '자리의 작법' };
+  const pp = { name: '작', spec: {}, docs: [], crew: mp.crew };
+  const dropped = planCall(pp, { agentIds: ['seat:F-REVIEW'], keepSeat: true, dropSeat: true }, { pr, slotModel: 'opus', seatOf });
+  const head = dropped.systemPrompt.split('\n\n')[0];
+  ok('떼면 «■ 에이전트»는 건 사람만 · 자리 작법 · 자리 모델이 빠진다 · 할 일은 자리 것', head === '■ 에이전트\n' + sr.name + ' — ' + sr.role
+    && !dropped.systemPrompt.includes('자리의 작법') && dropped.systemPrompt.includes(sr.craft.slice(0, 40)) && dropped.userPrompt.includes('자리의 할 일') && dropped.modelSource !== 'slot');
+  const kept = planCall(pp, { agentIds: ['seat:F-REVIEW'], keepSeat: true }, { pr, seatOf });
+  ok('떼지 않으면 지금처럼 자리 사람이 맨 앞 · 내장 사람이 더해진다', kept.systemPrompt.startsWith('■ 에이전트\n자리이 — 자리 역할\n' + sr.name) && kept.systemPrompt.includes('자리의 작법'));
+  const lonely = planCall(pp, { agentIds: [], keepSeat: true, dropSeat: true }, { pr, seatOf });
+  ok('떼었는데 아무도 없으면 비우지 않는다(자리 사람이 남는다 — 부르는 쪽이 먼저 막는다)', lonely.systemPrompt.startsWith('■ 에이전트\n자리이 — 자리 역할'));
+
+  // 서버 — 상태 · peek · 실제 부르기
+  const seen = [];
+  globalThis.__SE2_MOCK_FN = (a) => { seen.push({ key: a.mockKey, sys: String(a.systemPrompt || '') }); return MOCK_FN(a); };
+  const sp = await post('project.create', { name: '사람 고르기', spec: { form: '소설' }, materials: [{ name: '자료', text: '자료 본문' }] });
+  await settle(sp.pid, 60000);
+  let st = (await stateOf(sp.pid)).project;
+  const raw = (await import('./state.mjs')).get(sp.pid);
+  ok('상태에 걸 수 있는 내장 사람 일곱이 실린다(id 는 seat:<코드>)', st.builtins.length === 7 && st.builtins.every((a) => a.id === 'seat:' + a.code && a.name)
+    && st.builtins.map((a) => a.code).join() === 'S02,F-UPDATE,F-TALK,F-THREADDOC,F-CONTRA,F-REVIEW,F-MERGE');
+  const pk = await post('peek', { pid: sp.pid, id: 'seat:F-REVIEW' });
+  ok('고르기 창에서 내장 사람도 펼쳐 본다(peek)', pk.ok && pk.one.name === pick.promptFor(raw, 'F-REVIEW').name && pk.one.text.includes(pick.promptFor(raw, 'F-REVIEW').craft.slice(0, 30)));
+  const nm = (c) => pick.promptFor(raw, c).name;
+  const mine = await post('agent.create', { pid: sp.pid, name: '을', role: '다듬는다', craft: '을의 결' });
+  const dc = await post('doc.create', { pid: sp.pid, title: '사람 바꾼 글' });
+  await post('doc.write', { pid: sp.pid, id: dc.id, request: '한 문단', seatOff: true });
+  st = (await stateOf(sp.pid)).project;
+  ok('doc.write {seatOff} — 상태의 문서에 실린다', st.docs.find((x) => x.id === dc.id).seatOff === true);
+  await post('doc.update', { pid: sp.pid, id: dc.id });
+  st = await settle(sp.pid);
+  const failed = (st.jobs || []).filter((j) => j.kind === 'update' && j.status === 'failed').pop();
+  ok('자리 사람을 떼고 아무도 없으면 부르지 않는다 — «필수 항목 누락 — 에이전트»', !!failed && String(failed.error || '').includes('필수 항목 누락 — 에이전트'), JSON.stringify(failed));
+  await post('doc.write', { pid: sp.pid, id: dc.id, agentIds: ['seat:F-CONTRA', mine.id] });
+  seen.length = 0;
+  await post('doc.update', { pid: sp.pid, id: dc.id });
+  await settle(sp.pid);
+  const call1 = seen.find((x) => x.key === 'F-UPDATE');
+  ok('뗀 문서 — 건 내장 사람 · 만든 사람이 «■ 에이전트»를 채우고 문서 쓰기 자리 사람은 없다', !!call1 && call1.sys.split('\n\n')[0].includes(nm('F-CONTRA')) && call1.sys.split('\n\n')[0].includes('을 — 다듬는다')
+    && !call1.sys.split('\n\n')[0].includes(nm('F-UPDATE') + ' — '), call1 && call1.sys.slice(0, 200));
+  await post('doc.write', { pid: sp.pid, id: dc.id, seatOff: false });
+  seen.length = 0;
+  await post('doc.update', { pid: sp.pid, id: dc.id });
+  await settle(sp.pid);
+  const call2 = seen.find((x) => x.key === 'F-UPDATE');
+  ok('다시 붙이면 자리 사람이 맨 앞에 · 건 사람이 그 뒤에', !!call2 && call2.sys.startsWith('■ 에이전트\n' + nm('F-UPDATE')) && call2.sys.split('\n\n')[0].includes(nm('F-CONTRA')));
+  // 합평회 — 자리 사람을 떼고 둘을 걸면 각자 혼자 쓰고 «합평 모으기»가 모은다
+  const tg = await post('doc.create', { pid: sp.pid, title: '원고', body: '원고 본문' });
+  const rv = await post('doc.create', { pid: sp.pid, kind: 'review', title: '합평' });
+  await post('doc.write', { pid: sp.pid, id: rv.id, targetIds: [tg.id], request: '흐름을 보라', seatOff: true, agentIds: ['seat:F-CONTRA', mine.id] });
+  seen.length = 0;
+  await post('doc.update', { pid: sp.pid, id: rv.id });
+  await settle(sp.pid);
+  const reviews = seen.filter((x) => x.key === 'F-REVIEW');
+  ok('합평회 — 걸린 사람마다 혼자 한 호출(자리 사람 없이) · 모으기 한 호출', reviews.length === 2 && seen.filter((x) => x.key === 'F-MERGE').length === 1
+    && reviews.every((x) => !x.sys.split('\n\n')[0].includes(nm('F-REVIEW') + ' — ')) && reviews[0].sys.split('\n\n')[0] === '■ 에이전트\n' + nm('F-CONTRA') + ' — ' + pick.promptFor(raw, 'F-CONTRA').role);
+  // 논의 스레드에도 내장 사람을 더한다(자리 사람은 그대로)
+  const th = await post('thread.create', { pid: sp.pid });
+  await post('thread.agents', { pid: sp.pid, id: th.id, agentIds: ['seat:F-REVIEW'] });
+  seen.length = 0;
+  await post('thread.send', { pid: sp.pid, id: th.id, text: '어때' });
+  await settle(sp.pid);
+  const talk = seen.find((x) => x.key === 'F-TALK');
+  ok('논의 — 자리 사람이 맨 앞 · 건 내장 사람이 더해진다', !!talk && talk.sys.startsWith('■ 에이전트\n' + nm('F-TALK')) && talk.sys.split('\n\n')[0].includes(nm('F-REVIEW')));
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  await post('project.delete', { pid: sp.pid });
+  const bk = await post('project.create', { name: '사람 고르기 책', purpose: 'ebook', spec: { form: '실용서' }, materials: [{ name: '자료', text: '자료 본문' }] });
+  await settle(bk.pid, 60000);
+  ok('전자책은 편집장도 고를 거리에 선다', (await stateOf(bk.pid)).project.builtins.some((a) => a.id === 'seat:E-JUDGE'));
+  await post('project.delete', { pid: bk.pid });
+
+  // 화면 — 문서 줄 · 고르기 창 · 누락 말
+  const app = src(join(ROOT, 'web', 'app.js'));
+  ok('문서 줄 — 자리 사람도 칩(× 로 뗀다) · 떼고 붙이는 것은 seatOff', app.includes("const own = 'seat:' + KIND_SEAT[d.kind][0];")
+    && app.includes("api('doc.write', { id: d.id, seatOff: !next.includes(own), agentIds: next.filter((x) => x !== own) })") && app.includes("mark: a.id === own ? '자리' : '내장'"));
+  ok('고르기 창 — 내장 사람과 만든 사람 모두(고른 것만 켜진다) · 스레드는 늘 서는 자리 사람을 숨긴다', app.includes("const builtins = S.me ? [] : (p.builtins || []).filter((a) => !hide.has(a.id));")
+    && app.includes("builtins.length ? [h('div', { class: 'lab', text: '내장' }), builtins.map(row)] : null") && app.includes("['seat:F-TALK', 'seat:F-THREADDOC']"));
+  ok('아무도 없으면 화면도 «필수 항목 누락 — 에이전트»', app.includes("const noOne = !!d.seatOff && !(d.agentIds || []).length;") && app.includes("if (noOne) miss.push('에이전트');"));
+}
+
 // ---------------------------------------------------------------- 화면-서버 배선
 
 {
@@ -2295,7 +2404,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 「기본 에이전트」에서 「이 작품의 에이전트」로 바뀌었다 — 지어진 것임을 알려야 하기 때문이다(사용자 지시).
   ok('설정의 자리 목록은 «에이전트»다', app.includes("'이 작품의 에이전트'") && !app.includes("text: '작법 프롬프트'"));
   ok('«+» 는 글자가 아니라 막대로 그린다', /\.plus \{[^}]*font-size: 0/.test(src(join(ROOT, 'web', 'style.css'))));
-  ok('문서에도 자리 사람이 칩으로 선다', app.includes('KIND_SEAT') && /seatNames\(d\.kind === 'review'/.test(app));
+  // 문서 줄은 docAgentLine 으로 옮겼다(DESIGN §6-8) — 자리 사람은 «자리» 표 칩(개인판은 × 로 뗀다 · 온라인판은 뗄 수 없는 칩 그대로)
+  ok('문서에도 자리 사람이 칩으로 선다', app.includes('KIND_SEAT') && app.includes("const own = 'seat:' + KIND_SEAT[d.kind][0];")
+    && app.includes("seatNames(panel ? KIND_SEAT.review : [KIND_SEAT[d.kind][0]])") && app.includes("panel ? seatNames(['F-MERGE']) : []"));
   ok('합평회에 둘이면 모으는 자리도 보인다', /KIND_SEAT = \{ doc: \['F-UPDATE'\], check: \['F-CONTRA'\], review: \['F-REVIEW', 'F-MERGE'\] \}/.test(app));
   ok('모델이 갈리면 묻는다', /function splitModels\(/.test(app) && /pickOneModel\(/.test(app));
   ok('고른 모델을 실어 보낸다', /model: m\.trim\(\)/.test(app));

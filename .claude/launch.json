@@ -6,6 +6,13 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["tools/server.mjs"],
       "port": 8801
+    },
+    {
+      "name": "story-engine-mock",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/server.mjs"],
+      "env": { "SE2_MOCK": "1", "SE2_PORT": "8811", "SE2_DATA_DIR": ".tmp/box" },
+      "port": 8811
     }
   ]
 }

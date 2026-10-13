@@ -50,6 +50,7 @@ export function docCreate(p, fields = {}) {
     agentIds: Array.isArray(fields.agentIds) ? fields.agentIds.slice() : [],
     versions: [],
     ...(fields.material ? { material: true } : {}),
+    ...(fields.seatOff ? { seatOff: true } : {}),
     createdAt: now(),
     updatedAt: now(),
   };
@@ -106,18 +107,20 @@ export function docWrite(p, id, next = {}, { keepHistory = true } = {}) {
   }
   // «언제 손댔는가»는 참조·대상·에이전트·요청사항·그릇까지 센다.
   // 폰은 이 시각이 그대로면 문서를 다시 받아 오지 않는다 — 여기서 안 찍으면 폰 화면이 옛 값에 머문다.
-  const before = JSON.stringify([d.request, d.refIds, d.targetIds, d.agentIds, d.categoryId]);
+  const before = JSON.stringify([d.request, d.refIds, d.targetIds, d.agentIds, d.categoryId, !!d.seatOff]);
   if (next.title != null) d.title = str(next.title).trim() || '제목 없음';
   if (next.body != null && !d.src) d.body = str(next.body);   // 가리키는 문서는 고쳐 쓰지 않는다
   if (next.request != null) d.request = str(next.request);
   if (next.refIds != null) d.refIds = next.refIds.slice();
   if (next.targetIds != null) d.targetIds = next.targetIds.slice();
   if (next.agentIds != null) d.agentIds = next.agentIds.slice();
+  // 그 문서 종류의 자리 사람을 뗐는가(DESIGN §6-8) — 붙어 있는 것이 기본이라 뗐을 때만 적는다
+  if (next.seatOff != null) { if (next.seatOff) d.seatOff = true; else delete d.seatOff; }
   if (next.categoryId !== undefined) {
     d.categoryId = next.categoryId && findCategory(p, next.categoryId) ? next.categoryId : null;
     d.orphanFrom = null; // 손으로 옮긴 순간 옛 그릇과의 연고가 끊긴다
   }
-  const touched = JSON.stringify([d.request, d.refIds, d.targetIds, d.agentIds, d.categoryId]) !== before;
+  const touched = JSON.stringify([d.request, d.refIds, d.targetIds, d.agentIds, d.categoryId, !!d.seatOff]) !== before;
   if (changed || touched) d.updatedAt = now();
   return d;
 }
@@ -141,7 +144,7 @@ export function docSetFinal(p, id, on) {
 // 차림표에서 만들어지기만 하고 아무것도 담기지 않은 문서 — 이름까지 그대로여야 «갓 만든 것»이다.
 export function docIsFresh(d) {
   return !!d && !str(d.body).trim() && !str(d.request).trim()
-    && !(d.refIds || []).length && !(d.targetIds || []).length && !(d.agentIds || []).length
+    && !(d.refIds || []).length && !(d.targetIds || []).length && !(d.agentIds || []).length && !d.seatOff
     && !(d.versions || []).length && !d.isFinal && !d.categoryId
     && d.title === DOC_NAME[d.kind || 'doc'];
 }
@@ -387,6 +390,14 @@ export function agentCreate(p, fields = {}) {
 
 export function findAgent(p, id) { return (p.crew || []).find((a) => a.id === id) || null; }
 
+// 내장 사람 — 문서 · 스레드의 agentIds 에 `seat:<자리 코드>` 로 건다(DESIGN §6-8). 만든 사람(g_…)과 같은 배열에 선다.
+// 그 자리의 지금 값(이름 · 역할 · 작법 · 모델)은 Core 가 모른다 — 바깥이 seatOf(코드)로 넣어 준다(개인판 tools/prompt-pick.mjs 의 seatAgent).
+export const SEAT_PREFIX = 'seat:';
+export const isSeatId = (id) => String(id || '').startsWith(SEAT_PREFIX);
+export const seatCodeOf = (id) => (isSeatId(id) ? String(id).slice(SEAT_PREFIX.length) : '');
+// 걸어 둘 수 있는 id 인가 — 만든 사람은 있어야 하고, 내장 사람은 지워지지 않는다
+export const agentKnown = (p, id) => isSeatId(id) || !!findAgent(p, id);
+
 export function agentWrite(p, id, next = {}) {
   const a = findAgent(p, id);
   if (!a) return null;
@@ -415,9 +426,14 @@ export function agentDelete(p, id) {
   return a;
 }
 
-export function agentsByIds(p, ids = []) {
+export function agentsByIds(p, ids = [], seatOf = null) {
   const out = [];
   for (const id of ids) {
+    if (isSeatId(id)) {
+      const b = seatOf ? seatOf(seatCodeOf(id)) : null;
+      if (b) out.push({ id, name: str(b.name), role: str(b.role), craft: str(b.craft), model: str(b.model) });
+      continue;
+    }
     const a = findAgent(p, id);
     if (a) out.push({ id: a.id, name: a.name, role: a.role, craft: a.craft, model: a.model || '' });
   }
@@ -434,7 +450,7 @@ export function trashRestore(p, trashId) {
     const d = e.payload;
     if (d.categoryId && !findCategory(p, d.categoryId)) d.categoryId = null;
     // 담겨 있는 동안 지워진 사람은 떨어뜨린다(허공을 가리키는 칩을 세우지 않는다).
-    if (Array.isArray(d.agentIds)) d.agentIds = d.agentIds.filter((id) => findAgent(p, id));
+    if (Array.isArray(d.agentIds)) d.agentIds = d.agentIds.filter((id) => agentKnown(p, id));
     p.docs.push(d);
   } else if (e.kind === 'category') {
     p.categories.push(e.payload);
@@ -445,7 +461,7 @@ export function trashRestore(p, trashId) {
     }
   } else if (e.kind === 'thread') {
     const t = e.payload;
-    if (Array.isArray(t.agentIds)) t.agentIds = t.agentIds.filter((id) => findAgent(p, id));
+    if (Array.isArray(t.agentIds)) t.agentIds = t.agentIds.filter((id) => agentKnown(p, id));
     p.threads.push(t);
   }
   return e;

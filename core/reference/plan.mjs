@@ -33,6 +33,7 @@ export function materialItems(project) {
 
 /**
  * pr 은 그 자리의 프롬프트(작가 고침 > 지은 것 > 내장을 이미 고른 것), slotModel 은 그 자리에 정해 둔 모델(없으면 '').
+ * seatOf(코드) 는 agentIds 에 걸린 내장 사람(`seat:<코드>`)의 지금 값을 준다(없으면 내장 사람은 빠진다). dropSeat 이면 그 자리 사람을 뗀다(DESIGN §6-8).
  * continueFrom = { text, n } — 앞선 응답이 길이 한도에 닿아 끊겼을 때: 같은 것을 싣고 «이미 쓴 부분»을 더해 끊긴 자리부터 이어 쓰게 한다(core/generation/continue.mjs).
  * 한 번에 실리지 않아 나눠 읽은 것(core/generation/reading.mjs) — 원문 자리에 «뽑아 옮긴 것»을 싣는다. 자르지 않는다.
  *   digests      { [문서 id]: 글 }                       — 자료 · 참조 · 확정본 · (큰 대상이 여럿일 때) 대상
@@ -45,10 +46,10 @@ export function materialItems(project) {
 export function planCall(project, {
   refIds = [], targetIds = [], agentIds = [], request = '', taskExtra = '',
   materials = false, allFinals = false, talk = [], prev = '', next = '',
-  noCount = null, finalFirst = false, keepSeat = false,
+  noCount = null, finalFirst = false, keepSeat = false, dropSeat = false,
   extraTargets = [], modelPick = '', digests = null, reading = null, targetPart = null, continueFrom = null,
   extraDigests = null, talkCut = null, fixedDigests = null, webSearch = null,
-} = {}, { pr, slotModel = '' } = {}) {
+} = {}, { pr, slotModel = '', seatOf = null } = {}) {
   // 아주 길어 나눠 읽은 요청사항 · 집필 기준 · 작품 요청사항 · 개요는 원문 자리에 옮긴 것을 싣는다
   const fx = fixedDigests || {};
   const note = (orig, dg) => digestNote(String(orig || '').length) + dg;
@@ -110,8 +111,11 @@ export function planCall(project, {
   // 작가가 걸어 둔 사람들 — 있으면 이들이 «누가 쓰는가»를 대신한다.
   // keepSeat 이면 그 자리의 사람이 맨 앞에 그대로 남고 걸린 사람은 거기에 더해진다(논의 스레드).
   // 자리의 작법은 «■ 작법» 첫 덩이로 이미 실리므로 여기서는 이름과 역할만 세운다.
-  const picked = model.agentsByIds(project, agentIds);
-  const crew = keepSeat ? [{ id: '', name: pr.name, role: pr.role, craft: '', model: '' }, ...picked] : picked;
+  const picked = model.agentsByIds(project, agentIds, seatOf);
+  // 문서에서 자리 사람을 뗐으면(DESIGN §6-8) 자리의 이름 · 역할 · 작법 · 모델이 빠지고 걸린 사람들만 선다 — 할 일 · 응답 꼴은 그 자리 것 그대로.
+  // 걸린 사람이 하나도 없으면 떼지 않는다(«■ 에이전트»를 비우지 않는다 — 부르는 쪽이 먼저 막는다).
+  if (dropSeat && picked.length) { pr = { ...pr, name: '', role: '', craft: '' }; slotModel = ''; }
+  const crew = keepSeat && !(dropSeat && picked.length) ? [{ id: '', name: pr.name, role: pr.role, craft: '', model: '' }, ...picked] : picked;
   // 쓸 모델 — 부르는 쪽이 못 박았으면 그것이 먼저다(작가가 «어느 모델로 모을지»를 고른 때).
   // 아니면 «제 모델을 정해 둔 첫 사람», 그다음 그 자리(지어진 에이전트)에 정해 둔 것, 그도 없으면 프로젝트의 것.
   const bringsModel = picked.find((c) => String(c.model || '').trim());
