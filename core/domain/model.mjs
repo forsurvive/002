@@ -401,6 +401,10 @@ export function agentDelete(p, id) {
   for (const t of p.threads) {
     if (Array.isArray(t.agentIds) && t.agentIds.includes(id)) t.agentIds = t.agentIds.filter((x) => x !== id);
   }
+  // 포지션에 앉아 있었으면 거기서도 내린다(전자책 — 허공을 가리키는 자리를 남기지 않는다)
+  for (const k of Object.keys(p.positions || {})) {
+    if (Array.isArray(p.positions[k]) && p.positions[k].includes(id)) p.positions[k] = p.positions[k].filter((x) => x !== id);
+  }
   return a;
 }
 

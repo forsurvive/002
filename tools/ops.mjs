@@ -34,6 +34,7 @@ const pickModel = (v, fallback) => (MODELS.includes(String(v || '')) ? String(v 
  *   login · loginStatus() · keySet(key) : 개인판의 화면 로그인(Claude · ChatGPT)과 API 키 붙여 넣기(docs/PERSONAL_USB.md §8-4)
  *   authModels()  : 개인판의 ChatGPT · Gemini 고를 모델 목록 { chatgpt:[{id,name}], gemini:[{id,name}] }
  *   purposeChoice : 새 작품을 만들 때 용도(purpose: 'ebook')를 받는가 — 개인판만. 온라인판은 앱의 용도(templateKey)가 정한다
+ *   rail          : 전자책 작품의 자동 실행(tools/rail.mjs — DESIGN §5-1). 개인판만 — 온라인판은 «여기서는 할 수 없습니다»
  */
 export function createOps(d) {
   const { state, jobs, engine, auth, limit, prepared, startAgentPrep } = d;
@@ -87,6 +88,7 @@ export function createOps(d) {
         });
       }
       await startAgentPrep(p.id);
+      if (d.rail && tpl === 'ebook' && ['semi', 'auto'].includes(b.railMode)) d.rail.start(p.id, b.railMode, b.railSettings || {});
       return ok({ pid: p.id });
     },
 
@@ -134,20 +136,34 @@ export function createOps(d) {
       if (!t) return bad('단계 흐름을 쓸 수 없습니다');
       let r = null;
       await state.update(b.pid, (p) => { r = wf.approveStage(p, t, b.key, { episode: Number(b.episode) || 0, final: !!b.final, by: d.who ? d.who() : '' }); });
+      if (r && r.ok && d.rail) d.rail.poke(b.pid);
       return r && r.ok ? ok() : bad((r && r.error) || '승인하지 못했습니다');
     },
     'stage.reopen': async (b) => {
       const t = await workflow(b.pid);
       let r = null;
       if (t) await state.update(b.pid, (p) => { r = wf.reopenStage(p, t, b.key, { episode: Number(b.episode) || 0 }); });
+      if (r && r.ok && d.rail) d.rail.poke(b.pid);
       return r && r.ok ? ok() : bad((r && r.error) || '없는 단계입니다');
     },
     'stage.skip': async (b) => {
       const t = await workflow(b.pid);
       let r = null;
       if (t) await state.update(b.pid, (p) => { r = wf.skipStage(p, t, b.key, { on: b.on !== false }); });
+      if (r && r.ok && d.rail) d.rail.poke(b.pid);
       return r && r.ok ? ok() : bad((r && r.error) || '건너뛸 수 없습니다');
     },
+
+    // ---------------- 전자책 작품의 자동 실행(레일 — 반자동 · 완전 자동, DESIGN §5-1). 개인판만
+    'rail.start': async (b) => (d.rail ? d.rail.start(b.pid, String(b.mode || ''), b.settings || {}) : bad('여기서는 할 수 없습니다')),
+    'rail.stop': async (b) => (d.rail ? d.rail.stop(b.pid) : bad('여기서는 할 수 없습니다')),
+    'rail.resume': async (b) => (d.rail ? d.rail.resume(b.pid) : bad('여기서는 할 수 없습니다')),
+    'rail.approve': async (b) => (d.rail ? d.rail.approve(b.pid, { final: !!b.final }) : bad('여기서는 할 수 없습니다')),
+    'rail.revise': async (b) => (d.rail ? d.rail.revise(b.pid, b.text) : bad('여기서는 할 수 없습니다')),
+    'rail.next': async (b) => (d.rail ? d.rail.next(b.pid) : bad('여기서는 할 수 없습니다')),
+    'rail.settings': async (b) => (d.rail ? d.rail.settings(b.pid, b.settings || {}) : bad('여기서는 할 수 없습니다')),
+    // 포지션에 사람 앉히기(빈 목록이면 내린다) — 레일이든 손이든 그 걸음의 생성에 듣는다
+    'position.set': async (b) => (d.rail ? d.rail.seat(b.pid, String(b.position || ''), b.agentIds) : bad('여기서는 할 수 없습니다')),
 
     // ---------------- 작법 프롬프트 고치기
     'prompt.read': async (b) => {
@@ -403,6 +419,9 @@ export function createOps(d) {
         control: !EDITABLE_CODES.includes(code),
       })),
       agentKind: (p.agents && p.agents.__kind) || '',
+      // 전자책 작품의 자동 실행(레일)과 포지션에 앉힌 사람(DESIGN §5-1) — 개인판만
+      rail: d.rail ? d.rail.view(p.rail) : null,
+      positions: p.positions || {},
       // 무엇으로 돈이 나가는가 — 화면에 반드시 보여 준다.
       // 「구독으로 돕니다」라고 말하면서 물려받은 ANTHROPIC_API_KEY 때문에 말없이 종량 과금되면
       // 그것은 표시광고 문제다(실측으로 그럴 수 있음을 확인했다).
@@ -422,6 +441,7 @@ export function createOps(d) {
         return {
           title: t.title, bodyOn, cards, episodeWord: t.episodeWord || '화',   // 회차 단계의 말(전자책 — 장)
           template: t.key,   // 이 작품의 용도(story_creation · ebook) — 개인판 화면이 작품마다 말을 바꾼다
+          positions: (t.positions || []).map(({ key, name, duty }) => ({ key, name, duty })),   // 전자책 — 사람을 앉힐 자리
           stages: wf.view(p, t, { bodyOn }).map((v) => {
             const s = defs.get(v.key);
             return { ...v, task: wf.stageTask(s, 0), ...(cards && s.card ? { card: s.card } : {}) };

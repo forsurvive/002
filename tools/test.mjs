@@ -1032,12 +1032,12 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('자리를 얻으면 돌고 끝난다', jqDone.status === 'done' && !jqDone.queued);
 
   // 한도에 닿았는데 아무도 고르지 않으면 — 저절로 «기다렸다 잇기»(API 로는 저절로 가지 않는다)
-  jobs.setAutoWait(30);
+  jobs.setAutoWait(400);
   let asked = '';
   const jl = jobs.start(A.pid, { kind: 'call', title: '한도', run: async (ctx) => { asked = await ctx.askLimit({ reason: 'quota-session', resetsAt: 0 }); return { ok: true }; } });
   await sleep(10);
   ok('물음이 매달려 멈춘다', !!(await jobOf(A.pid, jl.jobId)).ask);
-  await sleep(80);
+  await sleep(600);
   ok('아무도 고르지 않으면 저절로 «기다렸다 잇기»', asked === 'wait' && (await jobOf(A.pid, jl.jobId)).status === 'done');
   jobs.setAutoWait(30 * 60 * 1000);
 
@@ -1882,6 +1882,210 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('지어진 에이전트 창에 모델 칸이 있다', app.includes("api('prompt.model'") && app.includes("'작품 모델 따름 ('"));
   ok('목록에 자리의 모델이 보인다', app.includes("pr.model ? h('span', { class: 'mark', text: modelName(pr.model) })"));
   ok('온라인 화면은 모델 별칭 대신 등급 이름을 보인다', app.includes("opus: 'High Reasoning', sonnet: 'Balanced'") && app.includes('const modelName = (m) => (S.me ? TIER_NAME[m]'));
+}
+
+// ---------------------------------------------------------------- 전자책 작품의 자동 실행(레일 — 반자동 · 완전 자동, DESIGN §5-1, 사용자 결정 2026-10-13)
+
+{
+  const nx = await import('../core/rail/next.mjs');
+  eq('장 수 — 맨 끝의 «장 수: N»', nx.chapterCount('1장 들어가며\n2장 본론\n\n장 수: 7'), 7);
+  eq('장 수 — 꾸밈표가 붙어도', nx.chapterCount('**장 수**: **4**'), 4);
+  eq('장 수 — 없으면 «n장» 머리줄 가운데 가장 큰 수', nx.chapterCount('## 1장 시작\n## 2장 중간\n### 제3장 끝\n본문에 나온 10장의 이야기'), 3);
+  eq('장 수 — 못 읽으면 0', nx.chapterCount('목차가 아닌 글'), 0);
+  eq('개정 계획 — 걸린 장만(차례대로 · 겹침 없이)', nx.revisionChapters('검토 본문 1장은 좋다\n\n## 개정 계획\n- 3장 수정: 수치 근거\n- 1장: 예시 보강\n- 3장 끝맺음', 5).join(','), '1,3');
+  eq('개정 계획 — 장 수를 넘는 수는 버린다', nx.revisionChapters('## 개정 계획\n9장 고친다\n2장 고친다', 3).join(','), '2');
+  eq('개정 계획 — «고칠 것 없음»', nx.revisionChapters('## 개정 계획\n고칠 것 없음', 3).length, 0);
+  eq('개정 계획 — 구획이 없으면 고칠 것이 없다', nx.revisionChapters('3장이 좋다', 3).length, 0);
+  const jA = nx.readJudgement('판정: 승인\n까닭:\n- 약속이 분명하다');
+  ok('판단 — 승인', jA.decision === 'approve' && jA.reasons.includes('약속') && jA.request === '');
+  const jR = nx.readJudgement('**판정**: **수정**\n\n까닭: 근거 없는 장이 있다\n\n수정 요청:\n4장의 근거를 자료 분석에서 찾아 붙인다.');
+  ok('판단 — 수정 · 까닭 · 수정 요청', jR.decision === 'revise' && jR.reasons.includes('근거 없는 장') && jR.request.startsWith('4장의 근거'));
+  eq('판단 — 꼴이 없으면 판단 없음', nx.readJudgement('좋은 글입니다').decision, '');
+  ok('도장은 넷 — 설계 · 목차 · 개정 계획 · 완성', Object.keys(nx.POINTS).join(',') === 'design,toc,review,finish' && Object.keys(nx.CRITERIA).join(',') === 'design,toc,review,finish');
+  const eb = JSON.parse(src(join(ROOT, 'config', 'workflows', 'ebook.json')));
+  ok('목차의 할 일이 «장 수: N» 줄을 적게 한다 · 개정 계획은 «n장» 꼴', eb.stages.find((s) => s.key === 'toc').task.includes('«장 수: N»') && eb.stages.find((s) => s.key === 'review').task.includes('«n장» 꼴'));
+  const pe = JSON.parse(src(join(HERE, 'prompts.ebook.json')));
+  const judgeP = pe.prompts.find((x) => x.code === 'E-JUDGE');
+  ok('편집장의 내장 사람이 따로 있다(내장 아홉과 따로)', !!judgeP && judgeP.craft.length >= 1000 && !prompts.BUILTIN['E-JUDGE'] && Object.keys(prompts.BUILTIN).length === 9);
+  ok('내장 작법에 «걸음»을 쓰지 않는다(편집장도)', !(judgeP.craft + judgeP.task).includes('걸음'));
+}
+
+{
+  const state = await import('./state.mjs');
+  const jobsMod = await import('./jobs.mjs');
+  const railMod = await import('./rail.mjs');
+  const MAT = [{ name: '자료', text: '실용서 자료 본문' }];
+  let judged = [];          // 편집장에게 실려 간 것 { point, system }
+  let judgeSay = () => '판정: 승인\n까닭:\n- 기준을 지켰다';
+  const RAIL_FN = ({ mockKey, prompt, systemPrompt }) => {
+    const P = String(prompt || '');
+    if (mockKey === 'E-JUDGE') {
+      const point = /① 설계/.test(P) ? 'design' : /② 목차/.test(P) ? 'toc' : /③ 개정 계획/.test(P) ? 'review' : /④ 완성/.test(P) ? 'finish' : '?';
+      judged.push({ point, system: String(systemPrompt || '') });
+      return judgeSay(point, judged.filter((x) => x.point === point).length);
+    }
+    if (mockKey === 'S02') return '자료 분석 본문\n\n서문: 필요 — 저자의 동기를 밝혀야 한다';
+    if (P.includes('책을 설계한다')) return '책의 설계 본문' + (P.includes('독자를 좁혀') ? ' (독자를 좁힘)' : '');
+    if (P.includes('목차를 짓고')) return '1장 들어가며\n2장 본론\n3장 맺으며\n\n장 수: 3';
+    const ch = P.match(/목차의 (\d+)장 카드를 따라/);
+    if (ch) return P.includes('«개정 계획» 가운데 ' + ch[1] + '장') ? ch[1] + '장 고친 본문' : ch[1] + '장 본문';
+    if (P.includes('모든 장을 처음부터 끝까지 읽고')) return '전권 검토 본문\n\n## 개정 계획\n- 2장: 수치 근거를 붙인다';
+    if (P.includes('서문을 쓴다')) return '서문 본문';
+    return MOCK_FN({ mockKey });
+  };
+  globalThis.__SE2_MOCK_FN = RAIL_FN;
+  const railOf = async (pid) => (await stateOf(pid)).project.rail;
+  async function railSettle(pid, ms = 30000) {
+    const t0 = Date.now();
+    for (;;) {
+      const st = (await stateOf(pid)).project;
+      const busy = (st.jobs || []).some((j) => j.status === 'running');
+      if (!busy && st.rail && st.rail.status !== 'running') return st;
+      if (!busy && !st.rail) return st;
+      if (Date.now() - t0 > ms) return st;
+      await sleep(25);
+    }
+  }
+  const docBy = (st, title) => st.docs.find((d) => d.title === title);
+  const stageRow = (st, key) => st.workflow.stages.find((s) => s.key === key);
+
+  // 이야기 작품에는 레일이 서지 않는다
+  const story = await post('project.create', { name: '이야기 작품', spec: { form: '장편' }, materials: MAT });
+  await settle(story.pid, 60000);
+  ok('이야기 작품에는 자동 실행이 없다', !(await post('rail.start', { pid: story.pid, mode: 'semi' })).ok && (await stateOf(story.pid)).project.rail === null);
+  ok('이야기 작품에는 포지션이 없다', !(await post('position.set', { pid: story.pid, position: 'E-JUDGE', agentIds: [] })).ok);
+  await post('project.delete', { pid: story.pid });
+
+  // ── 반자동 — 도장에서 멈추고 사람을 기다린다
+  const semi = await post('project.create', { name: '반자동 책', purpose: 'ebook', railMode: 'semi', spec: { form: '실용서' }, materials: MAT });
+  let st = await railSettle(semi.pid);
+  ok('반자동 — 만들 때 도는 자료 분석 뒤 이어서 설계를 쓰고 도장 ① 에서 기다린다', st.rail.mode === 'semi' && st.rail.status === 'waiting' && st.rail.point === 'design'
+    && st.rail.pointName === '① 설계' && docBy(st, '책의 설계').body.startsWith('책의 설계 본문') && !!docBy(st, '자료 분석'));
+  ok('첫 화면 카드 — «승인 대기»', (await (await fetch(base + '/api/state')).json()).projects.find((x) => x.id === semi.pid).waiting === true);
+  ok('반자동 — 수정 요청은 한 줄이 있어야', !(await post('rail.revise', { pid: semi.pid, text: ' ' })).ok);
+  await post('rail.revise', { pid: semi.pid, text: '독자를 좁혀 주세요' });
+  st = await railSettle(semi.pid);
+  ok('반자동 — 수정 요청은 그 걸음을 새 판으로 다시 만들고 다시 기다린다', st.rail.status === 'waiting' && st.rail.point === 'design'
+    && docBy(st, '책의 설계').body.includes('(독자를 좁힘)') && docBy(st, '책의 설계').versions.length >= 1 && !String(docBy(st, '책의 설계').request || '').includes('독자를 좁혀'));
+  await post('rail.approve', { pid: semi.pid, final: true });
+  st = await railSettle(semi.pid);
+  ok('반자동 — 사람의 승인(확정본으로도) 뒤 목차를 쓰고 도장 ② 에서 기다린다', stageRow(st, 'design').status === 'approved' && stageRow(st, 'design').approvedBy === ''
+    && docBy(st, '책의 설계').isFinal && st.rail.point === 'toc' && docBy(st, '목차').body.includes('장 수: 3'));
+  await post('rail.settings', { pid: semi.pid, settings: { stopEachChapter: true } });
+  await post('rail.approve', { pid: semi.pid });
+  st = await railSettle(semi.pid);
+  ok('«장마다 멈춤» — 1장을 쓰고 [다음 장으로]를 기다린다', st.rail.point === 'chapter' && st.rail.episode === 1 && docBy(st, '1장').body === '1장 본문' && !docBy(st, '2장'));
+  await post('rail.next', { pid: semi.pid });
+  st = await railSettle(semi.pid);
+  ok('[다음 장으로] — 앞 장을 참조로 걸고 다음 장을 쓴다', st.rail.point === 'chapter' && st.rail.episode === 2 && docBy(st, '2장').refIds.includes(docBy(st, '1장').id));
+  await post('rail.settings', { pid: semi.pid, settings: { stopEachChapter: false } });
+  st = await railSettle(semi.pid);
+  ok('«장마다 멈춤»을 끄면 남은 장을 이어 쓰고 전권 검토 뒤 도장 ③ 에서 기다린다', st.rail.point === 'review' && docBy(st, '3장').body === '3장 본문' && docBy(st, '전권 검토').body.includes('개정 계획'));
+  await post('rail.approve', { pid: semi.pid });
+  st = await railSettle(semi.pid);
+  ok('개정 — 계획에 걸린 장(2장)만 그 장 몫을 이번 요청사항으로 고치고, 서문(필요)을 쓰고, 도장 ④ 에서 기다린다',
+    docBy(st, '2장').body === '2장 고친 본문' && docBy(st, '1장').body === '1장 본문' && docBy(st, '3장').body === '3장 본문'
+    && docBy(st, '서문').body === '서문 본문' && st.rail.point === 'finish' && docBy(st, '2장').versions.some((v) => v.body === '2장 본문'));
+  ok('반자동 — 완성은 고칠 문서가 하나가 아니라 수정 요청을 받지 않는다', !(await post('rail.revise', { pid: semi.pid, text: '고쳐' })).ok);
+  await post('rail.approve', { pid: semi.pid });
+  st = await railSettle(semi.pid);
+  ok('반자동 — 완성을 승인하면 끝', st.rail.status === 'done' && stageRow(st, 'finish').status === 'approved' && !st.rail.unreviewed);
+  ok('반자동에는 편집장이 한 번도 불리지 않는다', judged.length === 0);
+  ok('레일 작업의 호출을 센다', st.rail.calls >= 8);
+  ok('레일이 띄운 걸음은 작업 기록에 표가 남는다', st.jobs.some((j) => j.rail && j.kind === 'stage'));
+  await post('project.delete', { pid: semi.pid });
+
+  // ── 완전 자동 — 편집장이 판단한다(사용자가 앉힌 사람)
+  const book = await post('project.create', { name: '완전 자동 책', purpose: 'ebook', spec: { form: '실용서' }, materials: MAT });
+  await settle(book.pid, 60000);
+  const boss = await post('agent.create', { pid: book.pid, name: '깐깐한 편집장', role: '초보 독자 편에서 본다', craft: '전문 용어가 풀이 없이 나오면 되돌린다' });
+  ok('포지션 — 없는 포지션은 거절', !(await post('position.set', { pid: book.pid, position: 'X', agentIds: [boss.id] })).ok);
+  await post('position.set', { pid: book.pid, position: 'E-JUDGE', agentIds: [boss.id, 'g_없음'] });
+  ok('포지션 — 이 작품의 사람만 앉는다', JSON.stringify((await stateOf(book.pid)).project.positions) === JSON.stringify({ 'E-JUDGE': [boss.id] }));
+  // 설계는 한 번 되돌리고 승인 · 목차는 늘 수정(회차를 다 쓰면 소견을 적고 넘어간다) · 나머지는 승인
+  judgeSay = (point, k) => (point === 'design' && k === 1 ? '판정: 수정\n까닭: 독자가 넓다\n수정 요청:\n독자를 좁혀 주세요'
+    : point === 'toc' ? '판정: 수정\n까닭: 흐름이 끊긴다\n수정 요청:\n2장과 3장 사이를 잇는다' : '판정: 승인\n까닭:\n- 기준을 지켰다');
+  await post('rail.start', { pid: book.pid, mode: 'auto', settings: { rounds: 1, criteria: '전문 용어는 풀이와 함께' } });
+  st = await railSettle(book.pid);
+  ok('완전 자동 — 사람 손 없이 완성까지 간다', st.rail.status === 'done' && stageRow(st, 'finish').status === 'approved', JSON.stringify(st.rail));
+  ok('편집장 — 수정이면 그 요청으로 다시 만들고 다시 판단한다', docBy(st, '책의 설계').body.includes('(독자를 좁힘)') && judged.filter((x) => x.point === 'design').length === 2 && st.rail.rounds.design === 1);
+  ok('에이전트 승인은 사람 승인과 갈린다(approvedBy = agent:<앉힌 사람>)', ['design', 'toc', 'review', 'finish'].every((k) => stageRow(st, k).approvedBy === 'agent:' + boss.id));
+  ok('도장 ① 은 확정본으로도', docBy(st, '책의 설계').isFinal);
+  ok('회차를 다 쓰면 남은 소견을 적고 넘어간다(기본)', st.rail.notes.length === 1 && st.rail.notes[0].point === 'toc' && st.rail.notes[0].text.includes('2장과 3장'));
+  ok('앉힌 사람이 편집장 자리를 대신한다 · 덧붙인 기준이 실린다', judged.every((x) => x.system.includes('깐깐한 편집장')) && judged.length >= 6);
+  ok('판단마다 «판정 기록»에 새 판이 쌓인다', docBy(st, '판정 기록').body.includes('① 설계 — 수정') && docBy(st, '판정 기록').body.includes('④ 완성 — 승인') && docBy(st, '판정 기록').versions.length >= 4);
+  ok('완전 자동으로 끝난 책은 «사람 검토 전»', st.rail.unreviewed === true);
+  await post('stage.approve', { pid: book.pid, key: 'finish' });
+  ok('사람이 완성을 승인하면 «사람 검토 전»을 걷는다', (await railOf(book.pid)).unreviewed === false && stageRow((await stateOf(book.pid)).project, 'finish').approvedBy === '');
+  ok('지운 에이전트는 포지션에서도 내린다', (await post('agent.delete', { pid: book.pid, ids: [boss.id] })).ok && !((await stateOf(book.pid)).project.positions['E-JUDGE'] || []).length);
+  await post('project.delete', { pid: book.pid });
+
+  // ── 멈추고 사람을 부른다 · 판단을 못 읽으면 멈춘다
+  judged = [];
+  judgeSay = (point) => (point === 'design' ? '판정: 수정\n수정 요청:\n더 구체적으로' : '좋은 글입니다');
+  const stopper = await post('project.create', { name: '멈추는 책', purpose: 'ebook', railMode: 'auto', railSettings: { rounds: 0, onFail: 'stop' }, spec: { form: '실용서' }, materials: MAT });
+  st = await railSettle(stopper.pid);
+  ok('«멈추고 부른다» — 통과 못 한 도장에서 기다린다', st.rail.status === 'waiting' && st.rail.point === 'design' && st.rail.why.includes('통과시키지 못했습니다') && stageRow(st, 'design').status !== 'approved');
+  await post('rail.approve', { pid: stopper.pid, final: false });
+  st = await railSettle(stopper.pid);
+  ok('사람이 승인하면 잇고, 판단을 못 읽으면(두 번 물어도) 멈춘다', stageRow(st, 'design').approvedBy === '' && st.rail.status === 'waiting' && st.rail.point === 'toc' && st.rail.why.includes('판단을 읽지 못했습니다')
+    && judged.filter((x) => x.point === 'toc').length === 2);
+  await post('rail.stop', { pid: stopper.pid });
+  ok('[멈춤] — 그 자리부터 완전 수동', (await railOf(stopper.pid)).status === 'stopped');
+  await post('project.delete', { pid: stopper.pid });
+
+  // ── 호출 상한 · 장 수를 못 읽을 때 · 레일의 걸음을 사람이 지우면
+  judgeSay = () => '판정: 승인';
+  globalThis.__SE2_MOCK_FN = (a) => (String(a.prompt || '').includes('목차를 짓고') ? '목차인데 장 이름이 없다' : RAIL_FN(a));
+  const capped = await post('project.create', { name: '상한 책', purpose: 'ebook', railMode: 'semi', railSettings: { cap: 1 }, spec: { form: '실용서' }, materials: MAT });
+  st = await railSettle(capped.pid);
+  ok('호출 상한 — 설계 한 번 뒤 도장 ① 에서 기다린다', st.rail.point === 'design' && st.rail.calls === 1);
+  await post('rail.approve', { pid: capped.pid });
+  st = await railSettle(capped.pid);
+  ok('호출 상한에 닿으면 다음 걸음 앞에서 멈춘다', st.rail.status === 'waiting' && st.rail.point === '' && st.rail.why.includes('호출 상한') && !docBy(st, '목차'));
+  await post('rail.settings', { pid: capped.pid, settings: { cap: 0 } });
+  st = await railSettle(capped.pid);
+  ok('상한을 풀면 잇는다 · 장 수를 못 읽으면 까닭과 함께 멈춘다', !!docBy(st, '목차') && st.rail.point === 'toc');
+  await post('rail.approve', { pid: capped.pid });
+  st = await railSettle(capped.pid);
+  ok('장 수를 못 읽으면 «장 수: N»을 적으라고 이른다', st.rail.status === 'waiting' && st.rail.why.includes('장 수: N'));
+  globalThis.__SE2_MOCK_FN = RAIL_FN;
+  // 사람이 목차 끝에 장 수를 적고 [이어 하기] — 레일이 걸음을 띄운 사이에 그 작업을 지우면 레일도 선다
+  const tocDoc = docBy(st, '목차');
+  await post('doc.write', { pid: capped.pid, id: tocDoc.id, body: tocDoc.body + '\n\n장 수: 2' });
+  process.env.SE2_MOCK_DELAY_MS = '300';
+  await post('rail.resume', { pid: capped.pid });
+  await sleep(40);
+  const flying = (await stateOf(capped.pid)).project.jobs.find((j) => j.rail && (j.status === 'running'));
+  ok('[이어 하기] — 사람이 고친 목차대로 1장을 띄운다', !!flying && flying.title === '1장');
+  await post('job.remove', { pid: capped.pid, id: flying.id });
+  process.env.SE2_MOCK_DELAY_MS = '';
+  st = await railSettle(capped.pid);
+  ok('레일의 걸음을 사람이 지우면 레일도 선다(다시 띄우지 않는다)', st.rail.status === 'stopped' && !st.jobs.some((j) => j.rail && j.status === 'running'));
+
+  // ── 다시 켜면 — 걸음을 쓰던 중에 꺼졌어도 그 걸음을 다시 띄우고 레일이 잇는다
+  await post('rail.resume', { pid: capped.pid });
+  st = await railSettle(capped.pid);
+  const ch2 = docBy(st, '2장');
+  ok('이어 하기로 남은 장까지', !!ch2 && st.rail.point === 'review');
+  const lastJob = st.jobs.filter((j) => j.rail && j.kind === 'stage').pop();
+  state.update(capped.pid, (p) => {
+    const j = p.jobs.find((x) => x.id === lastJob.id);
+    Object.assign(j, { status: 'running', endedAt: 0 });
+    Object.assign(p.rail, { status: 'running', point: '', jobId: j.id });
+    const d = p.docs.find((x) => x.id === lastJob.targetId);
+    d.body = '';
+  });
+  jobsMod.healStale(capped.pid);
+  railMod.boot();
+  st = await railSettle(capped.pid);
+  ok('다시 켜면 — 꺼질 때 쓰던 걸음을 다시 띄우고, 끝나면 레일이 다음 도장에서 기다린다', st.rail.status === 'waiting' && st.rail.point === 'review'
+    && !!String(docBy(st, '전권 검토').body).trim() && st.jobs.find((j) => j.id === lastJob.id).revived === 1);
+  state.update(capped.pid, (p) => { p.rail.status = 'running'; p.rail.point = ''; });
+  railMod.boot();
+  ok('다시 켜면 — 걸음 사이에 꺼졌어도 그 자리를 다시 읽어 잇는다', (await railOf(capped.pid)).status === 'waiting' && (await railOf(capped.pid)).point === 'review');
+  await post('project.delete', { pid: capped.pid });
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 // ---------------------------------------------------------------- 화면-서버 배선

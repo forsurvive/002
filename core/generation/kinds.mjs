@@ -8,6 +8,7 @@
 // ctx = 작업 맥락(pid · step · gate · askLimit · addDoc · signal) — jobs.mjs 가 만든다.
 
 import { runUpdate, runTalk, runThreadDoc, runStage } from './run.mjs';
+import { runJudge } from '../rail/judge.mjs';
 import { readingInParts } from './reading.mjs';
 import { continuing } from './continue.mjs';
 
@@ -22,6 +23,8 @@ export const JOB_KINDS = {
   threaddoc: (deps, ctx, p) => runThreadDoc(deps, ctx.pid, p.threadId, pick(p.request), ctx, { modelPick: pick(p.modelPick) }),
   // 단계형 작업 흐름의 한 단계(docs/WORKFLOW.md) — deps.workflow 가 템플릿을 준다
   stage: (deps, ctx, p) => runStage(deps, ctx.pid, { stageKey: pick(p.stageKey), episode: Number(p.episode) || 0, requestOnce: pick(p.requestOnce), modelPick: pick(p.modelPick) }, ctx),
+  // 전자책 레일 — 완전 자동의 편집장 판단(core/rail/judge.mjs, DESIGN §5-1). 레일이 정한 대상 · 참조 · 기준을 매개변수로 받는다
+  judge: (deps, ctx, p) => runJudge(deps, ctx.pid, p, ctx),
 };
 
 export const KIND_NAMES = Object.keys(JOB_KINDS);

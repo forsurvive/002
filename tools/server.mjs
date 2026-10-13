@@ -20,6 +20,7 @@ import { baseTemplate, templateKeyOf } from './workflow.mjs';
 import { codexModels, codexLoggedIn, forgetCodexLogin, codexAccount } from './codex-cli.mjs';
 import { authStatus, childEnv } from './claude-cli.mjs';
 import { createLogin } from './login.mjs';
+import * as rail from './rail.mjs';
 import { testKey, keyCompany, cleanKey } from './keytest.mjs';
 import { CODEX, CLI, refreshCodex } from './call.mjs';
 import { codexIntoFolder } from './usb-build.mjs';
@@ -59,10 +60,13 @@ async function prepareThenStudy(pid, ctx, request = '') {
 const workflowOf = async (pid) => baseTemplate(templateKeyOf(state.get(pid)));
 // 모의 실행에서는 Codex 를 띄우지 않는다 — 고르기 화면을 시험하는 가짜 목록
 const MOCK_MODELS = process.env.SE2_MOCK === '1' ? [{ id: 'mock-gpt', name: 'Mock GPT' }] : null;
-const LOCAL_DEPS = { ...engine.LOCAL, prepare: prepareThenStudy, workflow: workflowOf };
+// 부르기 한 번마다 — 전자책 레일의 작업이면 호출 수를 센다(호출 상한, DESIGN §5-1)
+const LOCAL_DEPS = { ...engine.LOCAL, call: (args, ctx) => { rail.countCall(ctx); return engine.LOCAL.call(args, ctx); }, prepare: prepareThenStudy, workflow: workflowOf };
 jobs.useRunner((kind, params, ctx) => runKind(LOCAL_DEPS, kind, params, ctx));
 // 호출 고삐에서 자리를 기다리는 작업 — 작업 줄에 «차례 기다림»(여러 작품이 온 차례대로 나눠 쓴다, DESIGN §6-5)
 useQueueHook(jobs.queued);
+// 작업이 끝나면 전자책 레일이 다음 걸음을 정한다(레일이 없는 작품에서는 아무 일도 하지 않는다)
+jobs.onEnd(rail.onJobEnd);
 
 // 프로젝트를 만든 직후 그 프로젝트 전용 에이전트를 짓는다(소설이면 판정만 남기고 끝난다).
 function startAgentPrep(pid, request = '') {
@@ -137,7 +141,7 @@ async function keySet(raw) {
 
 const { OPS, stateOf, downloadOf } = createOps({ state, jobs, engine, auth, limit: lastLimit, prepared, startAgentPrep, workflow: workflowOf, importProject, purposeChoice: true,
   // ChatGPT 는 그 PC 의 Codex 가 아는 목록(없으면 빈 목록 — 화면은 «Codex 기본»만), Gemini 는 카탈로그
-  login, loginStatus, keySet,
+  login, loginStatus, keySet, rail,
   authModels: async () => ({ chatgpt: MOCK_MODELS || await codexModels(CODEX.cli), gemini: geminiChoices(), openai: keyChoices('openai') }) });
 
 export const OP_NAMES = Object.keys(OPS);
@@ -243,7 +247,7 @@ async function handle(plan, req, res) {
 
 // 첫 화면의 작품 목록 — 작품마다 지금 도는 작업 수(나가도 돈다는 것이 보이게, DESIGN §6-5)
 function listed() {
-  return state.list().map((x) => ({ ...x, running: jobs.liveCount(x.id) }));
+  return state.list().map((x) => ({ ...x, running: jobs.liveCount(x.id), waiting: rail.waiting(x.id) }));
 }
 
 // 시험이 다른 계획(바깥에 연 꼴)으로 한 벌 더 띄워 볼 수 있게 계획을 받는다.
@@ -260,7 +264,9 @@ export function boot(port = PORT) {
     for (const p of HOSTING.problems) console.log('  [STOP] ' + p);
     return Promise.reject(new Error(HOSTING.problems[0]));
   }
+  // 다시 켰으면 — 끊긴 작업을 다시 띄우고(§6-5), «진행 중»이던 전자책 레일을 그 자리에서 잇는다(§5-1)
   for (const p of state.list()) jobs.healStale(p.id);
+  rail.boot();
   return new Promise((resolve, reject) => {
     server.once('error', (e) => {
       if (e && e.code === 'EADDRINUSE') console.log('  [ERROR] port ' + port + ' is already in use. Close the other window first.');

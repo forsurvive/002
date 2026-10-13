@@ -1,7 +1,7 @@
 // 자리(작법 프롬프트)마다 지금 쓸 값을 고른다 — 작가가 고친 것 › 지어진 것 › 내장.
 // 호출도 저장도 모른다. 개인판 엔진(tools/engine.mjs)과 문 표(tools/ops.mjs)가 함께 쓴다.
 
-import { BUILTIN } from './prompts.mjs';
+import { BUILTIN, EBOOK_BUILTIN } from './prompts.mjs';
 
 // 그 자리의 프롬프트를 찾는 순서는 셋이다 —
 //   ① 작가가 설정에서 고친 것  ② 비소설이라 즉석으로 지은 것  ③ 내장
@@ -9,7 +9,8 @@ import { BUILTIN } from './prompts.mjs';
 export function promptFor(project, code) {
   const mine = (project && project.prompts && project.prompts[code]) || null;
   const made = (project && project.agents && project.agents[code]) || null;
-  const base = BUILTIN[code] || { code, name: '집필자', role: '글을 쓴다', task: '', craft: '' };
+  // 전자책 레일의 자리(편집장 — tools/prompts.ebook.json)는 아홉 밖에 따로 있다
+  const base = BUILTIN[code] || EBOOK_BUILTIN[code] || { code, name: '집필자', role: '글을 쓴다', task: '', craft: '' };
   const pick = (k) => {
     const a = mine && String(mine[k] || '').trim();
     if (a) return mine[k];

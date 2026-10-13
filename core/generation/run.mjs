@@ -172,11 +172,14 @@ export async function runStage({ store, call, workflow }, pid, { stageKey, episo
   if (ctx && ctx.gate) await ctx.gate();
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   const request = [d.request, requestOnce].filter((x) => String(x || '').trim()).join('\n\n');
+  // 포지션에 사용자가 사람을 앉혔으면(전자책 — position.set) 그 사람이 이 걸음의 자리를 «대신한다»(이름 · 역할 · 작법 · 모델).
+  // 걸음의 할 일과 출력 꼴은 그대로다. 앉힌 사람이 없으면 지금처럼 자리 사람 옆에 문서에 건 사람이 더해진다(keepSeat). DESIGN §5-1
+  const seated = s.position ? model.agentsByIds(project, ((project.positions || {})[s.position]) || []).map((a) => a.id) : [];
   const r = await call({
     pid, code: s.code || 'F-UPDATE',
     refIds: (d.refIds || []).filter((id) => id !== d.id), targetIds: String(d.body || '').trim() ? [d.id] : [],
-    agentIds: (d.agentIds || []).slice(), request, requestOnce, taskExtra: wf.stageTask(s, ep),
-    materials: !!s.materials, allFinals: !!s.materials, keepSeat: true, modelPick, stageKey, stageTier: String(s.tier || ''),
+    agentIds: [...new Set([...seated, ...(d.agentIds || [])])], request, requestOnce, taskExtra: wf.stageTask(s, ep),
+    materials: !!s.materials, allFinals: !!s.materials, keepSeat: !seated.length, modelPick, stageKey, stageTier: String(s.tier || ''),
     signal: ctx && ctx.signal,
   }, ctx);
   if (!r.ok) return r;

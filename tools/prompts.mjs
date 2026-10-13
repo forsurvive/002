@@ -35,6 +35,14 @@ export function haveBrain() { return Object.keys(BUILTIN).length > 0; }
 
 loadPrompts();
 
+// 전자책 레일의 내장 사람(편집장) — 아홉과 따로 둔 파일(tools/prompts.ebook.json, DESIGN §5-1). 못 읽으면 비어 있고 레일의 판정이 서지 않는다.
+export const EBOOK_BUILTIN = {};
+try {
+  for (const p of JSON.parse(readFileSync(join(HERE, 'prompts.ebook.json'), 'utf8')).prompts || []) {
+    EBOOK_BUILTIN[p.code] = { code: p.code, name: p.name, role: p.role, task: p.task, craft: p.craft };
+  }
+} catch { /* 파일이 없으면 판정 자리만 빈다 */ }
+
 // 프로그램이 부르는 집필 자리 일곱 — 자료 파일에는 이 일곱과 제어 둘, 모두 아홉만 있다.
 export const EDITABLE_CODES = ['S02', 'F-UPDATE', 'F-TALK', 'F-THREADDOC', 'F-CONTRA', 'F-REVIEW', 'F-MERGE'];
 
