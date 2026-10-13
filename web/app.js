@@ -256,9 +256,59 @@ function dlButton(key, go, cls = 'btn-text') {
     h('button', { class: cls, text: '텍스트', title: '일반 텍스트 파일(.txt) — 마크다운 기호를 걷는다', onclick: () => pick('txt') }),
     h('button', { class: 'btn-text', text: '취소', onclick: () => { S.dlPick = null; render(); } }));
 }
-// 마크다운을 꼴대로 보이는 칸(web/markdown.js). 그 파일이 없으면 글 그대로.
+// ---------------------------------------------------------------- 문서의 그림 (DESIGN §6-9) — 개인판만
+// 그림 주소 — 마크다운 보기가 img:<id> 자리를 그릴 때 부른다. 온라인판은 아직 그림을 두지 않는다(«[그림: 설명]» 글로 선다)
+const imageUrl = (id) => (S.me || !S.pid ? '' : '/api/image?pid=' + encodeURIComponent(S.pid) + '&id=' + encodeURIComponent(id));
+const MD_OPTS = { image: imageUrl };
+const PIC_EDGE = 1600;
+const blobB64 = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).replace(/^data:[^,]*,/, '')); r.onerror = rej; r.readAsDataURL(blob); });
+// 그림 한 장을 올릴 꼴로 — 긴 변이 1600px 를 넘으면 줄이고 base64 로. 줄이지 못하면 그대로(서버가 꼴과 크기를 다시 본다)
+async function picOf(blob, name) {
+  let out = blob;
+  try {
+    const bmp = await createImageBitmap(blob);
+    const k = Math.min(1, PIC_EDGE / Math.max(bmp.width, bmp.height));
+    if (k < 1) {
+      const c = document.createElement('canvas');
+      c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      out = (await new Promise((r) => c.toBlob(r, blob.type === 'image/jpeg' ? 'image/jpeg' : 'image/png', 0.9))) || blob;
+    }
+    if (bmp.close) bmp.close();
+  } catch { /* 그대로 올린다 */ }
+  return { name: String(name || '그림'), data: await blobB64(out) };
+}
+// 그림 설명 — 파일 이름에서(붙여넣은 화면 갈무리는 «image.png» 라 «붙인 그림»)
+const picAlt = (name) => { const n = String(name || '').replace(/\.[^.]+$/, '').replace(/[[\]\n]/g, ' ').trim(); return !n || /^image$/i.test(n) ? '붙인 그림' : n; };
+const picturesIn = (e) => [...((e.clipboardData || e.dataTransfer || {}).files || [])].filter((x) => /^image\/(png|jpeg|gif|webp)$/.test(x.type));
+// 본문 칸에 그림 붙여넣기 · 끌어다 놓기 — 올리고 커서 자리에 ![설명](img:…) 을 넣은 뒤 곧바로 저장한다
+function pasteInto(id, save) {
+  return async (e) => {
+    if (S.me) return;
+    const files = picturesIn(e);
+    if (!files.length) return;
+    e.preventDefault();
+    const t = e.target;
+    const before = t.value;
+    const a = t.selectionStart == null ? before.length : t.selectionStart;
+    const b = t.selectionEnd == null ? a : t.selectionEnd;
+    const refs = [];
+    for (const x of files) {
+      const r = await api('image.add', await picOf(x, x.name));
+      if (!r || !r.ok) { if (S.open) S.open.err = '그림을 넣지 못했습니다 — ' + ((r && r.error) || '연결을 확인해 주세요'); render(); return; }
+      refs.push('![' + picAlt(x.name) + '](img:' + r.id + ')');
+    }
+    S.typed[id] = before.slice(0, a) + (a && before[a - 1] !== '\n' ? '\n' : '') + refs.join('\n') + '\n' + before.slice(b);
+    render();
+    await save();
+  };
+}
+// 끌어 오는 동안에는 파일 이름을 볼 수 없다 — 파일이 하나라도 실려 있으면 놓을 수 있게 한다(놓았을 때 그림만 가린다)
+const dragOver = (e) => { if (!S.me && e.dataTransfer && [...e.dataTransfer.items].some((x) => x.kind === 'file')) e.preventDefault(); };
+
+// 마크다운을 꼴대로 보이는 칸(web/markdown.js). 그 파일이 없으면 글 그대로. 그림 자리는 그림으로(개인판)
 function mdView(id, text, onclick) {
-  const body = window.SEMarkdown ? window.SEMarkdown.render(text) : h('div', { style: 'white-space:pre-wrap', text });
+  const body = window.SEMarkdown ? window.SEMarkdown.render(text, MD_OPTS) : h('div', { style: 'white-space:pre-wrap', text });
   return h('div', { id, class: 'md-view', ...(onclick ? { onclick } : {}) }, body);
 }
 
@@ -1468,7 +1518,7 @@ function bodyBox(d, saveFields, busy = false) {
     has ? h('div', { class: 'line', style: 'gap:6px;margin-bottom:6px' },
       h('button', { class: editing ? 'btn-line' : 'btn', text: '보기', onclick: editing ? toView : null }),
       h('button', { class: editing ? 'btn' : 'btn-line', text: '고치기', onclick: editing ? null : toEdit })) : null,
-    editing ? area('d-body', BODY_HINT, d.body, { class: 'body-edit', onblur: saveFields }) : mdView('d-view', d.body, toEdit));
+    editing ? area('d-body', BODY_HINT, d.body, { class: 'body-edit', onblur: saveFields, onpaste: pasteInto('d-body', saveFields), ondrop: pasteInto('d-body', saveFields), ondragover: dragOver }) : mdView('d-view', d.body, toEdit));
 }
 
 function docPanel(close) {
@@ -1700,7 +1750,7 @@ function threadPanel(close) {
           h('button', { class: 'btn', text: '보내기', onclick: async () => { const v = $('m-edit-' + m.id).value; S.editMsg = null; clearTyped('m-edit-' + m.id); await api('thread.edit', { id: t.id, messageId: m.id, text: v }); } }))
         : h('div', { class: 'msg me', text: m.text, onclick: () => { S.editMsg = m.id; render(); } }));
     } else {
-      flow.push(h('div', { class: 'msg ai' }, window.SEMarkdown ? window.SEMarkdown.render(m.text) : m.text));
+      flow.push(h('div', { class: 'msg ai' }, window.SEMarkdown ? window.SEMarkdown.render(m.text, MD_OPTS) : m.text));
     }
   }
   // 친 말이 있으면 바깥 클릭·Esc·× 로 그냥 닫지 않는다 — 보낼지 버릴지 묻는다(사용자 지시).

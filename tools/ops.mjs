@@ -5,7 +5,7 @@
 
 import * as model from './model.mjs';
 import { makeBundle, readBundle } from './bundle.mjs';
-import { MODELS } from '../core/ids.mjs';
+import { MODELS, newId } from '../core/ids.mjs';
 import { bookList, BOOK_CATEGORY } from './books.mjs';
 import { EDITABLE_CODES, VIEW_CODES } from './prompts.mjs';
 import * as wf from '../core/workflow/stages.mjs';
@@ -36,11 +36,42 @@ const pickModel = (v, fallback) => (MODELS.includes(String(v || '')) ? String(v 
  *   authModels()  : 개인판의 ChatGPT · Gemini 고를 모델 목록 { chatgpt:[{id,name}], gemini:[{id,name}] }
  *   purposeChoice : 새 작품을 만들 때 용도(purpose: 'ebook')를 받는가 — 개인판만. 온라인판은 앱의 용도(templateKey)가 정한다
  *   rail          : 전자책 작품의 자동 실행(tools/rail.mjs — DESIGN §5-1). 개인판만 — 온라인판은 «여기서는 할 수 없습니다»
+ *   images        : 문서의 그림 파일(tools/images.mjs — DESIGN §6-9) prepare · save · read · removeAll. 개인판만 — 없으면 그림 자리는 글로 남는다
  */
 export function createOps(d) {
   const { state, jobs, engine, auth, limit, prepared, startAgentPrep } = d;
   const workflow = d.workflow || (async () => null);
   const cardsOn = d.cardsOn || ((p) => !!(p.workflow && p.workflow.cards));
+  const imgs = d.images || null;
+
+  // 글과 함께 온 그림(DESIGN §6-9) — 글 속 임시 열쇠(img:k1)를 그림 id 로 바꿀 짝을 짓는다. 파일은 작품이 정해진 뒤에 쓴다(storeImages).
+  // 그림을 받지 않는 자리(온라인판)는 빈 짝 — 글 속 자리는 «[그림: 설명]» 글로 남는다.
+  function takeImages(items) {
+    if (!imgs || !Array.isArray(items) || !items.length) return { list: [], map: {}, error: '' };
+    const r = imgs.prepare(items, newId);
+    const map = {};
+    for (const x of r.list) if (x.key) map[x.key] = x.id;
+    return { list: r.list, map, error: r.error };
+  }
+  async function storeImages(pid, list) {
+    if (!imgs || !list.length) return;
+    for (const x of list) imgs.save(pid, x.id, x.buf, x.mime);
+    await state.update(pid, (p) => { for (const x of list) model.imageAdd(p, { id: x.id, name: x.name, mime: x.mime, bytes: x.buf.length }); });
+  }
+  // MD 내려받기는 그림을 파일 안에 담는다(data: 주소 — 어디서 열어도 보이게). 파일이 없으면 «[그림: 설명]»
+  function inlineImages(pid, text) {
+    return String(text).replace(model.IMG_REF, (m, alt, id) => {
+      const got = imgs && imgs.read(pid, id);
+      return got ? '![' + alt + '](data:' + got.mime + ';base64,' + got.buf.toString('base64') + ')' : model.imageAltText(alt);
+    });
+  }
+  // 작품 파일에 함께 싣는 그림 — 목록에 있고 파일이 남아 있는 것만
+  function bundleImages(p) {
+    if (!imgs) return [];
+    const out = [];
+    for (const x of p.images || []) { const got = imgs.read(p.id, x.id); if (got) out.push({ id: x.id, mime: got.mime, data: got.buf.toString('base64') }); }
+    return out;
+  }
 
   const OPS = {
     // ---------------- 프로젝트
@@ -56,7 +87,7 @@ export function createOps(d) {
       const src = tpl && !(r.project.workflow && r.project.workflow.template)
         ? { ...r.project, workflow: { ...(r.project.workflow || {}), template: tpl }, ...(tpl === 'ebook' && !(r.project.agents && r.project.agents.__kind) ? { agents: { ...(r.project.agents || {}), __kind: BOOK_KIND } } : {}) }
         : r.project;
-      const out = await d.importProject(src);
+      const out = await d.importProject(src, r.images || []);
       return out && out.pid ? ok({ pid: out.pid, checked: out.checked !== false }) : bad((out && out.error) || '가져오지 못했습니다');
     },
 
@@ -71,7 +102,21 @@ export function createOps(d) {
       if (!materials.length) miss.push('자료');
       if (miss.length) return bad('필수 항목 누락 — ' + miss.join(' · '));
       if (materials.some((m) => binary(m.text))) return bad(NOT_TEXT);
-      const p = await state.create({ name, spec, standard: b.standard, request: b.request, materials });
+      // 자료에 딸려 온 그림(DESIGN §6-9) — 글 속 열쇠를 먼저 바꾸고, 파일은 작품이 서면 쓴다(자료 분석이 시작되기 전에)
+      const pics = [];
+      const mats = [];
+      for (const m of materials) {
+        let text = String(m.text);
+        if (Array.isArray(m.images)) {
+          const t = takeImages(m.images);
+          if (t.error) return bad(t.error);
+          text = model.swapImageKeys(text, t.map);
+          pics.push(...t.list);
+        }
+        mats.push({ name: m.name, text });
+      }
+      const p = await state.create({ name, spec, standard: b.standard, request: b.request, materials: mats });
+      await storeImages(p.id, pics);
       // 앱의 용도가 정한 단계 템플릿(전자책 오토 — ebook). 이야기 만들기(기본)는 적지 않는다 — 지금까지의 작품과 같은 꼴
       // 개인판은 앱이 용도를 정하지 않고 작품마다 고른다(purposeChoice — docs/PERSONAL_USB.md §7). 고르지 않으면 이야기
       const tpl = d.templateKey && d.templateKey !== 'story_creation' ? String(d.templateKey)
@@ -227,7 +272,9 @@ export function createOps(d) {
 
     'project.delete': async (b) => {
       await jobs.stopProject(b.pid);
-      return await state.remove(b.pid) ? ok() : bad('프로젝트를 찾을 수 없습니다');
+      if (!(await state.remove(b.pid))) return bad('프로젝트를 찾을 수 없습니다');
+      if (imgs) imgs.removeAll(b.pid);   // 그 작품의 그림 폴더째(DESIGN §6-9)
+      return ok();
     },
 
     // ---------------- 자료 — 작업실 «자료» 카테고리의 문서로 들고 난다(지우면 휴지통)
@@ -250,11 +297,31 @@ export function createOps(d) {
     // ---------------- 문서 · 모순 검사 · 합평회
     'doc.create': async (b) => {
       if (binary(b.body)) return bad(NOT_TEXT);
+      // 파일로 만드는 문서에 딸려 온 그림(DESIGN §6-9) — 그림을 먼저 두고 글 속 열쇠를 바꾼다(없는 그림을 가리키는 순간이 없게)
+      let body = b.body;
+      if (Array.isArray(b.images)) {
+        if (!(await state.get(b.pid))) return bad('프로젝트를 찾을 수 없습니다');
+        const t = takeImages(b.images);
+        if (t.error) return bad(t.error);
+        await storeImages(b.pid, t.list);
+        body = model.swapImageKeys(body, t.map);
+      }
       let id = null;
       const r = await state.update(b.pid, (p) => {
-        id = model.docCreate(p, { kind: b.kind, title: b.title, body: b.body, categoryId: b.categoryId }).id;
+        id = model.docCreate(p, { kind: b.kind, title: b.title, body, categoryId: b.categoryId }).id;
       });
       return r.ok === false ? r : ok({ id });
+    },
+
+    // 그림 한 장(붙여넣기 · 끌어다 놓기 — DESIGN §6-9) → { id }. 본문에 자리를 넣는 것은 화면이 한다
+    'image.add': async (b) => {
+      if (!imgs) return bad('여기서는 그림을 넣을 수 없습니다');
+      if (!(await state.get(b.pid))) return bad('프로젝트를 찾을 수 없습니다');
+      const t = takeImages([{ key: 'k', name: b.name, data: b.data }]);
+      if (t.error) return bad(t.error);
+      if (!t.list.length) return bad('그림이 비어 있습니다');
+      await storeImages(b.pid, t.list);
+      return ok({ id: t.list[0].id });
     },
 
     // baseAt — 화면이 고치기 시작할 때 본 문서의 updatedAt(없으면 견주지 않는다 — 폰 동반 프로그램 등 옛 부르기 그대로).
@@ -469,7 +536,9 @@ export function createOps(d) {
   // fmt: 'md'(기본 — 마크다운 그대로) | 'txt'(마크다운 기호를 걷은 일반 글, 2026-10-07)
   async function downloadOf(pid, kind, id, fmt = 'md') {
     const out = await downloadMd(pid, kind, id);
-    if (!out || fmt !== 'txt' || kind === 'project') return out;
+    if (!out || kind === 'project') return out;
+    // 텍스트는 그림 자리를 «[그림: 설명]»으로, MD 는 그림을 파일 안에 담는다(DESIGN §6-9)
+    if (fmt !== 'txt') return { ...out, text: inlineImages(pid, out.text) };
     return { name: out.name.replace(/\.md$/, '') + '.txt', text: model.markdownToPlain(out.text), type: 'text/plain; charset=utf-8' };
   }
   async function downloadMd(pid, kind, id) {
@@ -489,7 +558,7 @@ export function createOps(d) {
     }
     // 작품 통째로 — 문서 · 판 이력 · 확정 · 참조 · 논의 · 에이전트 · 단계 · 휴지통까지(다른 판에서 «가져오기»로 연다)
     if (kind === 'project') {
-      return { name: model.safeFileName(p.name || '작품') + '.story-project.json', text: JSON.stringify(makeBundle(p)), type: 'application/json; charset=utf-8' };
+      return { name: model.safeFileName(p.name || '작품') + '.story-project.json', text: JSON.stringify(makeBundle(p, bundleImages(p))), type: 'application/json; charset=utf-8' };
     }
     return null;
   }

@@ -397,6 +397,9 @@ details summary:hover { opacity: .7; }
 .md hr { border: none; border-top: 1px solid var(--line); margin: 1.2em 0; }
 .md a { color: var(--blue); }
 .md-table { overflow-x: auto; margin: 0 0 .8em; }
+/* 문서의 그림(DESIGN §6-9) — 칸 너비에 맞춰 줄인다. 그릴 수 없는 그림 자리는 흐린 글로 */
+.md .md-img { display: block; max-width: 100%; height: auto; margin: .6em 0; border: 1px solid var(--line); border-radius: var(--r-s); }
+.md .md-noimg { color: var(--dim); }
 .md table { border-collapse: collapse; font-size: .95em; }
 .md th, .md td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; vertical-align: top; }
 .md th { background: var(--hover); font-weight: 600; }

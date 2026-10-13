@@ -508,13 +508,41 @@ export function markdownToPlain(text) {
       .replace(/^(\s*)[-*+]\s+\[( |x|X)\]\s+/, (m, sp, x) => sp + (x === ' ' ? '☐ ' : '☑ '))
       .replace(/^(\s*)[-*+]\s+/, '$1• ');
     if (/^\s*\|.*\|\s*$/.test(l)) l = l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim()).join('\t');
-    l = l.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1 ($2)')
+    l = l.replace(IMG_REF, (m, alt) => imageAltText(alt))   // 그림 자리는 «[그림: 설명]»(DESIGN §6-9)
+      .replace(/!\[([^\]\n]*)\]\(data:[^)\s]+\)/g, (m, alt) => imageAltText(alt))
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1 ($2)')
       .replace(/(\*\*|__)(.+?)\1/g, '$2').replace(/~~(.+?)~~/g, '$1')
       .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\*)/g, '$1$2')
       .replace(/`([^`]+)`/g, '$1');
     out.push(l);
   }
   return out.join('\n');
+}
+
+// ---------------------------------------------------------------- 그림 (DESIGN §6-9)
+// 본문 속 자리 표시 `![설명](img:<그림 id>)` — 파일은 바깥(개인판 tools/images.mjs)이 갖고, 작품은 목록(images)만 안다.
+export const IMG_REF = /!\[([^\]\n]*)\]\(img:([A-Za-z0-9_-]{1,64})\)/g;
+export function imageRefs(text) {
+  const out = [];
+  for (const m of str(text).matchAll(IMG_REF)) out.push({ alt: m[1], id: m[2] });
+  return out;
+}
+export const imageAltText = (alt) => '[그림' + (str(alt).trim() ? ': ' + str(alt).trim() : '') + ']';
+// 그림 자리를 글로 — keep(id) 가 참인 자리만 남긴다(텍스트 내려받기 · 그림을 모르는 자리)
+export function imagesToText(text, keep = null) {
+  return str(text).replace(IMG_REF, (m, alt, id) => (keep && keep(id) ? m : imageAltText(alt)));
+}
+export function findImage(p, id) { return (p.images || []).find((x) => x.id === id) || null; }
+// 이 작품에 없는 그림 자리는 글로 — AI 가 지어낸 자리 · 다른 작품에서 베껴 온 자리가 허공을 가리키지 않게
+export function keepKnownImages(p, text) { return imagesToText(text, (id) => !!findImage(p, id)); }
+export function imageAdd(p, { id, name = '', mime = '', bytes = 0 }) {
+  if (!Array.isArray(p.images)) p.images = [];
+  if (!findImage(p, id)) p.images.push({ id, name: str(name).slice(0, 200), mime: str(mime), bytes: Number(bytes) || 0, at: now() });
+  return findImage(p, id);
+}
+// 화면이 보낸 글 속 임시 열쇠(img:k1) → 받아 둔 그림 id. 모르는 열쇠는 글로(그림 없이 선 자리를 남기지 않는다)
+export function swapImageKeys(text, map) {
+  return str(text).replace(IMG_REF, (m, alt, key) => (map && map[key] ? '![' + alt + '](img:' + map[key] + ')' : imageAltText(alt)));
 }
 
 export function safeFileName(s) {

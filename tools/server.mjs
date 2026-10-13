@@ -27,6 +27,7 @@ import { codexIntoFolder } from './usb-build.mjs';
 import { geminiChoices, keyChoices } from './catalog-local.mjs';
 import { normalizeProject, saveProject, newId, DATA_DIR } from './store.mjs';
 import { acquire as lockData } from './datalock.mjs';
+import * as images from './images.mjs';
 import { backupProjects } from './backup.mjs';
 import { runKind } from '../core/generation/kinds.mjs';
 import { resolveHosting, hostOf, originOk, gateOk, isNavigation, GATE_REALM } from './hosting.mjs';
@@ -76,10 +77,17 @@ function startAgentPrep(pid, request = '') {
 }
 
 // 작품 파일 가져오기 — 늘 새 id 로 세운다(있는 작품을 덮어쓰지 않는다). 문서 · 판 · 참조 · 논의는 파일의 것 그대로.
-function importProject(raw) {
+// 곁에 실려 온 그림은 새 작품 폴더에 푼다(DESIGN §6-9) — 꼴을 다시 가리고, 풀리지 않은 그림은 목록에서 뺀다(글 속 자리는 남는다 — 보이지 않을 뿐)
+function importProject(raw, pics = []) {
   const p = normalizeProject({ ...structuredClone(raw), id: newId('p').replace(/[^A-Za-z0-9_-]/g, '') });
   if (!p) return { error: '작품 파일이 아닙니다' };
   p.jobs = [];
+  const put = new Set();
+  for (const x of Array.isArray(pics) ? pics : []) {
+    const got = images.decode(x.data);
+    if (!got.error && /^[A-Za-z0-9_-]{1,64}$/.test(String(x.id || '')) && images.save(p.id, x.id, got.buf, got.mime)) put.add(x.id);
+  }
+  p.images = (Array.isArray(p.images) ? p.images : []).filter((x) => x && put.has(x.id));
   // 옮겨 온 자동 실행은 «중지됨»으로 연다 — 작업은 따라오지 않으므로 «진행 중»인 채로 두면 아무것도 돌지 않는데 도는 것처럼 보인다
   if (p.rail && (p.rail.status === 'running' || p.rail.status === 'waiting')) p.rail = { ...p.rail, status: 'stopped', jobId: '', point: '', why: '' };
   saveProject(p);
@@ -141,7 +149,7 @@ async function keySet(raw) {
   return ok({ company: which, verified: !!t.verified, reason: t.reason || '', auth: auth.view() });
 }
 
-const { OPS, stateOf, downloadOf } = createOps({ state, jobs, engine, auth, limit: lastLimit, prepared, startAgentPrep, workflow: workflowOf, importProject, purposeChoice: true,
+const { OPS, stateOf, downloadOf } = createOps({ state, jobs, engine, auth, limit: lastLimit, prepared, startAgentPrep, workflow: workflowOf, importProject, purposeChoice: true, images,
   // ChatGPT 는 그 PC 의 Codex 가 아는 목록(없으면 빈 목록 — 화면은 «Codex 기본»만), Gemini 는 카탈로그
   login, loginStatus, keySet, rail,
   authModels: async () => ({ chatgpt: MOCK_MODELS || await codexModels(CODEX.cli), gemini: geminiChoices(), openai: keyChoices('openai') }) });
@@ -225,6 +233,12 @@ async function handle(plan, req, res) {
       const st = await stateOf(pid);
       if (!st) return send(res, 200, JSON.stringify({ ok: false, error: '없음' }));
       return send(res, 200, JSON.stringify({ ok: true, project: st, projects: listed() }));
+    }
+    // 문서의 그림 한 장(DESIGN §6-9) — 그 작품 폴더의 그 그림만. 꼴은 저장할 때 앞 바이트로 가린 것(png · jpeg · gif · webp)
+    if (req.method === 'GET' && url.pathname === '/api/image') {
+      const got = images.read(url.searchParams.get('pid') || '', url.searchParams.get('id') || '');
+      if (!got) return send(res, 404, '없음', 'text/plain; charset=utf-8');
+      return send(res, 200, got.buf, got.mime, { 'cache-control': 'private, max-age=86400', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'" });
     }
     if (req.method === 'GET' && url.pathname === '/api/download') {
       const d = await downloadOf(url.searchParams.get('pid'), url.searchParams.get('kind'), url.searchParams.get('id'), url.searchParams.get('fmt') === 'txt' ? 'txt' : 'md');

@@ -2349,6 +2349,105 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('아무도 없으면 화면도 «필수 항목 누락 — 에이전트»', app.includes("const noOne = !!d.seatOff && !(d.agentIds || []).length;") && app.includes("if (noOne) miss.push('에이전트');"));
 }
 
+// ---------------------------------------------------------------- 문서의 그림 — 담고 · 보이고 · 내려받고 · 옮긴다 (DESIGN §6-9, 사용자 결정 2026-10-13)
+
+// 작은 PNG 한 장(색 하나) — 그림 시험들이 함께 쓴다
+const { deflateSync: pngDeflate } = await import('node:zlib');
+function tinyPng(rgb = [220, 20, 20], w = 4, h = 4) {
+  const crcT = new Uint32Array(256).map((_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc = (b) => { let c = 0xffffffff; for (const x of b) c = crcT[(c ^ x) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (t, d) => { const len = Buffer.alloc(4); len.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([len, td, c]); };
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) raw.set(rgb, y * (w * 3 + 1) + 1 + x * 3);
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', pngDeflate(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+
+{
+  // 마크다운 보기 — 작은 가짜 DOM 에서 그려 본다
+  const vm = await import('node:vm');
+  const mk = (tag) => ({ tag, className: '', textContent: '', children: [], appendChild(c) { this.children.push(c); return c; } });
+  const mctx = { document: { createElement: mk, createTextNode: (t) => ({ tag: '#text', text: t }) } };
+  mctx.window = mctx;
+  vm.runInNewContext(src(join(ROOT, 'web', 'markdown.js')), mctx);
+  const flat = (n) => (n.tag === '#text' ? n.text : (n.textContent || '') + n.children.map(flat).join(''));
+  const find = (n, pred) => (pred(n) ? n : (n.children || []).map((c) => find(c, pred)).find(Boolean) || null);
+  const R = (t, o) => mctx.SEMarkdown.render(t, o);
+  const withImg = R('앞 ![지도](img:i_abc) 뒤', { image: (id) => '/api/image?id=' + id });
+  const img = find(withImg, (n) => n.tag === 'img');
+  ok('**마크다운 보기 — img: 자리는 주소를 받아 그림으로**', !!img && img.src === '/api/image?id=i_abc' && img.alt === '지도' && img.className === 'md-img');
+  const noImg = R('![지도](img:i_abc)');
+  ok('주소를 줄 수 없으면(온라인판) «[그림: 설명]» 글로', !find(noImg, (n) => n.tag === 'img') && flat(noImg) === '[그림: 지도]');
+  ok('바깥 주소(http · data) 그림은 불러오지 않고 글로', !find(R('![x](https://e.x/a.png) ![y](data:image/png;base64,AA)', { image: () => '/z' }), (n) => n.tag === 'img'));
+  eq('남의 마크다운의 역슬래시 표기 · 글자 번호를 글자로 푼다', flat(R('### \\[생성\\]을 누르면 &#91;image: 첫 화면\\] &amp; &#x5B;끝&#x5D; 1\\~6장')), '[생성]을 누르면 [image: 첫 화면] & [끝] 1~6장');
+  ok('굵게 · 코드는 그대로(코드 안의 역슬래시는 풀지 않는다)', flat(R('**굵게** `코\\[드`')) === '굵게 코\\[드' &&!!find(R('**굵게**'), (n) => n.tag === 'strong'));
+
+  // 모델 — 자리 표시 다루기
+  const M = model;
+  ok('그림 자리 찾기 · 글로 바꾸기', M.imageRefs('a ![가](img:i_1) b ![](img:i_2)').map((x) => x.alt + '/' + x.id).join() === '가/i_1,/i_2'
+    && M.imagesToText('![가](img:i_1) ![](img:i_2)') === '[그림: 가] [그림]');
+  const ip = { images: [{ id: 'i_have' }] };
+  eq('작품에 없는 그림 자리는 글로(AI 가 지어낸 자리)', M.keepKnownImages(ip, '![있다](img:i_have) ![없다](img:i_ghost)'), '![있다](img:i_have) [그림: 없다]');
+  eq('화면이 보낸 임시 열쇠를 그림 id 로 · 모르는 열쇠는 글로', M.swapImageKeys('![가](img:k1) ![나](img:k9)', { k1: 'i_x' }), '![가](img:i_x) [그림: 나]');
+  eq('텍스트로 받으면 그림 자리는 «[그림: 설명]»', M.markdownToPlain('![지도](img:i_1)\n![표](data:image/png;base64,QUJD)'), '[그림: 지도]\n[그림: 표]');
+
+  // 그림 파일 가리기
+  const I = await import('./images.mjs');
+  const png = tinyPng();
+  ok('꼴은 앞 바이트로 — png · jpeg · gif · webp 만', I.sniff(png) === 'image/png' && I.sniff(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0])) === 'image/jpeg'
+    && I.sniff(Buffer.from('GIF89a......')) === 'image/gif' && I.sniff(Buffer.from('RIFF0000WEBPVP8 ')) === 'image/webp' && I.sniff(Buffer.from('<svg xmlns="..."></svg>')) === '');
+  ok('svg · 빈 것 · 너무 큰 것은 받지 않는다', !!I.decode(Buffer.from('<svg onload="x"></svg>').toString('base64')).error && !!I.decode('').error
+    && /8MB/.test(I.decode(Buffer.concat([png, Buffer.alloc(I.IMAGE_MAX)]).toString('base64')).error || ''));
+
+  // 서버 — 새 작품 자료의 그림 · 붙여넣기 · 파일로 만든 문서 · 보이기 · 내려받기 · 작품 파일 · 지우기
+  const b64 = png.toString('base64');
+  const mp = await post('project.create', { name: '그림 작품', spec: { form: '소설' }, materials: [{ name: '자료', text: '앞 글\n![지도](img:k1)\n뒤 글', images: [{ key: 'k1', name: '지도.png', data: b64 }] }] });
+  ok('새 작품 — 자료에 딸린 그림을 받는다', mp.ok, JSON.stringify(mp).slice(0, 200));
+  await settle(mp.pid, 60000);
+  const stateMod = await import('./state.mjs');
+  let raw = stateMod.get(mp.pid);
+  const matDoc = raw.docs.find((x) => x.material);
+  const iid = (raw.images || [])[0] && raw.images[0].id;
+  ok('글 속 임시 열쇠가 그림 id 로 바뀌고 작품 목록에 선다', !!iid && /^i_/.test(iid) && matDoc.body.includes('![지도](img:' + iid + ')') && raw.images[0].mime === 'image/png');
+  const got = await fetch(base + '/api/image?pid=' + mp.pid + '&id=' + iid);
+  const gotBuf = Buffer.from(await got.arrayBuffer());
+  ok('**GET /api/image — 그 그림을 저장한 꼴로(nosniff)**', got.status === 200 && got.headers.get('content-type') === 'image/png' && got.headers.get('x-content-type-options') === 'nosniff' && gotBuf.equals(png));
+  ok('다른 작품 · 없는 id · 경로 흉내는 404', (await fetch(base + '/api/image?pid=p_none&id=' + iid)).status === 404 && (await fetch(base + '/api/image?pid=' + mp.pid + '&id=..%2F..%2Fx')).status === 404);
+  const add = await post('image.add', { pid: mp.pid, name: '붙인 그림.png', data: b64 });
+  ok('image.add — 붙여넣은 그림 한 장 → id', add.ok && /^i_/.test(add.id) && stateMod.get(mp.pid).images.length === 2);
+  ok('image.add — 그림이 아니면 까닭', !(await post('image.add', { pid: mp.pid, data: Buffer.from('<svg/>').toString('base64') })).ok);
+  const fd = await post('doc.create', { pid: mp.pid, title: '파일 문서', body: '![하나](img:k1)\n![모름](img:k7)', images: [{ key: 'k1', name: '하나', data: b64 }] });
+  raw = stateMod.get(mp.pid);
+  const fdBody = raw.docs.find((x) => x.id === fd.id).body;
+  ok('파일로 만든 문서 — 그림과 함께 · 모르는 열쇠는 글로', fd.ok && /^!\[하나\]\(img:i_[^)]+\)\n\[그림: 모름\]$/.test(fdBody), fdBody);
+  const dl = await (await fetch(base + '/api/download?pid=' + mp.pid + '&kind=doc&id=' + fd.id)).text();
+  ok('**MD 로 받으면 그림이 파일 안에(data: 주소)**', dl.includes('![하나](data:image/png;base64,' + b64 + ')') && !dl.includes('img:i_'));
+  const dlt = await (await fetch(base + '/api/download?pid=' + mp.pid + '&kind=doc&id=' + fd.id + '&fmt=txt')).text();
+  ok('텍스트로 받으면 «[그림: 설명]»', dlt.includes('[그림: 하나]') && !dlt.includes('base64'));
+  const bundleTxt = await (await fetch(base + '/api/download?pid=' + mp.pid + '&kind=project&id=' + mp.pid)).text();
+  const bundle = JSON.parse(bundleTxt);
+  ok('작품 파일에 그림이 함께(지문 포함)', Array.isArray(bundle.images) && bundle.images.length === 3 && !!bundle.imagesSha256 && bundle.images.every((x) => x.mime === 'image/png'));
+  const imp = await post('project.import', { bundle });
+  const impRaw = imp.ok ? stateMod.get(imp.pid) : null;
+  ok('**가져오면 새 작품 폴더에 그림이 풀린다**', !!impRaw && impRaw.images.length === 3 && (await fetch(base + '/api/image?pid=' + imp.pid + '&id=' + iid)).status === 200);
+  const broken = { ...bundle, images: [{ ...bundle.images[0], data: b64 + 'AAAA' }, ...bundle.images.slice(1)] };
+  ok('그림의 지문이 맞지 않으면 받지 않는다', !(await post('project.import', { bundle: broken })).ok);
+  const { DATA_DIR } = await import('./store.mjs');
+  const { existsSync: ex } = await import('node:fs');
+  await post('project.delete', { pid: imp.pid });
+  ok('작품을 지우면 그림 폴더째 지운다', !ex(join(DATA_DIR, 'images', imp.pid)) && (await fetch(base + '/api/image?pid=' + imp.pid + '&id=' + iid)).status === 404 && ex(join(DATA_DIR, 'images', mp.pid)));
+  await post('project.delete', { pid: mp.pid });
+
+  // 화면
+  const appSrc = src(join(ROOT, 'web', 'app.js'));
+  ok('화면 — 마크다운 보기 · 논의의 답에 그림 주소를 준다(개인판)', appSrc.includes('window.SEMarkdown.render(text, MD_OPTS)') && appSrc.includes('window.SEMarkdown.render(m.text, MD_OPTS)')
+    && appSrc.includes("const imageUrl = (id) => (S.me || !S.pid ? '' : '/api/image?pid='"));
+  ok('화면 — 본문 칸에 붙여넣기 · 끌어다 놓기(올리고 자리를 넣고 곧바로 저장)', appSrc.includes("onpaste: pasteInto('d-body', saveFields), ondrop: pasteInto('d-body', saveFields)") && appSrc.includes("api('image.add', await picOf(x, x.name))")
+    && appSrc.includes('const PIC_EDGE = 1600;'));
+  const css = src(join(ROOT, 'web', 'style.css'));
+  ok('그림 반 이름이 style.css 에', css.includes('.md .md-img') && css.includes('.md .md-noimg'));
+}
+
 // ---------------------------------------------------------------- 화면-서버 배선
 
 {
