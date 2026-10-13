@@ -21,7 +21,7 @@
 | **만들기 · 업데이트** | 아무 PC 에서 `node tools\usb-build.mjs --out <USB 의 폴더>` 한 줄 — 받는 곳 · 버전 · 해시를 맞춰 본다(§4) |
 | **용도** | 프로젝트마다 «이야기» 또는 «전자책»(§7) |
 | **ChatGPT** | 설정 › 무엇으로 › [ChatGPT 구독] — 그 PC 에 로그인한 Codex CLI 로 돈다(§8). Gemini 구독은 약관 문제로 사람이 정할 때까지 만들지 않았다 |
-| **크기** | 앱 약 2MB + node.exe 약 87MB + claude.exe 약 260MB(2026-10 기준) + 원고. **1GB 이상의 USB** 를 권한다 |
+| **크기** | 앱 약 1MB + node.exe 약 87MB + claude.exe 약 260MB(2026-10 기준) + 원고. **1GB 이상의 USB** 를 권한다 |
 
 ## 2. 폴더 그림
 
@@ -64,10 +64,14 @@ node tools/usb-build.mjs --out <USB 의 폴더> --skip-download       앱 파일
 
 | 무엇 | 어디서 | 버전 | 확인 |
 |---|---|---|---|
-| 앱 파일 | 이 저장소(도구가 있는 자리) — `tools` · `web` · `core` · `ai` · `config` · `docs` · 루트의 `.cmd` · `README.md` · `DESIGN.md` · `기획서.md` | 저장소 그대로 | 온라인판(`online/` · `migrations/`) · 시험(`tools/test.mjs`, 저장소 전체를 본다) · 원고는 싣지 않는다 |
+| 앱 파일 | 이 저장소(도구가 있는 자리) — 실행기 · 서버(`tools/launch.mjs` · `tools/server.mjs` · `tools/usb-build.mjs`)에서 import 를 따라간 모듈 · 첫 화면(`web/index.html`)이 부르는 파일 · 모듈이 읽는 자료(`tools/prompts.data.json` · `tools/books/` · `config/workflows/`) · 루트의 `.cmd` · `README.md` · `DESIGN.md` · `기획서.md` · `docs/PERSONAL_USB.md` · `docs/WORKFLOW.md` | 저장소 그대로 | 그 밖은 싣지 않는다 — 아래 «결제 기능 빼기» |
 | `tools\node\node.exe` | `https://nodejs.org/dist/<판>/win-x64/node.exe` | 기본 `v22.23.3`(2026-09-23 Node 22 LTS) · `--node` 로 바꾼다 | 같은 폴더의 `SHASUMS256.txt` 에 적힌 sha256 |
 | `tools\claude\claude.exe` | 앤트로픽이 npm 에 올린 윈도우 패키지 `@anthropic-ai/claude-code-win32-x64`(`registry.npmjs.org`) — 공식 설치기(`claude.ai/install.cmd`)가 받는 것과 같은 실행 파일 | 기본 `latest` · `--claude` 로 못박는다 | 레지스트리가 적은 sha512(`dist.integrity`) |
 
+- **결제 기능 빼기**(사용자 지시, 2026-10-13 «결제 관련한 부가적인 기능들은 삭제해서»): 나만 쓰는 판이라 이용권 검사 없이 AI 작업이 늘 된다. 개인판 코드(`tools/` · `core/`)에는 원래 결제 로직이 없다.
+  같은 저장소의 온라인 앱 몫 — 계정 · 이용권 · 체험 · 환불 · 운영 화면(`web/account.html` · `manage.html` · `login.*` · `school.*` · 약관 · 소개 · `policy.js`) · 온라인 어댑터(`ai/router.mjs` 따위) · 온라인 문서 · `online/` — 는
+  **만들기 도구가 USB 에 싣지 않는 것으로** 뺀다(위 «앱 파일» — 따라간 것만 담는다. 스위치가 아니라 빌드에서 빼기). 저장소에서는 지우지 않는다(온라인 앱들이 쓰고, 그 시험이 지킨다).
+  업데이트 때 지난번에 담았던 그런 파일이 USB 에 있으면 걷는다. 남는 것 하나: 개인판과 온라인판이 함께 쓰는 `web/app.js` 의 «이용권이 없어 …» 한 줄 — 온라인에 로그인한 사람(`S.me`)에게만 서고 개인판에는 `S.me` 가 없어 그려지지 않는다(시험이 지킨다).
 - 해시가 맞지 않으면 쓰지 않고 멈춘다. 큰 파일은 임시 이름으로 다 쓴 뒤 갈아끼운다(도중에 뽑혀도 반쪽 exe 가 남지 않게).
 - 담은 버전 · 해시 · 앱 파일 목록을 `.usb-build.json` 에 적는다. 다음 업데이트는 같은 판 · 같은 파일이면 다시 받지 않고, **지난 목록에만 있던 앱 파일**(지워진 코드)은 걷는다. `data\` 는 목록에 있어도 건드리지 않는다.
 - 저장소 안(`--out` 이 이 폴더 아래)에는 만들지 않는다.

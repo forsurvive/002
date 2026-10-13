@@ -22,24 +22,58 @@ export const DEFAULT_NODE = 'v22.23.3';            // 2026-09-23 의 Node 22 LTS
 export const CLAUDE_PKG = '@anthropic-ai/claude-code-win32-x64';
 export const MANIFEST = '.usb-build.json';
 
-// 담을 앱 파일 — 개인판이 도는 데 쓰는 것만. 온라인판(online/ · migrations/)과 시험(저장소 전체를 본다)은 싣지 않는다.
+// 담을 앱 파일 — **개인판이 실제로 쓰는 것만**(사용자 지시, 2026-10-13 «결제 관련한 부가적인 기능들은 삭제해서»).
+// 폴더를 통째로 옮기지 않고 실행기 · 서버에서 출발해 import 를 따라간 모듈만 담는다 — 그래서 온라인판의 계정 · 유료 서비스 ·
+// 운영 화면(web/account · manage · login · school · 약관 · 소개)과 온라인 어댑터(ai/router · anthropic …) · 온라인 문서는
+// USB 에 실리지 않는다. 저장소에서는 지우지 않는다(온라인 앱들이 쓰고, 그 시험이 지킨다).
+// 시험(tools/test.mjs — 저장소 전체를 본다)과 온라인판(online/ · migrations/)도 싣지 않는다.
 const TOP_FILES = ['스토리 엔진 개인판.cmd', 'README.md', 'DESIGN.md', '기획서.md'];
-const TOP_DIRS = ['tools', 'web', 'core', 'ai', 'config', 'docs'];
-const SKIP = new Set(['tools/node', 'tools/claude', 'tools/codex', 'tools/test.mjs', 'config/models.example.json']);
+const ENTRIES = ['tools/server.mjs', 'tools/launch.mjs', 'tools/usb-build.mjs'];
+// 모듈이 읽는 자료(import 가 아니라 파일로 읽는다)와 휴대판 안내
+const DATA = ['tools/prompts.data.json', 'tools/books', 'config/workflows', 'docs/PERSONAL_USB.md', 'docs/WORKFLOW.md'];
+
+// 상대 경로 import(정적 · 동적) 만 따라간다. 서버가 «바깥에 열고 DB 가 있을 때만» 부르는 온라인판(new URL('../online/…'))은 따라가지 않는다 —
+// 실행기가 늘 127.0.0.1 로 띄우므로 그 길이 열리지 않는다.
+export function moduleClosure(root = ROOT, entries = ENTRIES) {
+  const seen = new Set();
+  const stack = [...entries];
+  while (stack.length) {
+    const rel = stack.pop();
+    if (seen.has(rel)) continue;
+    const abs = join(root, ...rel.split('/'));
+    if (!existsSync(abs)) continue;
+    seen.add(rel);
+    const text = readFileSync(abs, 'utf8');
+    for (const m of text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|^\s*import\s+)['"](\.{1,2}\/[^'"]+)['"]/gm)) {
+      const parts = (rel.split('/').slice(0, -1).join('/') + '/' + m[1]).split('/');
+      const outp = [];
+      for (const x of parts) { if (x === '..') outp.pop(); else if (x && x !== '.') outp.push(x); }
+      stack.push(outp.join('/'));
+    }
+  }
+  return [...seen].sort();
+}
+
+// 화면 — 개인판의 첫 화면(index.html)과 그것이 부르는 파일만(화면 스크립트는 import 없이 차례로 읽힌다)
+export function webFiles(root = ROOT) {
+  const html = readFileSync(join(root, 'web', 'index.html'), 'utf8');
+  const refs = [...html.matchAll(/(?:src|href)="([^":?#]+)"/g)].map((m) => m[1]).filter((f) => !f.startsWith('/') && existsSync(join(root, 'web', f)));
+  return ['web/index.html', ...new Set(refs.map((f) => 'web/' + f))];
+}
 
 export function appFiles(root = ROOT) {
   const out = [];
   for (const f of TOP_FILES) if (existsSync(join(root, f))) out.push(f);
   const walk = (rel) => {
-    if (SKIP.has(rel)) return;
     const abs = join(root, ...rel.split('/'));
     if (!existsSync(abs)) return;
     if (statSync(abs).isDirectory()) { for (const n of readdirSync(abs).sort()) walk(rel + '/' + n); return; }
     if (/\.tmp$/.test(rel)) return;
     out.push(rel);
   };
-  for (const d of TOP_DIRS) walk(d);
-  return out;
+  for (const d of DATA) walk(d);
+  out.push(...moduleClosure(root), ...(existsSync(join(root, 'web', 'index.html')) ? webFiles(root) : []));
+  return [...new Set(out)];
 }
 
 export const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');

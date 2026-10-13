@@ -2289,6 +2289,16 @@ process.stdin.on('end', () => {
 
   const files = ub.appFiles();
   ok('담는 앱 파일에 실행기 · 서버 · 화면 · Core · 단계 템플릿이 있다', ['스토리 엔진 개인판.cmd', 'tools/launch.mjs', 'tools/server.mjs', 'web/index.html', 'core/workflow/stages.mjs', 'config/workflows/ebook.json', 'tools/prompts.data.json'].every((f) => files.includes(f)));
+  // 결제 관련 부가 기능은 USB 판에 싣지 않는다(사용자 지시, 2026-10-13) — 저장소에서는 지우지 않는다(온라인 앱 · 그 시험이 쓴다)
+  ok('**결제 · 이용권 · 체험 · 환불 · 계정 · 운영 화면은 USB 에 싣지 않는다**', ['web/account.html', 'web/manage.html', 'web/login.html', 'web/login.js', 'web/school.html', 'web/school.js', 'web/terms.html', 'web/privacy.html', 'web/about.html', 'web/policy.js'].every((f) => !files.includes(f) && existsSync(join(ROOT, f))));
+  ok('온라인 어댑터 · 온라인 문서도 싣지 않는다', !files.some((f) => /^ai\/(router|anthropic|openai|gemini|credentials|subscription|catalog)\.mjs$/.test(f) || /^docs\/(OPEN_EDITION|REPLIT_DEPLOYMENT|SECURITY|ERD|API)\.md$/.test(f)));
+  const payWords = /그로블|이용권|환불|정기결제|무료 체험|subscription_inactive|billing_refs/;
+  const paid = files.filter((f) => /\.(mjs|js|html|md)$/.test(f) && f !== 'web/app.js' && payWords.test(readFileSync(join(ROOT, ...f.split('/')), 'utf8')));
+  ok('담는 파일에 결제 이야기가 없다(app.js 는 온라인판과 함께 쓰는 화면 — 아래)', paid.length === 0, paid.join(' '));
+  ok('개인판 화면(app.js)의 이용권 줄은 로그인한 온라인 사용자에게만 선다(개인판은 S.me 가 늘 null)', src(join(ROOT, 'web', 'app.js')).includes("S.me && S.me.edition === 'open' && S.me.pass === false"));
+  ok('담는 모듈은 서로의 import 를 빠짐없이 품는다', files.filter((f) => f.endsWith('.mjs')).every((f) => ub.moduleClosure(ROOT, [f]).every((g) => files.includes(g))));
+  ok('온라인판으로 넘어가는 길(바깥에 열고 DB 가 있을 때만)은 따라가지 않는다', !files.some((f) => f.startsWith('online/')));
+  ok('화면은 첫 화면이 부르는 파일만', ub.webFiles().every((f) => files.includes(f)) && files.filter((f) => f.startsWith('web/')).length === ub.webFiles().length);
   ok('온라인판 · 시험 · 동봉물 · 원고는 담지 않는다', !files.some((f) => /^(online|migrations|data|node_modules)\//.test(f) || f === 'tools/test.mjs' || f.startsWith('tools/node/') || f.startsWith('tools/claude/')));
   const ubSrc = src(join(HERE, 'usb-build.mjs'));
   ok('받는 곳은 nodejs.org 와 앤트로픽의 npm 패키지뿐이다', (ubSrc.match(/https:\/\/[^'"\s]+/g) || []).every((u) => u.startsWith('https://nodejs.org/dist/') || u.startsWith('https://registry.npmjs.org/')) && ubSrc.includes("'@anthropic-ai/claude-code-win32-x64'"));
@@ -2313,6 +2323,12 @@ process.stdin.on('end', () => {
   ok('원고(data/)는 목록에 있어도 지우지 않는다', existsSync(join(usb, 'data', 'projects', 'p.json')));
   ok('온라인판은 USB 에 담기지 않는다', !existsSync(join(usb, 'online')));
   const outside = spawnSync(process.execPath, [join(HERE, 'usb-build.mjs'), '--out', join(ROOT, 'tools', 'usbtest'), '--skip-download'], { encoding: 'utf8' });
+  // 실제로 담아 보고 그 폴더에서 서버의 모든 모듈이 읽히는지 — 빠진 import 가 있으면 USB 에서 켜지지 않는다
+  const real = join(BOX, 'realusb');
+  ub.copyApp(real);
+  const boot = spawnSync(process.execPath, ['--input-type=module', '-e', 'await import(' + JSON.stringify(pathToFileURL(join(real, 'tools', 'server.mjs')).href) + '); await import(' + JSON.stringify(pathToFileURL(join(real, 'tools', 'launch.mjs')).href.replace('launch.mjs', 'claude-cli.mjs')) + '); console.log("loaded")'],
+    { env: { ...process.env, SE2_DATA_DIR: join(BOX, 'realusb-data') }, encoding: 'utf8', timeout: 30000 });
+  ok('USB 에 담은 폴더만으로 서버의 모듈이 모두 읽힌다', boot.status === 0 && boot.stdout.includes('loaded'), boot.stderr.slice(0, 300));
   ok('저장소 안에는 만들지 않는다', outside.status === 2 && /must be outside/.test(outside.stdout) && !existsSync(join(ROOT, 'tools', 'usbtest')));
 }
 
