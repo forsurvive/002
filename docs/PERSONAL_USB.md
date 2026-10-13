@@ -168,6 +168,20 @@ USB 에 `tools\claude\` 가 없으면(만들기 도구 없이 복사만 한 폴�
 - **구독 로그인(Gemini CLI)은 쓰지 않는다**: Google 계정 로그인(«Login with Google»)을 제3자 소프트웨어가 Gemini CLI 를 거쳐 쓰는 것을 Google 약관이 금하고 실제 계정 정지 사례가 있다(docs/OPEN_EDITION.md §1) — 그래서 사용자가 API 키 길을 골랐다.
 - 확인 못 한 것: 실제 키로 부른 결과(모의 · 가짜 어댑터로만 시험).
 
+### 8-4. 클릭과 붙여 넣기로 등록 (사용자 지시, 2026-10-13 — «챗 지피티 구독, 클로드/제미니 api발급을 클릭과 복붙 몇번으로» · «챗 지피티 api 간편 등록도» · «챗지피티가 로그인되어 있다면 자동으로»)
+설정(첫 화면 [설정] · 작품 설정 탭 — 같은 칸) › 무엇으로 아래에 다섯 줄 — **Claude 구독 · ChatGPT 구독 · Claude API 키 · ChatGPT API 키 · Gemini API 키** 마다 «등록됨 / 등록 안 됨».
+- **구독(Claude · ChatGPT) — [로그인] 한 번**: 누르면 서버가 그 회사의 실행기를 띄운다(`claude auth login --claudeai` · `codex login`, `tools/login.mjs`). 실행기가 브라우저를 연다 — 로그인 · 승인하면 끝.
+  브라우저가 안 열리면 실행기가 찍은 로그인 주소를 [로그인 페이지 열기 ↗]로 보인다(그 회사의 자리 — claude.com · claude.ai · anthropic.com · openai.com 일 때만). Claude 가 코드를 보여 주면 [붙여 넣기]/칸 → 실행기에 그대로 건넨다.
+  화면은 2초마다 상태를 보고, 끝나면 «등록됨». 로그인 정보는 각 실행기가 그 PC 의 사용자 폴더에 둔다 — 이 앱은 읽지도 옮기지도 않는다. 실측(리눅스 · 창 없이): 두 실행기 모두 주소를 찍고 기다린다. 윈도우에서 브라우저가 열리는지는 확인 못 함.
+- **자동 등록**: Claude 는 그 PC 에 Claude Code 로그인이 있으면 처음부터 «등록됨»이고 «그대로»가 그것으로 돈다(지금까지와 같다).
+  ChatGPT 는 그 PC 에 Codex 로그인(`%USERPROFILE%\.codex`)이 있으면 «등록됨» — 담아 온 Codex · 그 PC 에 깔린 Codex(PATH 의 codex.exe · npm 으로 깐 것의 진짜 실행 파일) 어느 것이든 그 PC 의 로그인을 읽는다.
+  아직 아무것도 고르지 않은 PC(«그대로»)에서 Claude 로그인은 없고 ChatGPT 로그인이 있으면, 켤 때 **묻지 않고 ChatGPT 구독으로 돈다**(검은 창에 한 줄). 화면에서 ChatGPT 로그인을 마쳐도 그 길로 바뀐다. 둘 다 있으면 Claude 그대로 · 사람이 고른 갈래는 건드리지 않는다.
+- **API 키(Claude · ChatGPT · Gemini) — ① ② 만**: [+ API 키 넣기 · 바꾸기] → 회사 고르기 → ① [키 만들기 페이지 열기 ↗](platform.claude.com/settings/keys · platform.openai.com/api-keys · aistudio.google.com/apikey) ② [붙여 넣기](클립보드) 또는 칸에 붙여 넣기
+  → ③ 앞머리로 회사를 알아보고(`sk-ant-` Claude · `AIza` Gemini · 그 밖의 `sk-` ChatGPT) `data\auth.json` 에 저장하고, 값이 들지 않는 모델 목록 문으로 맞는지 본다(`tools/keytest.mjs` — 키는 헤더에만). 키는 다시 보이지 않는다.
+  키를 넣었다고 저절로 그 키로 돌리지 않는다 — 값이 키 주인에게 나가는 길이라 [이 키로 돌리기]를 한 번 더 누른다.
+- **ChatGPT API 키 길**(«ChatGPT API 키»): 온라인판과 같은 어댑터(`ai/openai.mjs`) · 모델은 카탈로그의 ChatGPT 세 등급을 표시 이름으로 · 같은 고삐(`ai/local-key.mjs` — Gemini 와 한 본체). 구독(Codex)과 달리 종량이다.
+- 새 문: `login.start` · `login.code` · `login.status` · `auth.key`(개인판만 — 온라인판은 «여기서는 할 수 없습니다»). 있는 문의 이름 · 응답 꼴은 그대로.
+
 ### 8-3. 옛 기록 — Gemini 를 멈추고 물었던 까닭
 - Gemini 는 Codex 처럼 Gemini CLI(`gemini -p`, `-o json`)를 띄울 수는 있다(조사로 확인). 그러나 **Google 계정 로그인(«Login with Google»)을 제3자 소프트웨어가 Gemini CLI 를 거쳐 쓰는 것을 Google 약관이 금하고, 실제 계정 정지 사례가 있다**(docs/OPEN_EDITION.md §1 · geminicli.com/docs/resources/tos-privacy — 검색 요약, 페이지를 직접 열지 못했다).
   이 앱이 Gemini CLI 를 띄우는 것이 바로 그 꼴로 읽힐 수 있다 — 잃는 것이 사용자의 Google 계정이라 사람이 정한다(CLAUDE.md «멈추고 묻는다» — 법률 · 정책).

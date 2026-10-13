@@ -1217,7 +1217,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   let a = await post('auth.read');
   eq('손대지 않는 것이 기본이다', a.auth.mode, 'auto');
   eq('키는 없다', a.auth.hasKey, false);
-  ok('고를 수 있는 갈래 다섯(ChatGPT 구독 · Gemini API 키가 더해졌다 — 2026-10-13)', a.auth.modes.join(',') === 'auto,sub,api,chatgpt,gemini');
+  ok('고를 수 있는 갈래 여섯(ChatGPT 구독 · Gemini API 키 · ChatGPT API 키가 더해졌다 — 2026-10-13)', a.auth.modes.join(',') === 'auto,sub,api,chatgpt,gemini,openai');
 
   a = await post('auth.write', { mode: 'api', apiKey: 'sk-ant-시험-키' });
   eq('갈래가 바뀐다', a.auth.mode, 'api');
@@ -2273,7 +2273,7 @@ process.stdin.on('end', () => {
   const { isProvider } = await import('../ai/provider.mjs');
   ok('ChatGPT 길도 Provider 계약을 지킨다', isProvider(prov.localCodexProvider));
   const engSrc = src(join(HERE, 'engine.mjs'));
-  ok('«ChatGPT 구독» · «Gemini API 키»를 고르면 같은 한 자리(callModel)에서 그 길로 간다', engSrc.includes("const BY_MODE = { chatgpt: localCodexProvider, gemini: localGeminiProvider };")
+  ok('«ChatGPT 구독» · «Gemini API 키»를 고르면 같은 한 자리(callModel)에서 그 길로 간다', engSrc.includes("const BY_MODE = { chatgpt: localCodexProvider, gemini: localGeminiProvider, openai: localOpenAIProvider };")
     && engSrc.includes("generator === localCliProvider ? BY_MODE[auth.read().mode] || generator : generator"));
   const la = src(join(HERE, 'launch.mjs'));
   ok('ChatGPT 구독이면 실행기가 Codex 로그인을 본다(그 PC 에서 처음 한 번)', la.includes("auth.read().mode === 'chatgpt'") && la.includes('codexLogin(C.cli)') && la.includes('viaChatGPT || viaGemini ? { loggedIn: true }'));
@@ -2327,13 +2327,13 @@ process.stdin.on('end', () => {
   ok('카탈로그에 없으면 «모델 없음»으로 물러선다', !g.ok && g.reason === 'model');
   const { isProvider } = await import('../ai/provider.mjs');
   ok('Gemini 길도 Provider 계약을 지킨다', isProvider(lg.localGeminiProvider));
-  ok('Gemini 길도 같은 고삐를 지난다', src(join(ROOT, 'ai', 'local-gemini.mjs')).includes('withSeat(signal'));
+  ok('API 키 길(Gemini · ChatGPT)도 같은 고삐를 지난다', src(join(ROOT, 'ai', 'local-key.mjs')).includes('withSeat(signal') && src(join(ROOT, 'ai', 'local-gemini.mjs')).includes('createLocalKeyProvider(') && src(join(ROOT, 'ai', 'local-openai.mjs')).includes('createLocalKeyProvider('));
   await post('auth.write', { geminiKey: '' });
   authM.write({ mode: 'auto', geminiModel: 'balanced' });
 
   const app = src(join(ROOT, 'web', 'app.js'));
   ok('화면 — ChatGPT 를 고르면 모델 고르기(맨 앞 «Codex 기본»)', app.includes("[{ id: '', name: 'Codex 기본' }, ...((ms && ms.chatgpt) || [])]") && app.includes("authWrite({ chatgptModel: id })"));
-  ok('화면 — Gemini 를 고르면 모델 · 키 칸', app.includes("gemini: 'Gemini API 키'") && app.includes("authWrite({ geminiModel: id })") && app.includes("authWrite({ geminiKey: v })"));
+  ok('화면 — Gemini 를 고르면 모델 칸 · 키는 «API 키 넣기» 상자로', app.includes("gemini: 'Gemini API 키'") && app.includes("authWrite({ geminiModel: id })") && app.includes("quiet('auth.key', { key: raw })"));
   // 첫 화면의 [설정](2026-10-13 «프로젝트 생성 전에도 설정을 편집») — 작품 설정 탭과 같은 칸 하나(authSection)
   ok('첫 화면에 [설정] 단추가 선다(개인판만 — 온라인판은 «내 계정»)', app.includes("S.me ? null : h('button', { class: 'btn-line', text: '설정', onclick: settingsOpen })"));
   ok('[설정] 창은 작품 없이 auth.read 로 읽어 같은 칸을 그린다', app.includes("api('auth.read').then(") && app.includes("S.homeAuth ? authSection(S.homeAuth, null)") && app.includes("t === 'settings' ? settingsPanel(close)"));
@@ -2343,6 +2343,93 @@ process.stdin.on('end', () => {
   ok('작품을 고르지 않은 채로도 «무엇으로»를 읽는다(pid 없이)', homeRead.ok && Array.isArray(homeRead.auth.modes) && homeRead.auth.modes.includes('gemini'));
   const la = src(join(HERE, 'launch.mjs'));
   ok('Gemini API 키로 돌면 실행기 로그인을 묻지 않는다', la.includes('viaChatGPT || viaGemini ? { loggedIn: true }'));
+}
+
+// ---------------------------------------------------------------- 클릭과 붙여 넣기로 등록 — 구독 로그인 · API 키 (2026-10-13 사용자 지시)
+{
+  const kt = await import('./keytest.mjs');
+  eq('Claude 키를 알아본다', kt.keyCompany('sk-ant-api03-x'), 'claude');
+  eq('ChatGPT 키를 알아본다(Claude 를 먼저 본다)', kt.keyCompany('sk-proj-abc'), 'openai');
+  eq('Gemini 키를 알아본다', kt.keyCompany('AIzaSyX'), 'gemini');
+  eq('모르는 키', kt.keyCompany('hello'), '');
+  eq('붙여 넣은 글의 빈칸 · 따옴표 · 보이지 않는 글자를 걷는다', kt.cleanKey(' "sk-ant-a​b"\n'), 'sk-ant-ab');
+  const calls = [];
+  const fakeFetch = (status) => async (url, opt) => { calls.push({ url, opt }); if (status === 0) throw new Error('down'); return { ok: status === 200, status }; };
+  ok('맞는 키 — 값이 들지 않는 목록 문으로 확인', (await kt.testKey('claude', 'sk-ant-k', { fetchImpl: fakeFetch(200) })).verified === true && calls[0].url.startsWith('https://api.anthropic.com/v1/models'));
+  ok('키는 헤더에만(주소에 싣지 않는다)', calls.every((c) => !c.url.includes('sk-ant-k')) && calls[0].opt.headers['x-api-key'] === 'sk-ant-k');
+  eq('틀린 키', (await kt.testKey('gemini', 'AIza1', { fetchImpl: fakeFetch(401) })).reason, 'invalid');
+  ok('밀렸을 뿐이면 키는 맞다', (await kt.testKey('openai', 'sk-1', { fetchImpl: fakeFetch(429) })).verified === true && calls[calls.length - 1].opt.headers.authorization === 'Bearer sk-1');
+  eq('망이 없으면 «확인 못 함»', (await kt.testKey('openai', 'sk-1', { fetchImpl: fakeFetch(0) })).reason, 'network');
+
+  // 붙여 넣기 하나로 — 회사를 알아보고 저장 · 확인. 키는 답에 실리지 않고, 값이 나가는 길로 저절로 바꾸지 않는다
+  const before = (await post('auth.read')).auth.mode;
+  for (const [key, has] of [['sk-ant-test-123', 'hasKey'], ['sk-proj-test-456', 'hasOpenaiKey'], ['AIzaTest789', 'hasGeminiKey']]) {
+    const r = await post('auth.key', { key: '  ' + key + '\n' });
+    ok('붙여 넣은 키를 알아보고 저장 · 확인한다 — ' + has, r.ok && r.verified === true && r.auth[has] === true && !JSON.stringify(r).includes(key));
+  }
+  eq('키를 넣었다고 저절로 그 키로 돌리지 않는다', (await post('auth.read')).auth.mode, before);
+  ok('모르는 키는 받지 않는다', !(await post('auth.key', { key: 'hello' })).ok);
+  const { readJson: rj } = await import('./store.mjs');
+  ok('키는 data/auth.json 에만', rj(join(BOX, 'auth.json')).openaiKey === 'sk-proj-test-456');
+  await post('auth.write', { apiKey: '', geminiKey: '', openaiKey: '' });
+  const mr = await post('auth.models');
+  ok('ChatGPT API 키 모델은 카탈로그의 표시 이름(등급)으로', mr.models.openai.length === 3 && mr.models.openai.every((m) => ['high_reasoning', 'balanced', 'fast'].includes(m.id)) && !JSON.stringify(mr).includes('gpt-5.4-mini'));
+
+  // ChatGPT API 키 길 — 같은 본체(local-key) · 고른 등급의 model id · 키는 credential 로만
+  const lo = await import('../ai/local-openai.mjs');
+  const { createCatalog } = await import('../ai/catalog.mjs');
+  const cat = JSON.parse(readFileSync(join(ROOT, 'config', 'models.json'), 'utf8')).models;
+  const seen = [];
+  const prov = lo.createLocalOpenAIProvider({ openai: { generate: async (x) => { seen.push(x); return { ok: true, text: 'GPT 답' }; } }, catalog: () => createCatalog(cat), read: () => ({ openaiKey: 'sk-x', openaiModel: 'fast' }), mock: false });
+  const g = await prov.generate({ systemPrompt: 's', userPrompt: 'u' });
+  ok('ChatGPT API 키로 고른 등급의 모델을 부른다', g.ok && g.text === 'GPT 답' && seen[0].model === cat.find((m) => m.provider === 'openai' && m.tier === 'fast').modelId && seen[0].credential.apiKey === 'sk-x');
+  ok('«ChatGPT API 키»를 고르면 그 길로', src(join(HERE, 'engine.mjs')).includes('openai: localOpenAIProvider'));
+
+  // 구독 로그인 — 실행기를 띄우고, 찍은 주소를 화면에, 붙여 넣은 코드를 실행기에
+  const lg = await import('./login.mjs');
+  eq('그 회사의 로그인 주소만 올린다', lg.loginUrlOf('visit: https://claude.com/cai/oauth/authorize?x=1 and http://evil'), 'https://claude.com/cai/oauth/authorize?x=1');
+  eq('ChatGPT 로그인 주소', lg.loginUrlOf('navigate to this URL:\n\nhttps://auth.openai.com/oauth/authorize?a=b\n'), 'https://auth.openai.com/oauth/authorize?a=b');
+  eq('다른 자리의 주소는 올리지 않는다', lg.loginUrlOf('https://evil.example/oauth/authorize'), '');
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough } = await import('node:stream');
+  let child = null; const wrote = [];
+  const fakeSpawn = () => { child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.stdin.on('data', (d) => wrote.push(String(d))); child.kill = () => child.emit('close', 1); return child; };
+  let loggedIn = false;
+  const L = lg.createLogin({ plans: { claude: { cli: 'x', args: [] } }, check: { claude: async () => loggedIn }, spawnImpl: fakeSpawn });
+  ok('로그인을 띄운다', L.start('claude').ok && L.view().running);
+  child.stdout.write("Opening browser to sign in…\nIf the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&state=s\nPaste code here if prompted > ");
+  await sleep(20);
+  ok('찍은 주소와 «코드 붙여 넣기»를 읽는다', L.view().url.startsWith('https://claude.com/cai/oauth/authorize') && L.view().needsCode);
+  ok('같은 것을 두 번 띄우지 않는다', L.start('claude').ok && L.view().running);
+  ok('이상한 코드는 건네지 않는다', !L.code('a b; rm').ok);
+  ok('붙여 넣은 코드를 실행기에 건넨다', L.code(' abc123#XYZ ').ok);
+  await sleep(10);
+  eq('건넨 글', wrote.join(''), 'abc123#XYZ\n');
+  loggedIn = true; child.emit('close', 0); await sleep(20);
+  ok('끝나면 로그인되었는지 다시 본다', L.view().done && L.view().ok);
+  ok('모르는 로그인은 띄우지 않는다', !L.start('gemini').ok);
+  const ls = await post('login.status');
+  ok('로그인 상태를 묻는다(모의 — 실행기를 띄우지 않는다)', ls.ok && ls.claude === true && ls.chatgpt === false);
+  const st = await post('login.start', { who: 'chatgpt' });
+  ok('화면에서 로그인을 시작한다', st.ok && st.login.who === 'chatgpt');
+
+  // ChatGPT 자동 등록 — 그 PC 에 이미 로그인되어 있으면
+  const la = src(join(HERE, 'launch.mjs'));
+  ok('아무것도 고르지 않은 PC 에서 Claude 로그인이 없고 ChatGPT 로그인이 있으면 ChatGPT 구독으로 돈다', la.includes("if (!before.loggedIn && auth.read().mode === 'auto')") && la.includes("auth.write({ mode: 'chatgpt' })"));
+  ok('화면에서 ChatGPT 로그인을 마치면 그 길로 돈다', src(join(HERE, 'server.mjs')).includes("if (good) auth.write({ mode: 'chatgpt' })"));
+  const cx = await import('./codex-cli.mjs');
+  if (process.platform !== 'win32') {
+    const binDir = join(BOX, 'pcbin');
+    mkdirSync(binDir, { recursive: true });
+    const { writeFileSync: wf2, chmodSync: cm } = await import('node:fs');
+    wf2(join(binDir, 'codex'), '#!/bin/sh\n'); cm(join(binDir, 'codex'), 0o755);
+    const rc = cx.resolveCodex({ PATH: binDir });
+    ok('그 PC 에 깔린 Codex 도 찾는다(로그인은 그 PC 의 사용자 폴더에 있다)', rc.found && rc.cli === join(binDir, 'codex') && rc.via === 'installed on this PC');
+  }
+  const app = src(join(ROOT, 'web', 'app.js'));
+  ok('화면 — 구독은 «등록됨/안 됨» + [로그인] 한 번', app.includes("item('Claude 구독'") && app.includes("item('ChatGPT 구독'") && app.includes("text: LOGIN_NAME[who] + ' 로그인', onclick: () => loginStart(who)"));
+  ok('화면 — API 키는 ① 페이지 열기 ② 붙여 넣기 ③ 저절로(Claude · ChatGPT · Gemini)', ["'https://platform.claude.com/settings/keys'", "'https://platform.openai.com/api-keys'", "'https://aistudio.google.com/apikey'"].every((u) => app.includes(u)) && app.includes("navigator.clipboard.readText()"));
+  ok('화면 — 키를 넣어도 [이 키로 돌리기]를 눌러야 그 길로', app.includes("text: '이 키로 돌리기'"));
 }
 
 // ---------------------------------------------------------------- USB 휴대판 — 만들기 도구 (망 없이 순수 부분만)
@@ -2375,8 +2462,8 @@ process.stdin.on('end', () => {
   // 결제 관련 부가 기능은 USB 판에 싣지 않는다(사용자 지시, 2026-10-13) — 저장소에서는 지우지 않는다(온라인 앱 · 그 시험이 쓴다)
   ok('**결제 · 이용권 · 체험 · 환불 · 계정 · 운영 화면은 USB 에 싣지 않는다**', ['web/account.html', 'web/manage.html', 'web/login.html', 'web/login.js', 'web/school.html', 'web/school.js', 'web/terms.html', 'web/privacy.html', 'web/about.html', 'web/policy.js'].every((f) => !files.includes(f) && existsSync(join(ROOT, f))));
   // Gemini 어댑터 · 카탈로그는 «Gemini API 키» 길이 쓴다(2026-10-13) — 그 밖의 온라인 어댑터는 싣지 않는다
-  ok('Gemini API 키 길이 쓰는 어댑터 · 카탈로그는 싣는다', ['ai/gemini.mjs', 'ai/catalog.mjs', 'ai/local-gemini.mjs', 'config/models.json'].every((f) => files.includes(f)));
-  ok('온라인 어댑터 · 온라인 문서도 싣지 않는다', !files.some((f) => /^ai\/(router|anthropic|openai|credentials|subscription)\.mjs$/.test(f) || /^docs\/(OPEN_EDITION|REPLIT_DEPLOYMENT|SECURITY|ERD|API)\.md$/.test(f)));
+  ok('API 키 길(Gemini · ChatGPT)이 쓰는 어댑터 · 카탈로그는 싣는다', ['ai/gemini.mjs', 'ai/openai.mjs', 'ai/catalog.mjs', 'ai/local-key.mjs', 'ai/local-gemini.mjs', 'ai/local-openai.mjs', 'config/models.json'].every((f) => files.includes(f)));
+  ok('온라인 어댑터 · 온라인 문서도 싣지 않는다', !files.some((f) => /^ai\/(router|anthropic|credentials|subscription)\.mjs$/.test(f) || /^docs\/(OPEN_EDITION|REPLIT_DEPLOYMENT|SECURITY|ERD|API)\.md$/.test(f)));
   const payWords = /그로블|이용권|환불|정기결제|무료 체험|subscription_inactive|billing_refs/;
   const paid = files.filter((f) => /\.(mjs|js|html|md)$/.test(f) && f !== 'web/app.js' && f !== 'docs/PERSONAL_USB.md' && payWords.test(readFileSync(join(ROOT, ...f.split('/')), 'utf8')));
   ok('담는 파일에 결제 이야기가 없다(app.js 는 온라인판과 함께 쓰는 화면 — 아래 · 휴대판 안내는 «무엇을 뺐는가»를 적는다)', paid.length === 0, paid.join(' '));

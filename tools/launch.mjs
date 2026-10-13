@@ -82,9 +82,23 @@ if (viaChatGPT) {
 }
 
 // Gemini API 키로 돌면(설정 › 무엇으로) 실행기 로그인이 필요 없다 — 키가 없으면 앱이 첫 호출에서 이른다
-const viaGemini = auth.read().mode === 'gemini';
-if (viaGemini) line('  Gemini      : API key ' + (auth.read().geminiKey ? 'set' : 'NOT SET - put it in Settings') + '\n');
-const before = viaChatGPT || viaGemini ? { loggedIn: true } : await authStatus(R.cli);
+const viaGemini = auth.read().mode === 'gemini' || auth.read().mode === 'openai';   // API 키 길(Gemini · ChatGPT)
+if (viaGemini) line('  API key     : ' + (auth.read().mode === 'openai' ? 'ChatGPT ' + (auth.read().openaiKey ? 'set' : 'NOT SET - put it in Settings') : 'Gemini ' + (auth.read().geminiKey ? 'set' : 'NOT SET - put it in Settings')) + '\n');
+let before = viaChatGPT || viaGemini ? { loggedIn: true } : await authStatus(R.cli);
+
+// ChatGPT 자동 등록(2026-10-13 사용자 지시 «챗지피티가 로그인되어 있다면 챗지피티 구독량 사용도 자동으로») —
+// 아직 아무것도 고르지 않은 PC(«그대로»)에서 Claude 로그인은 없고 ChatGPT(Codex) 로그인이 있으면, 묻지 않고 ChatGPT 구독으로 돈다.
+// 둘 다 로그인되어 있으면 Claude 그대로(지금까지와 같다). 사람이 고른 갈래(Claude 구독 · API 키)는 건드리지 않는다.
+if (!before.loggedIn && auth.read().mode === 'auto') {
+  const C = resolveCodex();
+  if (C.found && (await codexLoggedIn(C.cli))) {
+    auth.write({ mode: 'chatgpt' });
+    line('  ChatGPT     : already signed in on this PC - using the ChatGPT subscription');
+    line('                (change it any time: Settings in the app)');
+    line();
+    before = { loggedIn: true };
+  }
+}
 if (!before.loggedIn) {
   line('  ------------------------------------------------------------');
   line('   ONE-TIME LOGIN (first run on this computer)');

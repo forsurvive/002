@@ -17,11 +17,23 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-// 폴더에 담아 온 것(USB — 만들기 도구가 tools/codex/ 에 푼다) → PATH 의 codex. 옆 폴더는 뒤지지 않는다.
-export function resolveCodex() {
-  const EXE = process.platform === 'win32' ? 'codex.exe' : 'codex';
+// 폴더에 담아 온 것(USB — 만들기 도구가 tools/codex/ 에 푼다) → 그 PC 에 깔린 것(PATH 의 codex.exe · npm 으로 깐 것의 진짜 실행 파일) → PATH 의 codex.
+// 윈도우에서 npm 으로 깐 «codex» 는 codex.cmd(셸 껍데기)라 그대로 띄울 수 없다 — 그 안의 codex.exe 를 찾아 쓴다.
+// 로그인은 실행 파일이 아니라 그 PC 의 사용자 폴더(%USERPROFILE%\.codex)에 있으므로, 어느 것을 써도 그 PC 의 ChatGPT 로그인을 그대로 읽는다.
+export function resolveCodex(env = process.env) {
+  const win = process.platform === 'win32';
+  const EXE = win ? 'codex.exe' : 'codex';
   const tried = [join(HERE, 'codex', 'bin', EXE), join(HERE, 'codex', EXE)];
   for (const p of tried) if (existsSync(p)) return { cli: p, found: true, via: 'portable (tools/codex)', tried };
+  const pc = [];
+  for (const d of String(env.PATH || env.Path || '').split(win ? ';' : ':').filter(Boolean)) pc.push(join(d, EXE));
+  if (win && env.APPDATA) {
+    const npm = join(env.APPDATA, 'npm', 'node_modules', '@openai');
+    for (const pkg of [join(npm, 'codex-win32-x64'), join(npm, 'codex', 'node_modules', '@openai', 'codex-win32-x64'), join(npm, 'codex')]) {
+      pc.push(join(pkg, 'vendor', 'x86_64-pc-windows-msvc', 'bin', EXE), join(pkg, 'vendor', 'x86_64-pc-windows-msvc', 'codex', EXE));
+    }
+  }
+  for (const p of pc) { tried.push(p); if (existsSync(p)) return { cli: p, found: true, via: 'installed on this PC', tried }; }
   return { cli: 'codex', found: false, via: 'PATH', tried };
 }
 

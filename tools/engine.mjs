@@ -8,6 +8,7 @@ import * as gen from '../core/generation/run.mjs';
 import { localCliProvider } from '../ai/local-cli.mjs';
 import { localCodexProvider } from '../ai/local-codex.mjs';
 import { localGeminiProvider } from '../ai/local-gemini.mjs';
+import { localOpenAIProvider } from '../ai/local-openai.mjs';
 import { isProvider } from '../ai/provider.mjs';
 import * as auth from './auth.mjs';
 import * as state from './state.mjs';
@@ -26,7 +27,7 @@ export function useGenerator(p) { generator = isProvider(p) ? p : localCliProvid
 
 // 한 번 부르기 — code 는 그 자리의 이름(모의 응답과 기록이 쓴다).
 // 개인판에서 «ChatGPT 구독» · «Gemini API 키»를 골랐으면(설정 › 무엇으로) 같은 자리에서 그 길로 간다 — 꽂아 둔 다른 Provider(온라인 · 시험)는 그대로
-const BY_MODE = { chatgpt: localCodexProvider, gemini: localGeminiProvider };
+const BY_MODE = { chatgpt: localCodexProvider, gemini: localGeminiProvider, openai: localOpenAIProvider };
 export function callModel({ systemPrompt, prompt, code = '', signal = null, model = '' }) {
   const g = generator === localCliProvider ? BY_MODE[auth.read().mode] || generator : generator;
   return g.generate({ model, systemPrompt, userPrompt: prompt, signal, metadata: { code } });

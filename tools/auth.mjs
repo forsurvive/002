@@ -10,6 +10,7 @@
 //             chatgptModel — 고른 모델(Codex 제 목록의 이름). 비면 Codex 의 기본.
 //   gemini  : Gemini API 키로 돈다(2026-10-13 사용자 결정 «제미니 구독은 API키로» — Google 계정 로그인은 약관 문제로 쓰지 않는다).
 //             geminiKey — 키(이 파일 밖으로 나가지 않는다) · geminiModel — 카탈로그(config/models.json)의 등급(high_reasoning · balanced · fast).
+//   openai  : ChatGPT API 키로 돈다(2026-10-13 «챗 지피티 api 간편 등록도») — openaiKey · openaiModel(등급). 구독(chatgpt)과 달리 키 주인에게 종량으로 나간다.
 //
 // 왜 «auto» 를 기본으로 두는가: 구독 로그인 없이 API 키만 있는 PC 에서 키를 지우면 그 사람은 아무것도 못 한다.
 // 사람이 고르기 전까지는 손대지 않는 것이 맞다.
@@ -27,8 +28,9 @@ import { DATA_DIR, readJson, writeJson } from './store.mjs';
 
 const FILE = () => join(DATA_DIR, 'auth.json');
 
-export const MODES = ['auto', 'sub', 'api', 'chatgpt', 'gemini'];
+export const MODES = ['auto', 'sub', 'api', 'chatgpt', 'gemini', 'openai'];
 export const GEMINI_TIERS = ['high_reasoning', 'balanced', 'fast'];
+const TIERS = GEMINI_TIERS;   // 카탈로그의 등급 — Gemini · ChatGPT API 키가 함께 쓴다
 const SLUG = /^[A-Za-z0-9._-]{1,80}$/;
 
 export function read() {
@@ -38,7 +40,9 @@ export function read() {
     apiKey: typeof v.apiKey === 'string' ? v.apiKey : '',
     chatgptModel: SLUG.test(String(v.chatgptModel || '')) ? String(v.chatgptModel) : '',
     geminiKey: typeof v.geminiKey === 'string' ? v.geminiKey : '',
-    geminiModel: GEMINI_TIERS.includes(v.geminiModel) ? v.geminiModel : 'balanced',
+    geminiModel: TIERS.includes(v.geminiModel) ? v.geminiModel : 'balanced',
+    openaiKey: typeof v.openaiKey === 'string' ? v.openaiKey : '',
+    openaiModel: TIERS.includes(v.openaiModel) ? v.openaiModel : 'balanced',
   };
 }
 
@@ -51,15 +55,17 @@ export function write(next = {}) {
   // 모델은 아는 꼴만 받는다 — 모르는 것이 오면 지금 값을 지킨다(빈 값은 «기본으로»)
   const chatgptModel = next.chatgptModel === undefined ? now.chatgptModel
     : next.chatgptModel === '' ? '' : SLUG.test(String(next.chatgptModel)) ? String(next.chatgptModel) : now.chatgptModel;
-  const geminiModel = GEMINI_TIERS.includes(next.geminiModel) ? next.geminiModel : now.geminiModel;
-  writeJson(FILE(), { mode, apiKey, chatgptModel, geminiKey, geminiModel });
+  const geminiModel = TIERS.includes(next.geminiModel) ? next.geminiModel : now.geminiModel;
+  const openaiKey = next.openaiKey === undefined ? now.openaiKey : String(next.openaiKey || '').trim();
+  const openaiModel = TIERS.includes(next.openaiModel) ? next.openaiModel : now.openaiModel;
+  writeJson(FILE(), { mode, apiKey, chatgptModel, geminiKey, geminiModel, openaiKey, openaiModel });
   return view();
 }
 
 // 화면에 내려 주는 꼴 — 키는 절대 돌려주지 않는다. 들어 있는지만 이른다.
 export function view() {
   const a = read();
-  return { mode: a.mode, hasKey: !!a.apiKey, modes: MODES, chatgptModel: a.chatgptModel, hasGeminiKey: !!a.geminiKey, geminiModel: a.geminiModel };
+  return { mode: a.mode, hasKey: !!a.apiKey, modes: MODES, chatgptModel: a.chatgptModel, hasGeminiKey: !!a.geminiKey, geminiModel: a.geminiModel, hasOpenaiKey: !!a.openaiKey, openaiModel: a.openaiModel };
 }
 
 // 「API 로 갈아탄다」가 실제로 될 형편인가 — 키가 없으면 고를 수 없다.

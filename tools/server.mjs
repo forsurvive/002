@@ -17,9 +17,12 @@ import { killAllCalls, lastLimit } from './call.mjs';
 import * as auth from './auth.mjs';
 import { createOps } from './ops.mjs';
 import { baseTemplate, templateKeyOf } from './workflow.mjs';
-import { codexModels } from './codex-cli.mjs';
-import { CODEX } from './call.mjs';
-import { geminiChoices } from './catalog-local.mjs';
+import { codexModels, codexLoggedIn, forgetCodexLogin } from './codex-cli.mjs';
+import { authStatus, childEnv } from './claude-cli.mjs';
+import { createLogin } from './login.mjs';
+import { testKey, keyCompany, cleanKey } from './keytest.mjs';
+import { CODEX, CLI } from './call.mjs';
+import { geminiChoices, keyChoices } from './catalog-local.mjs';
 import { normalizeProject, saveProject, newId, DATA_DIR } from './store.mjs';
 import { acquire as lockData } from './datalock.mjs';
 import { backupProjects } from './backup.mjs';
@@ -74,9 +77,49 @@ function importProject(raw) {
   return { pid: p.id };
 }
 
+// ---- 화면에서 하는 로그인 · 키 등록(개인판 — docs/PERSONAL_USB.md §8-4)
+// 로그인되어 있는가 — Claude 는 실행기에 묻고(5초 기억), ChatGPT 는 Codex 에 묻는다. 모의 실행에서는 실행기를 띄우지 않는다
+const MOCK_RUN = process.env.SE2_MOCK === '1';
+let claudeSeen = { at: 0, ok: false };
+async function claudeLoggedIn() {
+  if (MOCK_RUN) return true;
+  if (Date.now() - claudeSeen.at < 5000) return claudeSeen.ok;
+  claudeSeen = { at: Date.now(), ok: (await authStatus(CLI)).loggedIn };
+  return claudeSeen.ok;
+}
+const chatgptLoggedIn = async () => (MOCK_RUN ? false : codexLoggedIn(CODEX.cli));
+const login = MOCK_RUN
+  ? { start: (who) => ({ ok: true, login: { who, running: true, url: 'https://claude.ai/oauth/authorize?mock=1', needsCode: who === 'claude', done: false, ok: false, error: '' } }),
+      code: () => ({ ok: true }), view: () => null }
+  : createLogin({
+    plans: {
+      claude: { cli: CLI, args: ['auth', 'login', '--claudeai'], env: childEnv() },
+      chatgpt: { cli: CODEX.cli, args: ['login'], env: process.env },
+    },
+    check: {
+      claude: async () => { claudeSeen.at = 0; return claudeLoggedIn(); },
+      // ChatGPT 로그인을 화면에서 마쳤으면 그 길로 돈다(사람이 ChatGPT 를 쓰려고 누른 것이다 — 구독이라 값이 새지 않는다)
+      chatgpt: async () => { forgetCodexLogin(); const good = await chatgptLoggedIn(); if (good) auth.write({ mode: 'chatgpt' }); return good; },
+    },
+  });
+async function loginStatus() {
+  const [claude, chatgpt] = await Promise.all([claudeLoggedIn(), chatgptLoggedIn()]);
+  return { login: login.view(), claude, chatgpt };
+}
+// 붙여 넣은 키 — 앞머리로 회사를 알아보고 · 저장하고 · 값이 들지 않는 문으로 맞는지 본다. 키는 답에 싣지 않는다
+async function keySet(raw) {
+  const key = cleanKey(raw);
+  const which = keyCompany(key);
+  if (!which) return bad('Claude(sk-ant-…) · ChatGPT(sk-…) · Gemini(AIza…) API 키를 붙여 넣어 주세요');
+  auth.write({ claude: { apiKey: key }, gemini: { geminiKey: key }, openai: { openaiKey: key } }[which]);
+  const t = MOCK_RUN ? { verified: true } : await testKey(which, key);
+  return ok({ company: which, verified: !!t.verified, reason: t.reason || '', auth: auth.view() });
+}
+
 const { OPS, stateOf, downloadOf } = createOps({ state, jobs, engine, auth, limit: lastLimit, prepared, startAgentPrep, workflow: workflowOf, importProject, purposeChoice: true,
   // ChatGPT 는 그 PC 의 Codex 가 아는 목록(없으면 빈 목록 — 화면은 «Codex 기본»만), Gemini 는 카탈로그
-  authModels: async () => ({ chatgpt: MOCK_MODELS || await codexModels(CODEX.cli), gemini: geminiChoices() }) });
+  login, loginStatus, keySet,
+  authModels: async () => ({ chatgpt: MOCK_MODELS || await codexModels(CODEX.cli), gemini: geminiChoices(), openai: keyChoices('openai') }) });
 
 export const OP_NAMES = Object.keys(OPS);
 

@@ -30,6 +30,12 @@ const S = {
   authModels: null,        // 개인판 — ChatGPT · Gemini 고를 모델 목록(auth.models, 한 번 받는다)
   authModelsLoading: false,
   homeAuth: null,          // 첫 화면 [설정] 창이 쥔 «무엇으로»(auth.read · auth.write 의 답)
+  loginSt: null,           // 개인판 — 구독 로그인 상태 { claude, chatgpt, login }(login.status)
+  loginAsking: false,
+  loginSay: '',
+  keyOpen: false,          // «API 키 넣기» 상자를 폈는가
+  keyPick: '',             // 그 상자에서 고른 회사(claude · gemini)
+  keySay: null,            // 키를 붙여 넣은 결과 { text, good, company }
 };
 
 const KIND_MARK = { check: '모순 검사', review: '합평회' };
@@ -930,28 +936,131 @@ function openAgent(id, back) { S.open = { type: 'agent', id, model: null, back: 
 //   API 키 : 담아 둔 키로 돈다
 //   ChatGPT 구독 : 그 PC 에 로그인한 Codex CLI 로 돈다(모델은 Codex 가 정한다 — 위 «모델»은 클로드에만)
 //   Gemini API 키 : Gemini 는 구독이 아니라 키로(2026-10-13 사용자 결정) — 키 · 모델은 아래 authMore 에서
-const AUTH_SAY = { auto: '그대로', sub: 'Claude 구독', api: 'Claude API 키', chatgpt: 'ChatGPT 구독', gemini: 'Gemini API 키' };
+const AUTH_SAY = { auto: '그대로', sub: 'Claude 구독', api: 'Claude API 키', chatgpt: 'ChatGPT 구독', gemini: 'Gemini API 키', openai: 'ChatGPT API 키' };
 
 // 무엇으로 도는가 — 프로젝트 설정 탭과 첫 화면의 [설정] 창이 같은 칸을 쓴다(2026-10-13 «프로젝트 생성 전에도 설정을 편집»).
 // 이 PC 전체에 걸리는 값(data/auth.json)이라 작품이 없어도 고칠 수 있다.
 // 고를 갈래가 없으면(온라인판 — 키는 서버만 다룬다) 이 칸을 세우지 않는다.
 function authSection(a, limit) {
   if (!(a && (a.modes || []).length)) return null;
+  const st = loginState();
   return h('div', null,
     h('div', { class: 'lab', text: '무엇으로' }),
     authRow(a),
-    h('div', { class: 'line', style: 'margin-top:8px' },
-      textbox('set-key', 'Claude API 키', '', {
-        onblur: async () => {
-          const v = String(S.typed['set-key'] || '').trim();
-          if (!v) return;
-          clearTyped('set-key');
-          await authWrite({ apiKey: v });
-        },
-      }),
-      a.hasKey ? h('button', { class: 'btn-text red', text: '키 지우기', onclick: () => authWrite({ apiKey: '' }) }) : null),
+    accountLines(a, st),
+    loginBox(st),
+    keyBox(a),
     authMore(a),
     limit ? h('div', { class: 'when', text: limitSay(limit) }) : null);
+}
+
+// ---- 등록 — 구독은 로그인 상태를 보이고 [로그인] 한 번, API 키는 ① 페이지 열기 ② 붙여 넣기 ③ 저절로(2026-10-13 «클릭과 복붙 몇 번으로»)
+// 로그인 상태는 서버가 실행기에 물어 준다(login.status). 상태를 묻는 일로 작품 상태를 다시 받지 않도록 조용한 문을 쓴다.
+async function quiet(op, body = {}) {
+  if (S.tour) return null;
+  try {
+    const r = await fetch('/api', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op, ...body }) });
+    return await r.json();
+  } catch { return null; }
+}
+function loginState() {
+  if (!S.loginSt && !S.loginAsking) refreshLogin();
+  return S.loginSt;
+}
+async function refreshLogin() {
+  S.loginAsking = true;
+  const r = await quiet('login.status');
+  S.loginAsking = false;
+  if (r && r.ok) S.loginSt = r;
+  render();
+  // 로그인이 도는 동안은 2초마다 다시 본다 — 끝나면(그 PC 의 실행기가 로그인을 마치면) 저절로 «로그인됨»
+  if (r && r.ok && r.login && r.login.running) setTimeout(refreshLogin, 2000);
+  else if (r && r.ok && r.login && r.login.ok) { const a = await quiet('auth.read'); if (a && a.ok) S.homeAuth = a.auth; pull(true); }
+}
+async function loginStart(who) {
+  const r = await quiet('login.start', { who });
+  if (r && r.ok) { S.loginSt = { ...(S.loginSt || {}), login: r.login }; S.loginSay = ''; setTimeout(refreshLogin, 1500); }
+  else S.loginSay = (r && r.error) || '로그인을 시작하지 못했습니다';
+  render();
+}
+const LOGIN_NAME = { claude: 'Claude', chatgpt: 'ChatGPT' };
+
+function accountLines(a, st) {
+  const item = (name, good, act) => h('div', { class: 'line', style: 'gap:8px' },
+    h('span', { text: name }),
+    h('span', { class: good ? 'notice good' : 'when', text: good ? '등록됨' : '등록 안 됨' }),
+    act);
+  const loginBtn = (who, good) => (good ? null : h('button', { class: 'btn-text', text: LOGIN_NAME[who] + ' 로그인', onclick: () => loginStart(who) }));
+  return h('div', { style: 'margin-top:8px;display:flex;flex-direction:column;gap:2px' },
+    item('Claude 구독', !!(st && st.claude), st ? loginBtn('claude', st.claude) : null),
+    item('ChatGPT 구독', !!(st && st.chatgpt), st ? loginBtn('chatgpt', st.chatgpt) : null),
+    item('Claude API 키', !!a.hasKey, a.hasKey ? h('button', { class: 'btn-text red', text: '지우기', onclick: () => authWrite({ apiKey: '' }) }) : null),
+    item('ChatGPT API 키', !!a.hasOpenaiKey, a.hasOpenaiKey ? h('button', { class: 'btn-text red', text: '지우기', onclick: () => authWrite({ openaiKey: '' }) }) : null),
+    item('Gemini API 키', !!a.hasGeminiKey, a.hasGeminiKey ? h('button', { class: 'btn-text red', text: '지우기', onclick: () => authWrite({ geminiKey: '' }) }) : null));
+}
+
+// 도는 로그인 — 브라우저가 열리지 않으면 주소를 누르고, Claude 가 코드를 보여 주면 붙여 넣는다
+function loginBox(st) {
+  const L = st && st.login;
+  if (S.loginSay) return h('div', { class: 'notice', style: 'margin-top:6px', text: S.loginSay });
+  if (!L) return null;
+  if (L.done) return h('div', { class: L.ok ? 'notice good' : 'notice', style: 'margin-top:6px', text: L.ok ? LOGIN_NAME[L.who] + ' 로그인 — 등록되었습니다' : L.error });
+  const send = async (raw) => {
+    const r = await quiet('login.code', { code: String(raw || '').trim() });
+    S.loginSay = r && r.ok ? '' : (r && r.error) || '건네지 못했습니다';
+    setTimeout(refreshLogin, 1500); render();
+  };
+  return h('div', { class: 'card-box', style: 'margin-top:8px' },
+    h('div', { class: 'lab', text: LOGIN_NAME[L.who] + ' 로그인 — 열린 브라우저에서 로그인하고 승인해 주세요' }),
+    L.url ? h('a', { class: 'btn-line', style: 'align-self:flex-start', href: L.url, target: '_blank', rel: 'noopener noreferrer', text: '브라우저가 안 열렸으면 — 로그인 페이지 열기 ↗' }) : null,
+    L.who === 'claude' ? h('div', { class: 'line', style: 'margin-top:6px;align-items:center' },
+      h('span', { class: 'when', text: '코드가 나오면' }),
+      h('button', { class: 'btn-red', text: '붙여 넣기', onclick: async () => { let t = ''; try { t = await navigator.clipboard.readText(); } catch { t = ''; } if (t.trim()) send(t); else { S.loginSay = '복사한 코드를 읽지 못했습니다 — 오른쪽 칸에 붙여 넣어 주세요'; render(); } } }),
+      h('input', { id: 'lg-code', type: 'text', spellcheck: 'false', placeholder: '또는 여기에 붙여 넣기', style: 'flex:1;min-width:160px', onpaste: (e) => { const t = (e.clipboardData || { getData: () => '' }).getData('text'); if (t.trim()) { e.preventDefault(); send(t); } } })) : null,
+    h('div', { class: 'when', text: '마치면 저절로 «등록됨»으로 바뀝니다' }));
+}
+
+// API 키 — ① 그 회사의 키 화면 열기 ② 붙여 넣기 ③ 앞머리로 회사를 알아보고 저장 · 확인(값이 들지 않는 목록 문). 키는 다시 보이지 않는다
+const KEY_PAGE = {
+  claude: { name: 'Claude', url: 'https://platform.claude.com/settings/keys', how: '로그인 → [Create key] → 나온 키 복사' },
+  openai: { name: 'ChatGPT', url: 'https://platform.openai.com/api-keys', how: '로그인 → [Create new secret key] → 나온 키 복사(잔액이 있어야 돕니다)' },
+  gemini: { name: 'Gemini', url: 'https://aistudio.google.com/apikey', how: 'Google 계정으로 로그인 → [API 키 만들기] → 복사' },
+};
+const KEY_MODE = { claude: 'api', gemini: 'gemini', openai: 'openai' };
+async function keyPaste(raw) {
+  if (!String(raw || '').trim()) { S.keySay = { text: '복사한 키를 읽지 못했습니다 — 칸에 붙여 넣어 주세요' }; return render(); }
+  S.keySay = { text: '저장하고 확인하는 중…', good: true }; render();
+  const r = await quiet('auth.key', { key: raw });
+  if ($('k-key')) $('k-key').value = '';
+  if (!r || !r.ok) { S.keySay = { text: (r && r.error) || '저장하지 못했습니다' }; return render(); }
+  S.homeAuth = r.auth;
+  const name = KEY_PAGE[r.company].name;
+  S.keySay = r.verified ? { text: name + ' API 키 — 연결됩니다', good: true, company: r.company }
+    : { text: name + ' API 키를 저장했지만 ' + (r.reason === 'invalid' ? '맞지 않는 키입니다 — 다시 복사해 붙여 넣어 주세요' : '연결을 확인하지 못했습니다(인터넷 · 회사 사정)'), company: r.company };
+  pull(true);
+}
+function keyBox(a) {
+  const pick = S.keyPick || (a.mode === 'openai' ? 'openai' : a.mode === 'gemini' ? 'gemini' : 'claude');
+  const say = S.keySay;
+  if (!S.keyOpen && !say) return h('button', { class: 'btn-line', style: 'margin-top:8px;align-self:flex-start', text: '+ API 키 넣기 · 바꾸기', onclick: () => { S.keyOpen = true; render(); } });
+  const pg = KEY_PAGE[pick];
+  return h('div', { class: 'card-box', style: 'margin-top:8px' },
+    h('div', { class: 'lab', text: 'API 키 넣기 — ①② 만 하면 ③ 은 저절로' }),
+    h('div', { class: 'line' }, Object.entries(KEY_PAGE).map(([id, k]) => h('button', { class: pick === id ? 'btn' : 'btn-line', text: k.name, onclick: () => { S.keyPick = id; S.keySay = null; render(); } }))),
+    h('div', { class: 'line', style: 'margin-top:6px;align-items:center' },
+      h('a', { class: 'btn-line', href: pg.url, target: '_blank', rel: 'noopener noreferrer', text: '① ' + pg.name + ' 키 만들기 페이지 열기 ↗' }),
+      h('span', { class: 'when', text: pg.how })),
+    h('div', { class: 'line', style: 'margin-top:6px;align-items:center' },
+      h('span', { class: 'when', text: '②' }),
+      h('button', { class: 'btn-red', text: '붙여 넣기', onclick: async () => { let t = ''; try { t = await navigator.clipboard.readText(); } catch { t = ''; } keyPaste(t); } }),
+      h('input', { id: 'k-key', type: 'password', spellcheck: 'false', placeholder: '또는 여기에 붙여 넣기', style: 'flex:1;min-width:160px',
+        onpaste: (e) => { const t = (e.clipboardData || { getData: () => '' }).getData('text'); if (t.trim()) { e.preventDefault(); keyPaste(t); } },
+        onkeydown: (e) => { if (e.key === 'Enter') keyPaste(e.target.value); } })),
+    h('div', { class: say ? 'notice' + (say.good ? ' good' : '') : 'when', style: 'margin-top:6px', text: say ? say.text : '③ 붙여 넣으면 회사를 알아보고 저장 · 연결 확인까지 저절로 합니다' }),
+    // 키를 넣었다고 저절로 그 키로 돌리지 않는다(값이 나가는 길이다) — 한 번 더 눌러 고른다
+    say && say.company && a.mode !== KEY_MODE[say.company] ? h('button', { class: 'btn', style: 'align-self:flex-start;margin-top:4px', text: '이 키로 돌리기', onclick: () => { S.keySay = null; S.keyOpen = false; authWrite({ mode: KEY_MODE[say.company] }); } }) : null,
+    pick === 'gemini' ? h('div', { class: 'when', text: 'Gemini 는 무료 키로 시작할 수 있습니다 — 무료 등급은 횟수 한도가 있고, 보낸 글이 Google 의 제품 개선에 쓰일 수 있습니다.' }) : null,
+    h('button', { class: 'btn-text', style: 'align-self:flex-start', text: '접기', onclick: () => { S.keyOpen = false; S.keySay = null; render(); } }));
 }
 
 // 고친 값은 답으로 돌아온다 — 첫 화면의 [설정] 창은 작품 상태가 없으므로 그 답을 그대로 쥔다
@@ -994,7 +1103,7 @@ function pickRow(list, cur, pick) {
 
 // ChatGPT 구독 · Gemini API 키를 골랐을 때만 — 모델(과 Gemini 키)
 function authMore(a) {
-  if (!a || (a.mode !== 'chatgpt' && a.mode !== 'gemini')) return null;
+  if (!a || !['chatgpt', 'gemini', 'openai'].includes(a.mode)) return null;
   const ms = authModels();
   if (a.mode === 'chatgpt') {
     const list = [{ id: '', name: 'Codex 기본' }, ...((ms && ms.chatgpt) || [])];
@@ -1003,19 +1112,13 @@ function authMore(a) {
       pickRow(list, a.chatgptModel || '', (id) => authWrite({ chatgptModel: id })),
       ms && !(ms.chatgpt || []).length ? h('div', { class: 'when', text: 'Codex 의 모델 목록을 읽지 못했습니다 — Codex 기본으로 돕니다' }) : null);
   }
+  // API 키 길(Gemini · ChatGPT) — 카탈로그의 등급을 표시 이름으로
+  const gem = a.mode === 'gemini';
   return h('div', { style: 'margin-top:8px' },
-    h('div', { class: 'lab', text: 'Gemini 모델' }),
-    pickRow((ms && ms.gemini) || [], a.geminiModel || '', (id) => authWrite({ geminiModel: id })),
-    h('div', { class: 'line', style: 'margin-top:8px' },
-      textbox('set-gkey', a.hasGeminiKey ? 'Gemini API 키 — 들어 있음' : 'Gemini API 키', '', {
-        onblur: async () => {
-          const v = String(S.typed['set-gkey'] || '').trim();
-          if (!v) return;
-          clearTyped('set-gkey');
-          await authWrite({ geminiKey: v });
-        },
-      }),
-      a.hasGeminiKey ? h('button', { class: 'btn-text red', text: '키 지우기', onclick: () => authWrite({ geminiKey: '' }) }) : null));
+    h('div', { class: 'lab', text: gem ? 'Gemini 모델' : 'ChatGPT 모델(API 키)' }),
+    gem ? pickRow((ms && ms.gemini) || [], a.geminiModel || '', (id) => authWrite({ geminiModel: id }))
+      : pickRow((ms && ms.openai) || [], a.openaiModel || '', (id) => authWrite({ openaiModel: id })),
+    (gem ? a.hasGeminiKey : a.hasOpenaiKey) ? null : h('div', { class: 'notice', style: 'margin-top:6px', text: (gem ? 'Gemini' : 'ChatGPT') + ' API 키가 아직 없습니다 — 아래 «API 키 넣기»로' }));
 }
 
 function authRow(a) {
