@@ -450,6 +450,8 @@ function app() {
           h('button', { class: 'top-name', text: p.name, onclick: goHome }),
           // 온라인판 — 강사 · 기관 관리자의 열람. 고치는 문은 서버가 막는다(이 표시는 알림일 뿐이다)
           p.readOnly ? h('span', { class: 'mark', text: '읽기만' }) : null),
+        // 전자책 작품 — [자동 실행](반자동 · 완전 자동을 고르고 · 중지 · 되돌리기, web/rail.js — DESIGN §5-1). 이야기 작품 · 온라인판에서는 서지 않는다
+        railButton(),
         whoLine()),
       h('div', { class: 'body' }, S.tab === '작업실' ? workshop() : S.tab === '단계' && p.workflow ? stagesView() : S.tab === '설정' ? settings() : trash()),
       lectureCard()));
@@ -562,8 +564,6 @@ function stagesView() {
       next ? h('div', { class: 'when', text: '다음: ' + next.n + '  ' + next.title }) : null,
     ] : h('div', { class: 'name', text: '모든 단계를 승인했습니다' }));
   return h('div', null,
-    // 전자책 작품의 자동 실행(반자동 · 완전 자동 — web/rail.js, DESIGN §5-1). 이야기 작품 · 온라인판에서는 그리지 않는다
-    railBox(),
     banner,
     h('div', { class: 'sec' },
       h('div', { class: 'sec-head' },
@@ -1383,6 +1383,7 @@ function layerOne() {
       : t === 'settings' ? settingsPanel(close)
         : t === 'newdoc' ? newDocPanel(close)
           : t === 'stage' ? stagePanel(close)
+            : t === 'rail' ? railPanel(close)
             : t === 'prompt' ? promptPanel(close)
               : t === 'prepare' ? preparePanel(close)
                 : agentPanel(close);
@@ -1779,12 +1780,7 @@ function purposeChoice() {
     h('div', { class: 'lab', text: '용도' }),
     h('div', { class: 'line' },
       h('button', { class: pick === 'story' ? 'btn' : 'btn-line', text: '이야기', onclick: () => choose('story') }),
-      h('button', { class: pick === 'ebook' ? 'btn' : 'btn-line', text: '전자책', onclick: () => choose('ebook') })),
-    // 전자책이면 «진행» — 완전 수동(기본) · 반자동 · 완전 자동(DESIGN §5-1). 반자동 · 완전 자동은 만들 때 도는 자료 분석 뒤 레일이 잇는다
-    pick === 'ebook' ? [
-      h('div', { class: 'lab', style: 'margin-top:10px', text: '진행' }),
-      h('div', { class: 'line' }, [['', '완전 수동'], ['semi', '반자동'], ['auto', '완전 자동']].map(([v, name]) => h('button', {
-        class: (S.open.railMode || '') === v ? 'btn' : 'btn-line', text: name, onclick: () => { S.open.railMode = v; render(); } })))] : null);
+      h('button', { class: pick === 'ebook' ? 'btn' : 'btn-line', text: '전자책', onclick: () => choose('ebook') })));
 }
 
 // 온라인판 — 어디에 만들까요? 수업 작품은 기관 키로, 내 개인 작품은 내 AI 키로 돈다(개인판에는 이 칸이 없다).
@@ -1825,7 +1821,6 @@ async function makeProject() {
   }
   if (S.me && S.open.place) body.classId = S.open.place;
   if (!S.me && S.open.purpose === 'ebook') body.purpose = 'ebook';
-  if (!S.me && S.open.purpose === 'ebook' && ['semi', 'auto'].includes(S.open.railMode)) body.railMode = S.open.railMode;
   const r = await api('project.create', body);
   if (r.ok) { S.pid = r.pid; S.draft = []; S.open = null; S.project = null; S.typed = {}; pull(true); return true; }
   S.open.err = r.error;

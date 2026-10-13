@@ -9,6 +9,7 @@ import * as model from './model.mjs';
 import * as wf from '../core/workflow/stages.mjs';
 import { nextStep, POINTS, CRITERIA, revisionPlan, reviseRequest } from '../core/rail/next.mjs';
 import { baseTemplate, templateKeyOf } from './workflow.mjs';
+import { newId } from '../core/ids.mjs';
 
 export const MODES = ['semi', 'auto'];
 export const ON_FAIL = ['pass', 'stop'];
@@ -31,7 +32,23 @@ function cleanSettings(s = {}, base = DEFAULTS) {
 
 function fresh(mode, settings) {
   return { mode, status: 'running', point: '', episode: 0, why: '', settings: cleanSettings(settings), calls: 0, rounds: {}, revise: null,
-    notes: [], wrote: [], acked: 0, unreviewed: false, jobId: '', verdict: null, startedAt: Date.now(), endedAt: 0 };
+    notes: [], wrote: [], acked: 0, unreviewed: false, jobId: '', verdict: null, steps: [], startedAt: Date.now(), endedAt: 0 };
+}
+
+// ---------------------------------------------------------------- 걸음 기록 · 되돌리기(사용자 지시 2026-10-13 «각 단계 별 롤백»)
+// 레일이 한 일(생성 · 다시 생성 · 개정 · 승인)마다 «하기 직전»을 남긴다 — 문서의 본문 · 확정본 · 단계 상태 · 레일의 셈.
+// 되돌리면 그 걸음과 그 뒤의 걸음을 거꾸로 푼다. 레일이 새로 만든 문서는 휴지통으로(되살릴 수 있다), 고친 문서는 앞 본문을 새 판으로(이력에 남는다).
+// 기록에 없는 것 — 사람이 중간에 만들거나 들여온 문서 · 손으로 고친 다른 문서 — 는 건드리지 않는다.
+const KEEP = ['wrote', 'acked', 'revise', 'rounds', 'notes', 'unreviewed'];
+const keepOf = (r) => JSON.parse(JSON.stringify(Object.fromEntries(KEEP.map((k) => [k, r[k]]))));
+const snapStage = (p, slot) => (p.stages && p.stages[slot] ? { ...p.stages[slot] } : null);
+const KIND_SAY = { write: '생성', fix: '다시 생성(수정 요청)', revise: '개정' };
+function pushStep(pr, step) {
+  const d = step.docId ? model.findDoc(pr, step.docId) : null;
+  const label = step.kind === 'approve'
+    ? POINTS[step.key] + ' 승인' + (String(step.by || '').startsWith('agent:') ? ' · 편집장' : '')
+    : (d ? d.title : step.key) + ' ' + (KIND_SAY[step.kind] || '생성');
+  pr.rail.steps = [...(pr.rail.steps || []), { id: newId('s'), at: Date.now(), label, ...step }];
 }
 
 // 기다림으로 세운다 — point: 도장 열쇠 · 'chapter' · ''(상한 · 막힘)
@@ -48,7 +65,7 @@ export function start(pid, mode, settings = {}) {
     const r = pr.rail;
     // 도는 중 · 기다리는 중이면 진행 방식과 설정만 바꾼다(센 것 · 소견은 그대로) — 끝났거나 멈췄으면 새로 시작한다(쓴 글은 그대로, 레일은 단계에서 다시 읽는다)
     if (r && (r.status === 'running' || r.status === 'waiting')) Object.assign(r, { mode, settings: cleanSettings(settings, r.settings) });
-    else pr.rail = { ...fresh(mode, settings), calls: r ? r.calls || 0 : 0, notes: r ? r.notes || [] : [] };
+    else pr.rail = { ...fresh(mode, settings), calls: r ? r.calls || 0 : 0, notes: r ? r.notes || [] : [], steps: r ? r.steps || [] : [] };   // 지난 걸음 기록도 남긴다(되돌리기)
     if (pr.rail.status === 'waiting' && pr.rail.point !== 'chapter' && mode === 'auto') pr.rail.status = 'running';   // 완전 자동으로 바꾸면 기다리던 도장을 편집장이 맡는다
   });
   tick(pid);
@@ -56,11 +73,38 @@ export function start(pid, mode, settings = {}) {
 }
 
 // 멈춤 — 지금 걸음은 끝까지 두고, 그 뒤로 잇지 않는다(그 자리부터 완전 수동)
+// 중지 — 언제든(사용자 지시 2026-10-13). 돌던 걸음도 그 자리에서 끊는다 — 끊긴 걸음의 문서는 앞 판 그대로다(AI 실패가 덮어쓰지 않는다)
 export function stop(pid) {
   const r = (state.get(pid) || {}).rail;
   if (!r) return bad('자동 실행이 없습니다');
-  state.update(pid, (p) => Object.assign(p.rail, { status: 'stopped', why: '', endedAt: Date.now() }));
+  const flying = r.jobId;
+  state.update(pid, (p) => Object.assign(p.rail, { status: 'stopped', why: '', point: '', endedAt: Date.now() }));
+  if (flying) jobs.stop(pid, flying);
   return ok();
+}
+
+// 되돌리기 — 그 걸음과 그 뒤에 레일이 한 일을 거꾸로 푼다. 먼저 중지한다. 레일은 «멈춤»으로 남는다([이어 하기]로 그 자리부터 다시)
+export function rollback(pid, stepId) {
+  const p0 = state.get(pid);
+  const r0 = p0 && p0.rail;
+  const at = r0 ? (r0.steps || []).findIndex((x) => x.id === stepId) : -1;
+  if (at < 0) return bad('되돌릴 걸음이 없습니다');
+  stop(pid);
+  state.update(pid, (p) => {
+    const steps = p.rail.steps || [];
+    for (let i = steps.length - 1; i >= at; i--) undoStep(p, steps[i]);
+    Object.assign(p.rail, steps[at].keep || {}, { steps: steps.slice(0, at), status: 'stopped', point: '', why: '', verdict: null, jobId: '' });
+  });
+  return ok();
+}
+
+function undoStep(p, st) {
+  if (st.slot) { p.stages = p.stages || {}; if (st.stage) p.stages[st.slot] = { ...st.stage }; else delete p.stages[st.slot]; }
+  const d = st.docId ? model.findDoc(p, st.docId) : null;
+  if (!d) return;   // 사람이 이미 지운 문서는 그대로 둔다
+  if (st.created) { model.docDelete(p, d.id); return; }
+  if (st.prevBody != null && String(d.body || '') !== st.prevBody) model.docWrite(p, d.id, { body: st.prevBody });
+  if (st.prevFinal != null && !!d.isFinal !== !!st.prevFinal) model.docSetFinal(p, d.id, !!st.prevFinal);
 }
 
 export function resume(pid) {
@@ -95,7 +139,10 @@ export function approve(pid, { final = false } = {}) {
   const t = tplOf(p);
   let out = null;
   state.update(pid, (pr) => {
+    const d = wf.docOf(pr, t, r.point, 0);
+    const step = { kind: 'approve', key: r.point, by: '', slot: r.point, stage: snapStage(pr, r.point), docId: d ? d.id : '', prevFinal: d ? !!d.isFinal : null, keep: keepOf(pr.rail) };
     out = wf.approveStage(pr, t, r.point, { final: !!final, by: '' });
+    if (out.ok) pushStep(pr, step);
     if (out.ok && r.point === 'finish') pr.rail.unreviewed = false;
   });
   if (!out || !out.ok) return bad((out && out.error) || '승인하지 못했습니다');
@@ -213,8 +260,11 @@ function applyVerdict(pid) {
   // 승인 — 또는 회차를 다 써서 «남은 소견을 적고 넘어간다»(기본). 에이전트 승인은 approvedBy = agent:… 로 사람 승인과 갈린다
   state.update(pid, (pr) => {
     const rr = pr.rail;
+    const d = wf.docOf(pr, t, key, 0);
+    const step = { kind: 'approve', key, by: v.by, slot: key, stage: snapStage(pr, key), docId: d ? d.id : '', prevFinal: d ? !!d.isFinal : null, keep: keepOf(rr) };
     if (v.decision === 'revise') rr.notes = [...(rr.notes || []), { at: Date.now(), point: key, text: String(v.request || v.reasons || '').slice(0, 4000) }];
     wf.approveStage(pr, t, key, { final: key === 'design', by: v.by });
+    pushStep(pr, step);
     if (key === 'finish') rr.unreviewed = true;
     rr.verdict = null;
   });
@@ -276,7 +326,13 @@ function launchStage(pid, key, episode = 0, { requestOnce = '', tag = '', withRe
     refIds = base;
   }
   let made = null;
-  state.update(pid, (pr) => { made = wf.startStage(pr, t, key, { episode, refIds }); });
+  state.update(pid, (pr) => {
+    const before = wf.docOf(pr, t, key, episode);
+    const slot = wf.slotKey(key, s.output === 'perEpisode' ? episode : 0);
+    const step = { kind: tag.split(':')[0] || 'write', key, episode, slot, stage: snapStage(pr, slot), created: !before, prevBody: before ? String(before.body || '') : null, prevFinal: before ? !!before.isFinal : null, keep: keepOf(pr.rail) };
+    made = wf.startStage(pr, t, key, { episode, refIds });
+    if (made && made.ok) pushStep(pr, { ...step, docId: made.docId });
+  });
   if (!made || !made.ok) return bad((made && made.error) || '시작하지 못했습니다');
   const d = model.findDoc(state.get(pid), made.docId);
   const got = jobs.start(pid, { kind: 'stage', title: d ? d.title : s.title, targetId: made.docId, rail: true,
@@ -314,8 +370,8 @@ function launchJudge(pid, key) {
 // 화면에 내려 줄 꼴 — 판단 원문(verdict) · 작업 id 는 빼고
 export function view(r) {
   if (!r) return null;
-  const { verdict, jobId, ...rest } = r;
-  return { ...rest, pointName: POINTS[r.point] || '' };
+  const { verdict, jobId, steps, ...rest } = r;
+  return { ...rest, pointName: POINTS[r.point] || '', steps: (steps || []).map((x) => ({ id: x.id, at: x.at, label: x.label || '' })) };
 }
 
 // 포지션에 사람을 앉힌다(빈 목록이면 내린다) — 그 템플릿의 포지션 · 이 작품의 에이전트만

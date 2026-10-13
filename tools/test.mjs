@@ -1957,7 +1957,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   await post('project.delete', { pid: story.pid });
 
   // ── 반자동 — 도장에서 멈추고 사람을 기다린다
+  // 새 작품 창에서는 고르지 않는다 — 만든 뒤 위쪽 바의 [자동 실행]에서 고른다(사용자 지시 2026-10-13). 만들 때 실어 보내도 듣지 않는다
   const semi = await post('project.create', { name: '반자동 책', purpose: 'ebook', railMode: 'semi', spec: { form: '실용서' }, materials: MAT });
+  ok('만들 때는 자동 실행이 서지 않는다', (await stateOf(semi.pid)).project.rail === null);
+  await post('rail.start', { pid: semi.pid, mode: 'semi' });
   let st = await railSettle(semi.pid);
   ok('반자동 — 만들 때 도는 자료 분석 뒤 이어서 설계를 쓰고 도장 ① 에서 기다린다', st.rail.mode === 'semi' && st.rail.status === 'waiting' && st.rail.point === 'design'
     && st.rail.pointName === '① 설계' && docBy(st, '책의 설계').body.startsWith('책의 설계 본문') && !!docBy(st, '자료 분석'));
@@ -1971,6 +1974,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   st = await railSettle(semi.pid);
   ok('반자동 — 사람의 승인(확정본으로도) 뒤 목차를 쓰고 도장 ② 에서 기다린다', stageRow(st, 'design').status === 'approved' && stageRow(st, 'design').approvedBy === ''
     && docBy(st, '책의 설계').isFinal && st.rail.point === 'toc' && docBy(st, '목차').body.includes('장 수: 3'));
+  const mine = await post('doc.create', { pid: semi.pid, title: '내 메모' });
+  await post('doc.create', { pid: semi.pid, title: '들여온 글', body: '파일에서 읽어 넣은 글' });
   await post('rail.settings', { pid: semi.pid, settings: { stopEachChapter: true } });
   await post('rail.approve', { pid: semi.pid });
   st = await railSettle(semi.pid);
@@ -1993,6 +1998,24 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('반자동에는 편집장이 한 번도 불리지 않는다', judged.length === 0);
   ok('레일 작업의 호출을 센다', st.rail.calls >= 8);
   ok('레일이 띄운 걸음은 작업 기록에 표가 남는다', st.jobs.some((j) => j.rail && j.kind === 'stage'));
+  // ── 되돌리기(사용자 지시 2026-10-13 «각 단계 별 롤백 — 중간에 생성 · 반입한 문서는 제외»)
+  const labels = st.rail.steps.map((x) => x.label);
+  ok('걸음 기록 — 레일이 한 일마다 이름이 남는다(본문은 내려 주지 않는다)', ['책의 설계 생성', '책의 설계 다시 생성(수정 요청)', '① 설계 승인', '목차 생성', '1장 생성', '2장 개정', '서문 생성', '④ 완성 승인'].every((l) => labels.includes(l))
+    && st.rail.steps.every((x) => !('prevBody' in x) && !('keep' in x)), labels.join(' / '));
+  ok('없는 걸음은 되돌리지 않는다', !(await post('rail.rollback', { pid: semi.pid, step: 's_없음' })).ok);
+  await post('rail.rollback', { pid: semi.pid, step: st.rail.steps.find((x) => x.label === '2장 개정').id });
+  st = (await stateOf(semi.pid)).project;
+  ok('되돌리기 — 그 걸음부터: 고친 장은 앞 판으로 · 새로 만든 서문은 휴지통으로 · 완성 승인은 풀린다', docBy(st, '2장').body === '2장 본문' && !docBy(st, '서문') && st.trash.some((e) => e.title === '서문')
+    && stageRow(st, 'finish').status !== 'approved' && stageRow(st, 'review').status === 'approved' && docBy(st, '2장').versions.some((v) => v.body === '2장 고친 본문'));
+  ok('되돌리면 자동 실행은 중지된 채 그 앞 걸음까지 남는다', st.rail.status === 'stopped' && st.rail.steps[st.rail.steps.length - 1].label === '③ 개정 계획 승인');
+  ok('되돌려도 중간에 사람이 만든 · 들여온 문서는 그대로', docBy(st, '내 메모').id === mine.id && docBy(st, '들여온 글').body === '파일에서 읽어 넣은 글');
+  await post('rail.rollback', { pid: semi.pid, step: st.rail.steps.find((x) => x.label === '책의 설계 생성').id });
+  st = (await stateOf(semi.pid)).project;
+  ok('맨 처음 걸음까지 되돌리면 레일이 쓴 것은 모두 휴지통으로 — 만들 때 도는 자료 분석 · 사람의 문서는 남는다', ['책의 설계', '목차', '1장', '2장', '3장', '전권 검토'].every((tt) => !docBy(st, tt))
+    && !!docBy(st, '자료 분석') && !!docBy(st, '내 메모') && !!docBy(st, '들여온 글') && st.rail.steps.length === 0 && stageRow(st, 'design').status === 'not_started');
+  await post('rail.start', { pid: semi.pid, mode: 'semi' });
+  st = await railSettle(semi.pid);
+  ok('되돌린 자리부터 다시 이어 쓴다', st.rail.status === 'waiting' && st.rail.point === 'design' && docBy(st, '책의 설계').body.startsWith('책의 설계 본문'));
   await post('project.delete', { pid: semi.pid });
 
   // ── 완전 자동 — 편집장이 판단한다(사용자가 앉힌 사람)
@@ -2023,7 +2046,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // ── 멈추고 사람을 부른다 · 판단을 못 읽으면 멈춘다
   judged = [];
   judgeSay = (point) => (point === 'design' ? '판정: 수정\n수정 요청:\n더 구체적으로' : '좋은 글입니다');
-  const stopper = await post('project.create', { name: '멈추는 책', purpose: 'ebook', railMode: 'auto', railSettings: { rounds: 0, onFail: 'stop' }, spec: { form: '실용서' }, materials: MAT });
+  const stopper = await post('project.create', { name: '멈추는 책', purpose: 'ebook', spec: { form: '실용서' }, materials: MAT });
+  await post('rail.start', { pid: stopper.pid, mode: 'auto', settings: { rounds: 0, onFail: 'stop' } });
   st = await railSettle(stopper.pid);
   ok('«멈추고 부른다» — 통과 못 한 도장에서 기다린다', st.rail.status === 'waiting' && st.rail.point === 'design' && st.rail.why.includes('통과시키지 못했습니다') && stageRow(st, 'design').status !== 'approved');
   await post('rail.approve', { pid: stopper.pid, final: false });
@@ -2031,13 +2055,14 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('사람이 승인하면 잇고, 판단을 못 읽으면(두 번 물어도) 멈춘다', stageRow(st, 'design').approvedBy === '' && st.rail.status === 'waiting' && st.rail.point === 'toc' && st.rail.why.includes('판단을 읽지 못했습니다')
     && judged.filter((x) => x.point === 'toc').length === 2);
   await post('rail.stop', { pid: stopper.pid });
-  ok('[멈춤] — 그 자리부터 완전 수동', (await railOf(stopper.pid)).status === 'stopped');
+  ok('[중지] — 기다리던 자리에서도 언제든 · 그 자리부터 완전 수동', (await railOf(stopper.pid)).status === 'stopped');
   await post('project.delete', { pid: stopper.pid });
 
   // ── 호출 상한 · 장 수를 못 읽을 때 · 레일의 걸음을 사람이 지우면
   judgeSay = () => '판정: 승인';
   globalThis.__SE2_MOCK_FN = (a) => (String(a.prompt || '').includes('목차를 짓고') ? '목차인데 장 이름이 없다' : RAIL_FN(a));
-  const capped = await post('project.create', { name: '상한 책', purpose: 'ebook', railMode: 'semi', railSettings: { cap: 1 }, spec: { form: '실용서' }, materials: MAT });
+  const capped = await post('project.create', { name: '상한 책', purpose: 'ebook', spec: { form: '실용서' }, materials: MAT });
+  await post('rail.start', { pid: capped.pid, mode: 'semi', settings: { cap: 1 } });
   st = await railSettle(capped.pid);
   ok('호출 상한 — 설계 한 번 뒤 도장 ① 에서 기다린다', st.rail.point === 'design' && st.rail.calls === 1);
   await post('rail.approve', { pid: capped.pid });
@@ -2062,6 +2087,19 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   process.env.SE2_MOCK_DELAY_MS = '';
   st = await railSettle(capped.pid);
   ok('레일의 걸음을 사람이 지우면 레일도 선다(다시 띄우지 않는다)', st.rail.status === 'stopped' && !st.jobs.some((j) => j.rail && j.status === 'running'));
+
+  // ── 언제든 중지 — 돌던 걸음도 그 자리에서 끊는다(그 걸음의 문서는 앞 판 그대로)
+  process.env.SE2_MOCK_DELAY_MS = '300';
+  await post('rail.resume', { pid: capped.pid });
+  await sleep(40);
+  const going = (await stateOf(capped.pid)).project.jobs.find((j) => j.rail && j.status === 'running');
+  await post('rail.stop', { pid: capped.pid });
+  await sleep(30);
+  st = (await stateOf(capped.pid)).project;
+  ok('[중지] — 돌던 걸음을 그 자리에서 끊는다 · 그 문서는 쓰이지 않는다', !!going && st.jobs.find((j) => j.id === going.id).status === 'stopped' && st.rail.status === 'stopped' && !String(docBy(st, '1장').body || '').trim());
+  await sleep(400);
+  ok('끊긴 걸음은 나중에도 글을 남기지 않는다', !String(docBy((await stateOf(capped.pid)).project, '1장').body || '').trim());
+  process.env.SE2_MOCK_DELAY_MS = '';
 
   // ── 다시 켜면 — 걸음을 쓰던 중에 꺼졌어도 그 걸음을 다시 띄우고 레일이 잇는다
   await post('rail.resume', { pid: capped.pid });
@@ -2089,18 +2127,25 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
-  // 레일의 화면 — 단계 탭 맨 위의 «자동 실행» 칸(web/rail.js) · 새 작품 창의 «진행»
+  // 레일의 화면 — 위쪽 바의 [자동 실행] 단추와 그 창(web/rail.js, 사용자 지시 2026-10-13)
   const app = src(join(ROOT, 'web', 'app.js'));
   const railJs = src(join(ROOT, 'web', 'rail.js'));
   const html = src(join(ROOT, 'web', 'index.html'));
   ok('레일 화면은 따로 실리고 app.js 보다 먼저 온다', html.indexOf('src="rail.js"') > 0 && html.indexOf('src="rail.js"') < html.indexOf('src="app.js"'));
-  ok('단계 탭 맨 위에 «자동 실행» 칸 — 개인판의 전자책 작품에서만', /return h\('div', null,\n[^\n]*\n    railBox\(\),\n    banner,/.test(app) && railJs.includes("return !S.me && !!S.project && !!S.project.workflow && S.project.workflow.template === 'ebook';"));
-  ok('도장 칸 — [승인] · [수정 요청] · [문서 열기] · [멈춤] · 도장 ① 은 확정본으로도(기본 켬)', ["text: '승인'", "text: '수정 요청'", "text: '문서 열기'", "text: '멈춤'", "text: '확정본으로도'", 'S.railFinal = true'].every((x) => railJs.includes(x)));
+  ok('위쪽 바에 [자동 실행] — 개인판의 전자책 작품에서만 · 누르면 그 창', app.includes("        railButton(),\n        whoLine()),") && app.includes("t === 'rail' ? railPanel(close)")
+    && railJs.includes("return !S.me && !!S.project && !!S.project.workflow && S.project.workflow.template === 'ebook';") && railJs.includes("onclick: () => { S.open = { type: 'rail' }; render(); }"));
+  ok('단추가 상태를 말한다(자동 실행 중 · 승인 대기)', railJs.includes("st === 'running' ? '자동 실행 중' : st === 'waiting' ? '승인 대기' : '자동 실행'"));
+  ok('창에서 반자동 · 완전 자동을 고른다', railJs.includes("text: '반자동', onclick: () => railStart('semi')") && railJs.includes("text: '완전 자동', onclick: () => railStart('auto')"));
+  ok('언제든 [중지] — 도는 중 · 기다리는 중 모두', railJs.includes("const live = r && (r.status === 'running' || r.status === 'waiting');") && railJs.includes("text: '중지', onclick: () => railDo('rail.stop')"));
+  ok('걸음마다 [여기로 되돌리기] — 묻고 되돌린다', railJs.includes("text: '여기로 되돌리기'") && railJs.includes("railDo('rail.rollback', { step: x.id })") && railJs.includes('직접 만들거나 들여온 문서는 그대로입니다'));
+  ok('창에서 연 문서를 닫으면 자동 실행 창으로 돌아온다', railJs.includes("back: { open: { type: 'rail' } }"));
+  ok('단계 탭에는 자동 실행 칸을 두지 않는다(위쪽 바 하나로)', !app.includes('railBox('));
+  ok('도장 칸 — [승인] · [수정 요청] · [문서 열기] · 도장 ① 은 확정본으로도(기본 켬)', ["text: '승인'", "text: '수정 요청'", "text: '문서 열기'", "text: '확정본으로도'", 'S.railFinal = true'].every((x) => railJs.includes(x)));
   ok('장마다 멈춤 — [다음 장으로]', railJs.includes("text: '다음 장으로', onclick: () => railDo('rail.next')"));
   ok('설정 — 호출 상한 · 장마다 멈춤 · 판정 횟수 · 통과 못 하면 · 덧붙일 기준', ['호출 상한', '장마다 멈춤', '고쳐 오게 할 수 있는 횟수', '끝내 통과 못 하면', '편집장에게 덧붙일 기준'].every((x) => railJs.includes(x)));
   ok('자리 — 포지션마다 사람을 앉힌다(내장 · 만든 사람)', railJs.includes("railDo('position.set', { position: x.key, agentIds: [] })") && railJs.includes('S.project.workflow.positions'));
   ok('«사람 검토 전» · 남은 소견이 보인다', railJs.includes("text: '사람 검토 전'") && railJs.includes('남은 소견'));
-  ok('새 작품 창 — 전자책이면 «진행»(완전 수동 · 반자동 · 완전 자동), 고른 것만 보낸다', app.includes("[['', '완전 수동'], ['semi', '반자동'], ['auto', '완전 자동']]") && app.includes("['semi', 'auto'].includes(S.open.railMode)) body.railMode = S.open.railMode;"));
+  ok('새 작품 창에서는 자동 실행을 고르지 않는다', !app.includes('railMode') && !src(join(HERE, 'ops.mjs')).includes('railMode'));
   ok('«자동 집필»이라 부르지 않는다(이야기 작품의 그 기능은 없다)', !railJs.includes('자동 집필') && !app.includes('자동 집필'));
 }
 

@@ -88,7 +88,6 @@ export function createOps(d) {
         });
       }
       await startAgentPrep(p.id);
-      if (d.rail && tpl === 'ebook' && ['semi', 'auto'].includes(b.railMode)) d.rail.start(p.id, b.railMode, b.railSettings || {});
       return ok({ pid: p.id });
     },
 
@@ -162,6 +161,8 @@ export function createOps(d) {
     'rail.revise': async (b) => (d.rail ? d.rail.revise(b.pid, b.text) : bad('여기서는 할 수 없습니다')),
     'rail.next': async (b) => (d.rail ? d.rail.next(b.pid) : bad('여기서는 할 수 없습니다')),
     'rail.settings': async (b) => (d.rail ? d.rail.settings(b.pid, b.settings || {}) : bad('여기서는 할 수 없습니다')),
+    // 되돌리기 — 그 걸음과 그 뒤에 레일이 한 일만(사람이 만들거나 들여온 문서는 그대로). 먼저 중지한다
+    'rail.rollback': async (b) => (d.rail ? d.rail.rollback(b.pid, String(b.step || '')) : bad('여기서는 할 수 없습니다')),
     // 포지션에 사람 앉히기(빈 목록이면 내린다) — 레일이든 손이든 그 걸음의 생성에 듣는다
     'position.set': async (b) => (d.rail ? d.rail.seat(b.pid, String(b.position || ''), b.agentIds) : bad('여기서는 할 수 없습니다')),
 
