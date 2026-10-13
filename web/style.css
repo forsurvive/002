@@ -294,6 +294,16 @@ textarea { resize: vertical; min-height: 88px; line-height: 1.65; }
   border-radius: 6px; padding: 3px 7px; color: var(--dim); flex: none;
 }
 .when { font-size: 13px; color: var(--dim); flex: none; }
+.row .when.trim { flex: 0 1 auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 칸 안의 작은 머리와 안내 한 줄 — 설정 › 에이전트 칸의 «기본 자리» · «만든 에이전트» */
+.sec-note { padding: 10px 16px 2px; font-size: 13px; color: var(--dim); }
+.sub-head {
+  display: flex; align-items: center; gap: 10px; padding: 14px 16px 8px;
+  font-size: 12px; font-weight: 600; color: var(--dim); border-bottom: 1px solid var(--line-soft);
+}
+.sub-head > span { flex: 1; }
+.sub-head.click { cursor: pointer; }
+.sub-head.click:hover > span { color: var(--ink); }
 
 .cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); }
 .card {

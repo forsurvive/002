@@ -495,6 +495,7 @@ export function createOps(d) {
         made: !!(p.agents && p.agents[code]),
         model: engine.slotModel(p, code),
         control: !EDITABLE_CODES.includes(code),
+        label: SLOT_LABEL[code] || code,   // 한국어 자리 이름(설정 › 에이전트 칸 — 코드를 보이지 않는다)
       })),
       agentKind: (p.agents && p.agents.__kind) || '',
       // 자료 분석 준비 — 자리마다 지었는가(DESIGN §6-7). 화면이 «자료 분석 준비» 칸에 «지음 · 짓는 중 · 기다림»을 그린다

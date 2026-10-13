@@ -1194,6 +1194,14 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('지어진 자리가 있으면 펴 둔다', lst.includes("S.fold['prompts'] === undefined ? made"));
   ok('이 작품의 것이라고 이른다', lst.includes('이 작품의 에이전트'));
   ok('고칠 수 있다고 이른다', lst.includes('눌러서 고치십시오'));
+  // 설정의 «에이전트»(만든 사람)와 «이 작품의 에이전트»(기본 자리)를 카드 한 장으로(사용자 지시, 2026-10-13 — DESIGN §3 설정 탭)
+  const setSrc = app.slice(app.indexOf('function settings()'), app.indexOf('function openAgent('));
+  ok('**설정의 에이전트는 한 칸 — 기본 자리 · 만든 에이전트를 한 카드에**', (setSrc.match(/agentList\(p\)/g) || []).length === 1 && !setSrc.includes("text: '추가', onclick: () => openAgent(null)")
+    && lst.includes("h('div', { class: 'sec' }") && lst.includes("'기본 자리 · ' + rows.length") && lst.includes("'만든 에이전트 · ' + crew.length") && lst.includes("text: '+ 새 에이전트', onclick: () => openAgent(null)"));
+  ok('기본 자리는 한국어 자리 이름으로(코드를 보이지 않는다) · 준비가 어긋났을 때만 [자료 분석 다시]', lst.includes('pr.label || pr.code') && !lst.includes("text: pr.code })") && lst.includes("text: '자료 분석 다시'"));
+  ok('만든 에이전트 [삭제]는 한 번 묻는다(칸 · 고치는 창 모두)', lst.includes('askDeleteAgent(a); } })') && app.includes("text: '«' + a.name + '» 지우기 — 되돌릴 수 없음'")
+    && app.includes("onclick: () => askDeleteAgent(a, () => {"));
+  ok('새 반 이름이 style.css 에', ['.sub-head', '.sec-note', '.row .when.trim'].every((c) => src(join(ROOT, 'web', 'style.css')).includes(c)));
 }
 
 {
@@ -2211,6 +2219,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 자료 분석 준비 — 상태 · 작업 줄의 말(자리 코드가 아니라 한국어 자리 이름)
   ok('상태에 자리마다 지었는가가 실린다(한국어 자리 이름)', stB.prep.kind === '전자책' && stB.prep.seats.length === 7 && stB.prep.seats.every((x) => x.made)
     && stB.prep.seats.map((x) => x.label).join(',') === '자료 분석,문서 쓰기,논의,논의 정리,모순 검사,합평,합평 모으기');
+  ok('설정 › 에이전트 칸의 자리 줄에도 한국어 자리 이름(제어 둘 포함)', stB.prompts.length === 9 && stB.prompts.every((x) => x.label && x.label !== x.code)
+    && stB.prompts.find((x) => x.code === 'F-KIND').label === '글의 종류 가리기' && stB.prompts.find((x) => x.code === 'F-AGENT').label === '에이전트 짓기');
   await post('project.delete', { pid: bk.pid });
   globalThis.__SE2_MOCK_FN = MOCK_FN;
 
@@ -2573,7 +2583,8 @@ function tinyPng(rgb = [220, 20, 20], w = 4, h = 4) {
   // 작법서 창은 읽는 자리다
   ok('작법서는 읽는 칸만 둔다', /d\.src \? mdView\('d-out'/.test(app) && /d\.src \? null : refLine\('참조'/.test(app));
   ok('작법서 글은 열 때 받아 온다', /function fetchSrc\(/.test(app) && /if \(d\.src\) fetchSrc\(d\.id\)/.test(app));
-  ok('지어진 자리에 표가 선다', app.includes("pr.made ? h('span', { class: 'when', text: '지음' })"));
+  // 2026-10-13 에이전트 칸을 합치며 «지음» 표가 칩(mark)이 되었다 — 같은 표를 새 모양에서 본다
+  ok('지어진 자리에 표가 선다', app.includes("pr.made ? h('span', { class: 'mark', text: '지음' })"));
   ok('설정에 자료 치는 칸이 없다', !app.includes("area('set-mat'"));
   ok('차림표에도 자료가 없다', !app.includes("type: 'newmat'") && !/function makeMat\(/.test(app));
   ok('설정에는 자료가 어디 있는지만 남는다', app.includes('작업실의 «자료» 카테고리에'));

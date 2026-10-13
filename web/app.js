@@ -955,20 +955,8 @@ function settings() {
     h('div', null,
       h('div', { class: 'lab', text: '자료' }),
       h('div', { class: 'when', text: '작업실의 «자료» 카테고리에 문서로 있습니다 — 열어 읽고 고치며, 참조로 걸고, 확정본으로 켤 수 있습니다.' })),
-    h('div', null,
-      h('div', { class: 'lab', text: '에이전트' }),
-      (p.crew || []).map((a) => h('div', { class: 'mat' },
-        h('div', { class: 'name', text: a.name }),
-        h('div', { class: 'when', text: a.role }),
-        a.model ? h('span', { class: 'mark', text: modelName(a.model) }) : null,
-        h('button', { class: 'btn-text', text: '고치기', onclick: () => openAgent(a.id) }),
-        h('button', { class: 'btn-text red', text: '삭제', onclick: () => api('agent.delete', { ids: [a.id] }) }))),
-      h('div', { class: 'line', style: 'margin-top:8px' },
-        h('button', { class: 'btn-line', text: '추가', onclick: () => openAgent(null) }),
-        // 준비가 어긋났거나 끊겼을 때만 선다 — 누르면 종류 판정부터 자료 분석까지 다시 돈다.
-        p.prepared || (p.jobs || []).some((j) => j.kind === 'agents' && j.status === 'running')
-          ? null
-          : h('button', { class: 'btn-line', text: '자료 분석 다시', onclick: () => { S.open = { type: 'prepare' }; clearTyped('pp-req'); render(); } }))),
+    // 에이전트 — 기본 자리와 만든 사람을 한 칸에(아래 agentList, 2026-10-13)
+    agentList(p),
     h('div', null,
       h('div', { class: 'lab', text: '모델' }),
       modelRow(p.models, p.model, (m) => api('project.spec', { model: m }))),
@@ -984,13 +972,6 @@ function settings() {
     S.me ? null : h('div', { class: 'line' },
       h('div', { class: 'lab', style: 'margin:0', text: '웹 검색' }),
       h('button', { class: 'tg' + (p.webSearch ? ' on' : ''), onmousedown: () => api('project.spec', { webSearch: !p.webSearch }) })),
-    // 에이전트 목록 — **고칠 수 있다는 것이 보여야 한다**(사용자 지시).
-    //
-    // 고치는 길은 전부터 있었다(이름·역할·이번에 할 일·프롬프트, 그리고 되돌리기).
-    // 그런데 이름이 「기본 에이전트」였고 접혀 있어서, 이 작품에 맞춰 지어진 것이라는 걸
-    // 알 길이 없었다. **있는데 못 찾는 것은 없는 것과 같다.**
-    // 지어진 자리가 있으면 펴 둔다 — 작가가 한 번 접으면 그다음부터는 그 뜻을 따른다.
-    (p.prompts || []).length ? agentList(p) : null,
     // 작품 통째로 — 다른 PC · 개인판(USB) · 온라인판에서 «작품 파일 가져오기»로 그대로 연다
     h('div', { class: 'line', style: 'padding-top:20px' },
       h('button', { class: 'btn-line', text: W('작품 파일 내려받기'), onclick: () => download('project', '') }),
@@ -1254,7 +1235,7 @@ function agentPanel(close) {
   return h('div', { class: 'panel' },
     h('div', { class: 'panel-head' },
       h('div', { class: 'name', text: making ? '새 에이전트' : a.name }),
-      making ? null : h('button', { class: 'btn-text red', text: '삭제', onclick: async () => { S.saveOpen = null; clearTyped('ag-name', 'ag-role', 'ag-craft'); await api('agent.delete', { ids: [a.id] }); close(); } }),
+      making ? null : h('button', { class: 'btn-text red', text: '삭제', onclick: () => askDeleteAgent(a, () => { S.saveOpen = null; clearTyped('ag-name', 'ag-role', 'ag-craft'); close(); }) }),
       h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
       h('div', null, h('div', { class: 'lab', text: '이름' }), textbox('ag-name', '이름', a ? a.name : '', { onblur: save })),
@@ -1283,29 +1264,53 @@ async function makeAgent() {
   return true;
 }
 
-// 이 작품이 쓰는 사람들. 누르면 이름·역할·이번에 할 일·프롬프트를 고친다.
+// 에이전트 칸 — 기본 자리와 작가가 만든 사람을 카드 한 장에(사용자 지시, 2026-10-13
+// «에이전트 추가 탭과 내장 에이전트 탭을 보기 좋게, 기능을 사용하기 편하게끔 합쳐» — DESIGN §3 설정 탭).
 //
-// 비소설이면 프로그램이 작품 규격을 읽고 자리마다 새로 짓는다(agents.mjs).
-// 소설이면 내장 아홉을 그대로 쓴다. 어느 쪽이든 **여기서 고칠 수 있고, 되돌릴 수 있다.**
+// ① 기본 자리 — 이 작품이 쓰는 사람들. 비소설이면 프로그램이 작품 규격을 읽고 자리마다 새로 짓는다(agents.mjs),
+//    소설이면 내장 아홉을 그대로 쓴다. 어느 쪽이든 **여기서 고칠 수 있고, 되돌릴 수 있다** — 줄을 누르면 창이 열린다.
+//    **고칠 수 있다는 것이 보여야 한다**(사용자 지시): 한때 «기본 에이전트»라는 이름으로 접혀 있어 지어진 것인 줄 알 길이 없었다.
+//    지어진 자리가 있으면 펴 둔다 — 작가가 한 번 접으면 그다음부터는 그 뜻을 따른다. 자리 코드는 보이지 않고 한국어 자리 이름을 쓴다.
+// ② 만든 에이전트 — 작가가 지은 사람. 줄을 누르면 고치고, [삭제]는 한 번 묻는다(되돌릴 수 없다).
 function agentList(p) {
   const rows = p.prompts || [];
+  const crew = p.crew || [];
   const made = rows.some((pr) => pr.made);
   const open = S.fold['prompts'] === undefined ? made : S.fold['prompts'];
-  return h('details', { open: open ? 'open' : null },
-    h('summary', {
-      text: made ? (W('이 작품의 에이전트') + (p.agentKind ? ' — ' + p.agentKind : '')) : '에이전트',
-      onclick: () => { S.fold['prompts'] = !open; },
-    }),
-    h('div', { class: 'when', style: 'padding:2px 0 8px',
-      text: made ? W('이 작품에 맞춰 지었습니다. 눌러서 고치십시오.') : '눌러서 고치십시오.' }),
-    rows.map((pr) => h('div', {
-      class: 'row', onclick: () => openPrompt(pr.code),
-    },
-    h('span', { class: 'mark', text: pr.code }),
-    h('div', { class: 'name', text: pr.name }),
-    pr.model ? h('span', { class: 'mark', text: modelName(pr.model) }) : null,
-    pr.made ? h('span', { class: 'when', text: '지음' }) : null,
-    pr.edited ? h('span', { class: 'when', style: 'color:var(--red)', text: '고침' }) : null)));
+  // 준비가 어긋났거나 끊겼을 때만 선다 — 누르면 종류 판정부터 자료 분석까지 다시 돈다.
+  const redo = p.prepared || (p.jobs || []).some((j) => j.kind === 'agents' && j.status === 'running')
+    ? null
+    : h('button', { class: 'btn-text', text: '자료 분석 다시', onclick: (e) => { stop(e); S.open = { type: 'prepare' }; clearTyped('pp-req'); render(); } });
+  return h('div', { class: 'sec' },
+    h('div', { class: 'sec-head' },
+      h('div', { class: 'name', text: made ? (W('이 작품의 에이전트') + (p.agentKind ? ' — ' + p.agentKind : '')) : '에이전트' })),
+    h('div', { class: 'sec-note', text: made ? W('이 작품에 맞춰 지었습니다. 눌러서 고치십시오.') : '눌러서 고치십시오.' }),
+    rows.length ? h('div', { class: 'sub-head click', onclick: () => { S.fold['prompts'] = !open; render(); } },
+      h('span', { text: (open ? '▾ ' : '▸ ') + '기본 자리 · ' + rows.length }), redo) : null,
+    open ? rows.map((pr) => h('div', { class: 'row', onclick: () => openPrompt(pr.code) },
+      h('div', { class: 'name', text: pr.name }),
+      h('span', { class: 'when', text: pr.label || pr.code }),
+      pr.control ? h('span', { class: 'mark', text: '제어' }) : null,
+      pr.made ? h('span', { class: 'mark', text: '지음' }) : null,
+      pr.edited ? h('span', { class: 'when', style: 'color:var(--red)', text: '고침' }) : null,
+      pr.model ? h('span', { class: 'mark', text: modelName(pr.model) }) : null)) : null,
+    h('div', { class: 'sub-head' },
+      h('span', { text: '만든 에이전트 · ' + crew.length }),
+      h('button', { class: 'btn-text', text: '+ 새 에이전트', onclick: () => openAgent(null) })),
+    crew.map((a) => h('div', { class: 'row', onclick: () => openAgent(a.id) },
+      h('div', { class: 'name', text: a.name }),
+      a.role ? h('span', { class: 'when trim', text: a.role }) : null,
+      a.model ? h('span', { class: 'mark', text: modelName(a.model) }) : null,
+      h('button', { class: 'btn-text red', text: '삭제', onclick: (e) => { stop(e); askDeleteAgent(a); } }))));
+}
+
+// 만든 에이전트 지우기 — 되돌릴 수 없으므로 한 번 묻는다. 걸려 있던 문서 · 논의 · 자리에서도 빠진다(그 자리는 내장으로). after 는 지운 뒤 할 일
+function askDeleteAgent(a, after) {
+  S.confirm = {
+    text: '«' + a.name + '» 지우기 — 되돌릴 수 없음',
+    run: async () => { S.confirm = null; await api('agent.delete', { ids: [a.id] }); if (after) after(); else render(); },
+  };
+  render();
 }
 
 async function openPrompt(code) {
