@@ -29,6 +29,7 @@ const S = {
   me: null,        // 온라인판에서 로그인한 사람 { loginId, displayName } — 개인판은 늘 null
   authModels: null,        // 개인판 — ChatGPT · Gemini 고를 모델 목록(auth.models, 한 번 받는다)
   authModelsLoading: false,
+  homeAuth: null,          // 첫 화면 [설정] 창이 쥔 «무엇으로»(auth.read · auth.write 의 답)
 };
 
 const KIND_MARK = { check: '모순 검사', review: '합평회' };
@@ -402,6 +403,8 @@ function projectList() {
           h('span', { class: 'nav-sep' }),
           h('button', { class: 'nav-out', text: '로그아웃', onclick: logout })) : null,
         h('button', { class: 'nav-out', text: isLight() ? '어둡게' : '밝게', onclick: toggleTheme }),
+        // 개인판 — 작품을 만들기 전에도 이 PC 의 설정(무엇으로 · 키 · ChatGPT · Gemini 모델)을 고친다
+        S.me ? null : h('button', { class: 'btn-line', text: '설정', onclick: settingsOpen }),
         // 다른 PC · 개인판에서 내려받은 작품 파일 열기 — «+»(새 작품)와 헷갈리지 않게 위쪽 단추 줄에
         h('button', { class: 'btn-line', text: W('작품 파일 가져오기'), onclick: importProjectFile }),
         // 튜토리얼은 소설 작업을 보여 준다 — 전자책 오토(전자책 집필만 하는 앱)에는 세우지 않는다
@@ -891,23 +894,7 @@ function settings() {
     // 무엇으로 돈이 나가는가 — 구독인지 API 키인지. 사람이 고른다(사용자 지시, 2026-09-22).
     // 「구독으로 돕니다」라고 말하면서 물려받은 환경 변수 때문에 말없이 종량 과금되면 안 된다.
     // 고를 갈래가 없으면(온라인판 — 키는 서버만 다룬다) 이 칸을 세우지 않는다.
-    !(p.auth && (p.auth.modes || []).length) ? null : h('div', null,
-      h('div', { class: 'lab', text: '무엇으로' }),
-      authRow(p.auth),
-      h('div', { class: 'line', style: 'margin-top:8px' },
-        textbox('set-key', 'Claude API 키', '', {
-          onblur: async () => {
-            const v = String(S.typed['set-key'] || '').trim();
-            if (!v) return;
-            clearTyped('set-key');
-            await api('auth.write', { apiKey: v });
-          },
-        }),
-        p.auth && p.auth.hasKey
-          ? h('button', { class: 'btn-text red', text: '키 지우기', onclick: () => api('auth.write', { apiKey: '' }) })
-          : null),
-      authMore(p.auth),
-      p.limit ? h('div', { class: 'when', text: limitSay(p.limit) }) : null),
+    authSection(p.auth, p.limit),
     // 누름을 click 이 아니라 mousedown 으로 받는다 — 위 칸에 글을 치던 중이면 click 이 오기 전에 다시 그려진다.
     h('div', { class: 'line' },
       h('div', { class: 'lab', style: 'margin:0', text: '계량어 금지' }),
@@ -945,6 +932,50 @@ function openAgent(id, back) { S.open = { type: 'agent', id, model: null, back: 
 //   Gemini API 키 : Gemini 는 구독이 아니라 키로(2026-10-13 사용자 결정) — 키 · 모델은 아래 authMore 에서
 const AUTH_SAY = { auto: '그대로', sub: 'Claude 구독', api: 'Claude API 키', chatgpt: 'ChatGPT 구독', gemini: 'Gemini API 키' };
 
+// 무엇으로 도는가 — 프로젝트 설정 탭과 첫 화면의 [설정] 창이 같은 칸을 쓴다(2026-10-13 «프로젝트 생성 전에도 설정을 편집»).
+// 이 PC 전체에 걸리는 값(data/auth.json)이라 작품이 없어도 고칠 수 있다.
+// 고를 갈래가 없으면(온라인판 — 키는 서버만 다룬다) 이 칸을 세우지 않는다.
+function authSection(a, limit) {
+  if (!(a && (a.modes || []).length)) return null;
+  return h('div', null,
+    h('div', { class: 'lab', text: '무엇으로' }),
+    authRow(a),
+    h('div', { class: 'line', style: 'margin-top:8px' },
+      textbox('set-key', 'Claude API 키', '', {
+        onblur: async () => {
+          const v = String(S.typed['set-key'] || '').trim();
+          if (!v) return;
+          clearTyped('set-key');
+          await authWrite({ apiKey: v });
+        },
+      }),
+      a.hasKey ? h('button', { class: 'btn-text red', text: '키 지우기', onclick: () => authWrite({ apiKey: '' }) }) : null),
+    authMore(a),
+    limit ? h('div', { class: 'when', text: limitSay(limit) }) : null);
+}
+
+// 고친 값은 답으로 돌아온다 — 첫 화면의 [설정] 창은 작품 상태가 없으므로 그 답을 그대로 쥔다
+async function authWrite(body) {
+  const r = await api('auth.write', body);
+  if (r && r.ok && r.auth) { S.homeAuth = r.auth; render(); }
+  return r;
+}
+
+// 첫 화면의 [설정] — 작품을 만들기 전에도(개인판만. 온라인판은 «내 계정»)
+function settingsOpen() {
+  S.open = { type: 'settings' };
+  render();
+  api('auth.read').then((r) => { if (r && r.ok) { S.homeAuth = r.auth; render(); } });
+}
+
+function settingsPanel(close) {
+  return h('div', { class: 'panel' },
+    h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '설정' }), h('button', { class: 'x', text: '×', onclick: close })),
+    h('div', { class: 'panel-body' },
+      S.homeAuth ? authSection(S.homeAuth, null) : h('div', { class: 'when', text: '불러오는 중' }),
+      h('div', { class: 'when', style: 'margin-top:12px', text: '이 PC 의 모든 작품에 걸립니다' })));
+}
+
 // 고를 모델 목록은 한 번 받아 둔다(ChatGPT — 그 PC 의 Codex 가 아는 것 · Gemini — 카탈로그의 표시 이름)
 function authModels() {
   if (S.authModels || S.authModelsLoading) return S.authModels;
@@ -969,22 +1000,22 @@ function authMore(a) {
     const list = [{ id: '', name: 'Codex 기본' }, ...((ms && ms.chatgpt) || [])];
     return h('div', { style: 'margin-top:8px' },
       h('div', { class: 'lab', text: 'ChatGPT 모델' }),
-      pickRow(list, a.chatgptModel || '', (id) => api('auth.write', { chatgptModel: id })),
+      pickRow(list, a.chatgptModel || '', (id) => authWrite({ chatgptModel: id })),
       ms && !(ms.chatgpt || []).length ? h('div', { class: 'when', text: 'Codex 의 모델 목록을 읽지 못했습니다 — Codex 기본으로 돕니다' }) : null);
   }
   return h('div', { style: 'margin-top:8px' },
     h('div', { class: 'lab', text: 'Gemini 모델' }),
-    pickRow((ms && ms.gemini) || [], a.geminiModel || '', (id) => api('auth.write', { geminiModel: id })),
+    pickRow((ms && ms.gemini) || [], a.geminiModel || '', (id) => authWrite({ geminiModel: id })),
     h('div', { class: 'line', style: 'margin-top:8px' },
       textbox('set-gkey', a.hasGeminiKey ? 'Gemini API 키 — 들어 있음' : 'Gemini API 키', '', {
         onblur: async () => {
           const v = String(S.typed['set-gkey'] || '').trim();
           if (!v) return;
           clearTyped('set-gkey');
-          await api('auth.write', { geminiKey: v });
+          await authWrite({ geminiKey: v });
         },
       }),
-      a.hasGeminiKey ? h('button', { class: 'btn-text red', text: '키 지우기', onclick: () => api('auth.write', { geminiKey: '' }) }) : null));
+      a.hasGeminiKey ? h('button', { class: 'btn-text red', text: '키 지우기', onclick: () => authWrite({ geminiKey: '' }) }) : null));
 }
 
 function authRow(a) {
@@ -992,7 +1023,7 @@ function authRow(a) {
   const list = (a && a.modes) || ['auto', 'sub', 'api'];
   return h('div', { class: 'line' }, list.map((m) => h('div', {
     class: 'line', style: 'gap:6px;cursor:pointer',
-    onmousedown: () => api('auth.write', { mode: m }),
+    onmousedown: () => authWrite({ mode: m }),
   },
   h('button', { class: 'ck' + (cur === m ? ' on' : '') }),
   h('span', { text: AUTH_SAY[m] || m }))));
@@ -1248,6 +1279,7 @@ function layerOne() {
   const panel = t === 'doc' ? docPanel(close)
     : t === 'thread' ? threadPanel(close)
       : t === 'newproject' ? newProjectPanel(close)
+      : t === 'settings' ? settingsPanel(close)
         : t === 'newdoc' ? newDocPanel(close)
           : t === 'stage' ? stagePanel(close)
             : t === 'prompt' ? promptPanel(close)

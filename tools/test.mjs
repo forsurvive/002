@@ -2332,8 +2332,15 @@ process.stdin.on('end', () => {
   authM.write({ mode: 'auto', geminiModel: 'balanced' });
 
   const app = src(join(ROOT, 'web', 'app.js'));
-  ok('화면 — ChatGPT 를 고르면 모델 고르기(맨 앞 «Codex 기본»)', app.includes("[{ id: '', name: 'Codex 기본' }, ...((ms && ms.chatgpt) || [])]") && app.includes("api('auth.write', { chatgptModel: id })"));
-  ok('화면 — Gemini 를 고르면 모델 · 키 칸', app.includes("gemini: 'Gemini API 키'") && app.includes("api('auth.write', { geminiModel: id })") && app.includes("api('auth.write', { geminiKey: v })"));
+  ok('화면 — ChatGPT 를 고르면 모델 고르기(맨 앞 «Codex 기본»)', app.includes("[{ id: '', name: 'Codex 기본' }, ...((ms && ms.chatgpt) || [])]") && app.includes("authWrite({ chatgptModel: id })"));
+  ok('화면 — Gemini 를 고르면 모델 · 키 칸', app.includes("gemini: 'Gemini API 키'") && app.includes("authWrite({ geminiModel: id })") && app.includes("authWrite({ geminiKey: v })"));
+  // 첫 화면의 [설정](2026-10-13 «프로젝트 생성 전에도 설정을 편집») — 작품 설정 탭과 같은 칸 하나(authSection)
+  ok('첫 화면에 [설정] 단추가 선다(개인판만 — 온라인판은 «내 계정»)', app.includes("S.me ? null : h('button', { class: 'btn-line', text: '설정', onclick: settingsOpen })"));
+  ok('[설정] 창은 작품 없이 auth.read 로 읽어 같은 칸을 그린다', app.includes("api('auth.read').then(") && app.includes("S.homeAuth ? authSection(S.homeAuth, null)") && app.includes("t === 'settings' ? settingsPanel(close)"));
+  ok('작품 설정 탭도 같은 칸을 쓴다(두 벌로 갈라지지 않게)', app.includes('authSection(p.auth, p.limit),') && (app.match(/function authSection\(/g) || []).length === 1);
+  ok('고치는 문은 하나(authWrite) — 답을 첫 화면 창이 그대로 쥔다', !app.includes("api('auth.write'") || app.split("api('auth.write'").length === 2);
+  const homeRead = await fetch(base + '/api', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'auth.read' }) }).then((x) => x.json());
+  ok('작품을 고르지 않은 채로도 «무엇으로»를 읽는다(pid 없이)', homeRead.ok && Array.isArray(homeRead.auth.modes) && homeRead.auth.modes.includes('gemini'));
   const la = src(join(HERE, 'launch.mjs'));
   ok('Gemini API 키로 돌면 실행기 로그인을 묻지 않는다', la.includes('viaChatGPT || viaGemini ? { loggedIn: true }'));
 }
