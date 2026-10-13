@@ -92,7 +92,7 @@ export function nextStep(p, t, rail = {}, { busy = () => false } = {}) {
     return { do: 'run', key, episode, why: 'write' };
   };
 
-  // ① 자료 분석 — 책을 만들 때 도는 준비가 이미 썼으면 넘어간다
+  // ① 자료 분석 — 만들 때는 돌지 않으니 레일이 먼저 쓴다(사람이 단계에서 이미 썼으면 넘어간다)
   if (st('study') && !passed('study') && !filled(doc('study'))) return write('study');
   // ② 설계 · ③ 목차 — 쓰고, 도장
   for (const key of ['design', 'toc']) {

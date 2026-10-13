@@ -357,7 +357,7 @@ const SCROLLERS = ['.main', '#layer1 .panel-body', '#layer2 .panel-body', '#d-bo
 
 // 읽기만 하는 작품(강사 · 열람이 허락된 기관 관리자) — 고치는 손잡이를 모두 걷고 칸은 읽기 전용으로.
 // 막는 것은 서버다(쓰기 문은 403) — 이것은 누를 수 없는 단추를 보이지 않게 하는 안내일 뿐이다.
-const RO_HIDE = /^(\+|삭제|생성|갱신|추가|저장|만들기|복원|비우기|영구 삭제|승인|승인하고 다음 단계로|건너뛰기|건너뛰기 취소|다시 생성\(새 판\)|문서에서 고치기|고치기|되돌리기|파일 선택|일시중지|이어 하기|자료 분석 다시|에이전트 준비 다시|프로젝트 삭제|작품 파일 가져오기|책 파일 가져오기|이 판으로 되돌리기|자료 분석)$/;
+const RO_HIDE = /^(\+|삭제|생성|갱신|추가|저장|만들기|복원|비우기|영구 삭제|승인|승인하고 다음 단계로|건너뛰기|건너뛰기 취소|다시 생성\(새 판\)|문서에서 고치기|고치기|되돌리기|파일 선택|일시중지|이어 하기|자료 분석 다시|에이전트 준비 다시|에이전트 구성 다시|프로젝트 삭제|작품 파일 가져오기|책 파일 가져오기|이 판으로 되돌리기|자료 분석)$/;
 function lockReadOnly() {
   for (const root of [$('root'), $('layer1'), $('layer2')]) {
     if (!root) continue;
@@ -793,7 +793,6 @@ function prepBox() {
   const step = String(j.step || '');
   const kind = p.prep.kind;
   const built = kind && kind !== '소설' && kind !== '기본';
-  const studying = step.startsWith('자료 분석');
   const seat = (x) => {
     const now = !x.made && step.includes(x.label + ' 자리');
     return h('div', { class: 'line', style: 'gap:8px' },
@@ -801,11 +800,10 @@ function prepBox() {
       h('span', { class: now ? 'name' : 'when', text: x.label + ' 자리' + (x.fallback ? ' (내장으로 채움)' : '') }));
   };
   return h('div', { class: 'card-box', style: 'margin-bottom:12px' },
-    h('div', { class: 'line' }, h('div', { class: 'name', style: 'flex:1;font-weight:700', text: '자료 분석 준비' }), h('span', { class: 'when', text: jobLine(j) })),
+    h('div', { class: 'line' }, h('div', { class: 'name', style: 'flex:1;font-weight:700', text: '에이전트 구성' }), h('span', { class: 'when', text: jobLine(j) })),
     !kind ? h('div', { class: 'when', text: '① 글의 종류를 가리는 중 — 받은 자료와 규격을 읽고 있습니다' })
       : built ? [h('div', { class: 'lab', text: '② 에이전트 짓기 — ' + kind + ' 에 맞춰 자리마다 프롬프트를 씁니다' }), p.prep.seats.map(seat)]
-        : h('div', { class: 'when', text: '② ' + (kind === '소설' ? '소설' : '종류를 가리지 못해') + ' — 내장 에이전트를 씁니다' }),
-    h('div', { class: studying ? 'name' : 'when', text: studying ? '③ 자료 분석 중 — 에이전트 준비를 마치고 자료를 읽고 있습니다' : '③ 자료 분석 — 에이전트를 다 지으면 이어서 합니다' }));
+        : h('div', { class: 'when', text: '② ' + (kind === '소설' ? '소설' : '종류를 가리지 못해') + ' — 내장 에이전트를 씁니다' }));
 }
 
 function workshop() {
@@ -1309,7 +1307,7 @@ function agentList(p) {
   // 준비가 어긋났거나 끊겼을 때만 선다 — 누르면 종류 판정부터 자료 분석까지 다시 돈다.
   const redo = p.prepared || (p.jobs || []).some((j) => j.kind === 'agents' && j.status === 'running')
     ? null
-    : h('button', { class: 'btn-text', text: '자료 분석 다시', onclick: (e) => { stop(e); S.open = { type: 'prepare' }; clearTyped('pp-req'); render(); } });
+    : h('button', { class: 'btn-text', text: '에이전트 구성 다시', onclick: (e) => { stop(e); S.open = { type: 'prepare' }; clearTyped('pp-req'); render(); } });
   return h('div', { class: 'sec' },
     h('div', { class: 'sec-head' },
       h('div', { class: 'name', text: made ? (W('이 작품의 에이전트') + (p.agentKind ? ' — ' + p.agentKind : '')) : '에이전트' })),
@@ -2033,7 +2031,7 @@ async function makeProject() {
 function preparePanel(close) {
   S.askOpen = { label: '시작하고 닫기', dirty: () => typedAny('pp-req'), save: startPrepare };
   return h('div', { class: 'panel narrow' },
-    h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '자료 분석' }), h('button', { class: 'x', text: '×', onclick: close })),
+    h('div', { class: 'panel-head' }, h('div', { class: 'name', text: '에이전트 구성' }), h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
       h('div', null, h('div', { class: 'lab', text: '요청사항' }), area('pp-req', '요청사항')),
       h('button', { class: 'btn', text: '시작', onclick: startPrepare }),

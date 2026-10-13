@@ -430,7 +430,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const raw = JSON.parse(readFileSync(join(BOX, 'projects', pid + '.json'), 'utf8'));
   eq('자리마다 프롬프트를 지었다', prompts.AGENT_SLOTS.filter((c) => raw.agents[c] && raw.agents[c].craft).length, prompts.AGENT_SLOTS.length);
   ok('지은 프롬프트는 2000자 이상', prompts.AGENT_SLOTS.every((c) => raw.agents[c].craft.length >= agents.CRAFT_MIN));
-  ok('비소설도 자료 분석은 남는다', p.docs.some((d) => d.title === '자료 분석'));
+  ok('비소설도 만들 때 자료 분석은 돌지 않는다(에이전트 구성만)', !p.docs.some((d) => d.title === '자료 분석'));
   await post('project.delete', { pid });
   KIND = '소설';
 }
@@ -1198,7 +1198,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const setSrc = app.slice(app.indexOf('function settings()'), app.indexOf('function openAgent('));
   ok('**설정의 에이전트는 한 칸 — 기본 자리 · 만든 에이전트를 한 카드에**', (setSrc.match(/agentList\(p\)/g) || []).length === 1 && !setSrc.includes("text: '추가', onclick: () => openAgent(null)")
     && lst.includes("h('div', { class: 'sec' }") && lst.includes("'기본 자리 · ' + rows.length") && lst.includes("'만든 에이전트 · ' + crew.length") && lst.includes("text: '+ 새 에이전트', onclick: () => openAgent(null)"));
-  ok('기본 자리는 한국어 자리 이름으로(코드를 보이지 않는다) · 준비가 어긋났을 때만 [자료 분석 다시]', lst.includes('pr.label || pr.code') && !lst.includes("text: pr.code })") && lst.includes("text: '자료 분석 다시'"));
+  ok('기본 자리는 한국어 자리 이름으로(코드를 보이지 않는다) · 준비가 어긋났을 때만 [에이전트 구성 다시]', lst.includes('pr.label || pr.code') && !lst.includes("text: pr.code })") && lst.includes("text: '에이전트 구성 다시'"));
   ok('만든 에이전트 [삭제]는 한 번 묻는다(칸 · 고치는 창 모두)', lst.includes('askDeleteAgent(a); } })') && app.includes("text: '«' + a.name + '» 지우기 — 되돌릴 수 없음'")
     && app.includes("onclick: () => askDeleteAgent(a, () => {"));
   ok('새 반 이름이 style.css 에', ['.sub-head', '.sec-note', '.row .when.trim'].every((c) => src(join(ROOT, 'web', 'style.css')).includes(c)));
@@ -1448,15 +1448,15 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
-  // ② 프로젝트를 만들면 에이전트를 짓고 이어서 «자료 분석» 문서를 남긴다
+  // ② 프로젝트를 만들면 에이전트 구성만 돈다 — 자료 분석은 사람이 단계에서 돌린다(사용자 지시 2026-10-13, DESIGN §6-7 바뀜)
   const r = await post('project.create', {
     name: '자동 분석', spec: { form: '소설', length: '1화' },
     materials: [{ name: '자료', text: '자료 본문' }],
   });
   const p = await settle(r.pid, 60000);
   const study = p.docs.find((d) => d.title === '자료 분석');
-  ok('만들자마자 자료 분석 문서가 생긴다', !!study);
-  ok('그 문서에 본문이 있다', study && study.body.length > 0);
+  ok('**만들어도 자료 분석 문서는 저절로 생기지 않는다**', !study);
+  ok('작업 이름은 «에이전트 구성»', p.jobs.find((j) => j.kind === 'agents').title === '에이전트 구성');
   eq('준비 작업 하나로 끝난다', p.jobs.filter((j) => j.kind === 'agents').length, 1);
   eq('그 작업은 완료로 끝난다', p.jobs.find((j) => j.kind === 'agents').status, 'done');
   ok('작업에 단계 시각이 적힌다', typeof p.jobs[0].stepAt === 'number');
@@ -1741,7 +1741,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
-  // 프로젝트를 만들면 여전히 «자료 분석» 한 편이 남는다(자동 집필과는 다른 일이다)
+  // 2026-10-13 바뀜(사용자 지시 «자동으로 자료 분석을 실행하지 않도록 · 에이전트 구성만») — 만든 뒤에는 에이전트 구성만 돌고 «자료 분석» 문서는 생기지 않는다(DESIGN §6-7)
   const r = await post('project.create', {
     name: '분석만', spec: { form: '소설' },
     materials: [{ name: '자료', text: '자료 본문' }],
@@ -1752,13 +1752,12 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const matCatId = (p.categories.find((c) => c.name === '자료') || {}).id;
   ok('넣은 자료가 «자료» 카테고리의 문서로 선다', p.docs.some((d) => d.categoryId === matCatId && d.body === '자료 본문'));
   const made = p.docs.filter((d) => !d.src && d.categoryId !== matCatId);
-  eq('지은 문서는 자료 분석 하나', made.length, 1);
-  eq('그 이름', made[0].title, agents.STUDY_TITLE);
-  ok('작업이 그 문서를 제 것으로 적는다', p.jobs[0].docIds.includes(made[0].id));
+  eq('**만든 뒤 저절로 지은 문서가 없다 — 자료 분석은 돌지 않는다**', made.length, 0);
+  ok('작업 이름은 «에이전트 구성»', p.jobs.find((j) => j.kind === 'agents').title === '에이전트 구성' && !p.docs.some((d) => d.title === agents.STUDY_TITLE));
   // 작법서를 걷었으므로 가리키는 문서도 그 구획도 서지 않는다(사용자 지시, 2026-09-22).
   ok('가리키는 문서가 서지 않는다', p.docs.every((d) => !d.src));
   ok('작법서 구획이 서지 않는다', !(p.categories || []).some((c) => c.name === books.BOOK_CATEGORY));
-  ok('그래도 프로젝트는 선다', p.prepared && p.docs.length === 2);   // 자료 하나 + 자료 분석
+  ok('그래도 프로젝트는 선다', p.prepared && p.docs.length === 1);   // 자료 하나뿐(자료 분석은 단계로)
   // 갱신 한 번이 나르는 짐이 가벼운가
   ok('갱신이 가볍다', JSON.stringify(await stateOf(r.pid)).length < 60000);
   ok('준비가 끝났다고 알린다', p.prepared);
@@ -1779,7 +1778,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('**판정의 꼴이 끝내 어긋나도 작업은 실패하지 않고 끝난다**', p.jobs.find((j) => j.kind === 'agents').status, 'done');
   eq('그때는 내장 에이전트로 간다(종류 «기본»)', p.agentKind, '기본');
   const matCat2 = (p.categories.find((c) => c.name === '자료') || {}).id;
-  eq('**«자료 분석» 문서는 그대로 생긴다**', p.docs.filter((d) => !d.src && d.categoryId !== matCat2 && d.title === agents.STUDY_TITLE).length, 1);
+  eq('**에이전트 구성만 돈다 — «자료 분석» 문서는 생기지 않는다(2026-10-13)**', p.docs.filter((d) => !d.src && d.categoryId !== matCat2 && d.title === agents.STUDY_TITLE).length, 0);
   ok('종류를 못 가렸으니 [자료 분석 다시]가 선다(다시 가리기)', !p.prepared);
 
   // 다시 걸면서 적은 요청사항이 그 호출에 실린다(저장하지는 않는다)
@@ -1793,7 +1792,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('작품의 요청사항으로 저장되지는 않는다', p.request, '');
   eq('이번에는 끝난다', p.jobs.filter((j) => j.kind === 'agents').pop().status, 'done');
   ok('이제 준비되었다', p.prepared);
-  eq('**다시 가려도 «자료 분석»은 두 벌로 서지 않는다**', p.docs.filter((d) => d.title === agents.STUDY_TITLE).length, 1);
+  eq('**다시 가려도 «자료 분석»은 저절로 돌지 않는다**', p.docs.filter((d) => d.title === agents.STUDY_TITLE).length, 0);
   eq('종류도 적힌다', p.agentKind, '실무 안내서');
 
   const busy = await post('project.prepare', { pid: 'p_없음' });
@@ -2020,10 +2019,12 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
     && stageRow(st, 'finish').status !== 'approved' && stageRow(st, 'review').status === 'approved' && docBy(st, '2장').versions.some((v) => v.body === '2장 고친 본문'));
   ok('되돌리면 자동 실행은 중지된 채 그 앞 걸음까지 남는다', st.rail.status === 'stopped' && st.rail.steps[st.rail.steps.length - 1].label === '③ 개정 계획 승인');
   ok('되돌려도 중간에 사람이 만든 · 들여온 문서는 그대로', docBy(st, '내 메모').id === mine.id && docBy(st, '들여온 글').body === '파일에서 읽어 넣은 글');
-  await post('rail.rollback', { pid: semi.pid, step: st.rail.steps.find((x) => x.label === '책의 설계 생성').id });
+  // 만들 때는 에이전트 구성만 돌므로(DESIGN §6-7 바뀜) 레일의 첫 걸음은 레일이 쓴 자료 분석이다
+  ok('레일의 첫 걸음은 «자료 분석 생성»', st.rail.steps[0].label === '자료 분석 생성', st.rail.steps[0].label);
+  await post('rail.rollback', { pid: semi.pid, step: st.rail.steps[0].id });
   st = (await stateOf(semi.pid)).project;
-  ok('맨 처음 걸음까지 되돌리면 레일이 쓴 것은 모두 휴지통으로 — 만들 때 도는 자료 분석 · 사람의 문서는 남는다', ['책의 설계', '목차', '1장', '2장', '3장', '전권 검토'].every((tt) => !docBy(st, tt))
-    && !!docBy(st, '자료 분석') && !!docBy(st, '내 메모') && !!docBy(st, '들여온 글') && st.rail.steps.length === 0 && stageRow(st, 'design').status === 'not_started');
+  ok('맨 처음 걸음까지 되돌리면 레일이 쓴 것은 모두 휴지통으로(레일이 쓴 자료 분석도) — 사람의 문서는 남는다', ['자료 분석', '책의 설계', '목차', '1장', '2장', '3장', '전권 검토'].every((tt) => !docBy(st, tt))
+    && !!docBy(st, '내 메모') && !!docBy(st, '들여온 글') && st.rail.steps.length === 0 && stageRow(st, 'design').status === 'not_started');
   await post('rail.start', { pid: semi.pid, mode: 'semi' });
   st = await railSettle(semi.pid);
   ok('되돌린 자리부터 다시 이어 쓴다', st.rail.status === 'waiting' && st.rail.point === 'design' && docBy(st, '책의 설계').body.startsWith('책의 설계 본문'));
@@ -2073,9 +2074,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   judgeSay = () => '판정: 승인';
   globalThis.__SE2_MOCK_FN = (a) => (String(a.prompt || '').includes('목차를 짓고') ? '목차인데 장 이름이 없다' : RAIL_FN(a));
   const capped = await post('project.create', { name: '상한 책', purpose: 'ebook', spec: { form: '실용서' }, materials: MAT });
-  await post('rail.start', { pid: capped.pid, mode: 'semi', settings: { cap: 1 } });
+  // 2026-10-13: 만든 뒤 자료 분석이 저절로 돌지 않으므로 레일의 첫 걸음이 자료 분석이다 — 상한은 자료 분석 + 설계
+  await post('rail.start', { pid: capped.pid, mode: 'semi', settings: { cap: 2 } });
   st = await railSettle(capped.pid);
-  ok('호출 상한 — 설계 한 번 뒤 도장 ① 에서 기다린다', st.rail.point === 'design' && st.rail.calls === 1);
+  ok('호출 상한 — 자료 분석 · 설계 뒤 도장 ① 에서 기다린다', st.rail.point === 'design' && st.rail.calls === 2);
   await post('rail.approve', { pid: capped.pid });
   st = await railSettle(capped.pid);
   ok('호출 상한에 닿으면 다음 걸음 앞에서 멈춘다', st.rail.status === 'waiting' && st.rail.point === '' && st.rail.why.includes('호출 상한') && !docBy(st, '목차'));
@@ -2215,6 +2217,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const bk = await post('project.create', { name: '웹 책', purpose: 'ebook', spec: { form: '실용서' }, materials: MAT });
   seen.length = 0;
   await settle(bk.pid, 60000);
+  await post('stage.start', { pid: bk.pid, key: 'study' });
+  await settle(bk.pid, 60000);
   const stB = (await stateOf(bk.pid)).project;
   ok('전자책은 켠 채로 난다 · 자료 분석(S02)은 검색을 쓰고, 에이전트 짓기(제어 호출)는 쓰지 않는다', stB.webSearch === true
     && seen.some((x) => x.key === 'S02' && x.web === true) && seen.filter((x) => x.key === 'F-AGENT' || x.key === 'F-KIND').every((x) => !x.web));
@@ -2230,10 +2234,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('작업 줄 — «에이전트 짓기 — <자리 이름> 자리»(코드를 보이지 않는다)', agSrc.includes("ctx.step('에이전트 짓기 — ' + slotLabel(code) + ' 자리')") && !agSrc.includes("ctx.step('에이전트 짓기 — ' + code)"));
   ok('작업 줄 — 다 지으면 «자료 분석 — 에이전트 준비 끝»(소설은 «내장 에이전트로»)', agSrc.includes("ctx.step(STUDY_TITLE + (note ? ' — ' + note : ''))")
     && agents.studyNote({ agents: { __kind: '전자책' } }) === '에이전트 준비 끝' && agents.studyNote({ agents: { __kind: '소설' } }) === '내장 에이전트로'
-    && src(join(HERE, 'server.mjs')).includes('runStudy(pid, ctx, request, { note: studyNote(state.get(pid)) })'));
+    && !src(join(HERE, 'server.mjs')).includes('runStudy(') && src(join(HERE, 'server.mjs')).includes('prepare: prepareOnly'));
   const app = src(join(ROOT, 'web', 'app.js'));
-  ok('작업실 맨 위 «자료 분석 준비» 칸 — 준비가 도는 동안만 · 자리마다 지음/짓는 중/기다림 · 자료 분석 단계', /function workshop\(\) \{[\s\S]{0,200}prepBox\(\),/.test(app)
-    && app.includes("text: x.made ? '지음' : now ? '짓는 중' : '기다림'") && app.includes("x.kind === 'agents' && (x.status === 'running' || x.status === 'paused')") && app.includes('③ 자료 분석 중'));
+  ok('작업실 맨 위 «에이전트 구성» 칸 — 준비가 도는 동안만 · 자리마다 지음/짓는 중/기다림 · 자료 분석 줄은 없다', /function workshop\(\) \{[\s\S]{0,200}prepBox\(\),/.test(app)
+    && app.includes("text: x.made ? '지음' : now ? '짓는 중' : '기다림'") && app.includes("x.kind === 'agents' && (x.status === 'running' || x.status === 'paused')") && !app.includes('③ 자료 분석 중'));
   ok('설정 탭 — «웹 검색» 스위치(개인판)', app.includes("text: '웹 검색' }),") && app.includes("api('project.spec', { webSearch: !p.webSearch })"));
   ok('반자동의 장마다 멈춤은 «기본은 승인 지점에서만»을 밝힌다', src(join(ROOT, 'web', 'rail.js')).includes('반자동 — 장 하나 쓸 때마다도 멈추기(기본은 승인 지점에서만 멈춤)'));
 }
@@ -2524,6 +2528,9 @@ function tinyPng(rgb = [220, 20, 20], w = 4, h = 4) {
     return MOCK_FN(a);
   };
   const sp = await post('project.create', { name: '그림 보내기', purpose: 'ebook', spec: { form: '실용서' }, materials: [{ name: '자료', text: '설명\n![지도](img:k1)', images: [{ key: 'k1', name: '지도', data: png.toString('base64') }] }] });
+  await settle(sp.pid, 60000);
+  // 만들 때는 에이전트 구성만 돈다(DESIGN §6-7 바뀜, 2026-10-13) — 자료 분석은 단계에서
+  await post('stage.start', { pid: sp.pid, key: 'study' });
   await settle(sp.pid, 60000);
   const stateMod = await import('./state.mjs');
   const raw = stateMod.get(sp.pid);

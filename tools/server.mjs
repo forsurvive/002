@@ -12,7 +12,7 @@ import * as state from './state.mjs';
 import * as model from './model.mjs';
 import * as jobs from './jobs.mjs';
 import * as engine from './engine.mjs';
-import { prepareAgents, agentsReady, runStudy, STUDY_TITLE, studyNote } from './agents.mjs';
+import { prepareAgents, agentsReady } from './agents.mjs';
 import { killAllCalls, lastLimit, useQueueHook } from './call.mjs';
 import * as auth from './auth.mjs';
 import { createOps } from './ops.mjs';
@@ -42,27 +42,23 @@ const PORT = HOSTING.port;
 const ok = (extra = {}) => ({ ok: true, ...extra });
 const bad = (error) => ({ ok: false, error: String(error) });
 
-// 준비가 온전히 끝났는가 — 프롬프트가 다 서 있고, 자료가 있다면 «자료 분석»까지 남았는가.
-// 둘 중 하나라도 비면 화면이 [에이전트 준비 다시] 를 세운다.
-const prepared = (p) => agentsReady(p) && !(p.agents && p.agents.__kind === '기본') && (!model.materialDocs(p).length || p.docs.some((d) => d.title === STUDY_TITLE));
+// 준비가 온전히 끝났는가 — 프롬프트가 다 서 있고 종류를 가렸는가. 비면 화면이 [에이전트 구성 다시] 를 세운다.
+// 자료 분석은 더는 묻지 않는다 — 만든 뒤 저절로 돌지 않고 사람이 단계로 돌린다(DESIGN §6-7 바뀜, 2026-10-13)
+const prepared = (p) => agentsReady(p) && !(p.agents && p.agents.__kind === '기본');
 
 // 작업은 «종류 + 매개변수»로 등록하고, 실제로 돌리는 것은 Core 의 작업 종류 표(core/generation/kinds.mjs)다.
 // 개인판이 넣는 것: 저장(state) · 호출(callAsking — CLI · 한도 물음) · 에이전트 준비(agents.mjs).
-async function prepareThenStudy(pid, ctx, request = '') {
-  if (!agentsReady(state.get(pid))) {
-    const r = await prepareAgents(pid, ctx, request);
-    if (!r.ok) return r;
-  }
-  // «자료 분석» 문서가 이미 있으면 또 만들지 않는다(종류만 다시 가린 때 — core prepareThenStudy 와 같은 규칙)
-  if ((state.get(pid) || { docs: [] }).docs.some((d) => d.title === STUDY_TITLE)) return { ok: true, skipped: true };
-  return runStudy(pid, ctx, request, { note: studyNote(state.get(pid)) });   // 이어서 자료를 한 번 읽는다 — 작업 줄에 «자료 분석 — 에이전트 준비 끝»
+// 에이전트 구성만 — 종류를 가리고 자리마다 짓는다. 자료 분석은 이어 돌리지 않는다(사용자 지시, 2026-10-13 — DESIGN §6-7 바뀜)
+async function prepareOnly(pid, ctx, request = '') {
+  if (agentsReady(state.get(pid))) return { ok: true, skipped: true };
+  return prepareAgents(pid, ctx, request);
 }
 // 작품마다 제 용도의 단계 템플릿(이야기 만들기 · 전자책) — 적혀 있지 않은 작품은 이야기 만들기(지금까지의 모든 작품)
 const workflowOf = async (pid) => baseTemplate(templateKeyOf(state.get(pid)));
 // 모의 실행에서는 Codex 를 띄우지 않는다 — 고르기 화면을 시험하는 가짜 목록
 const MOCK_MODELS = process.env.SE2_MOCK === '1' ? [{ id: 'mock-gpt', name: 'Mock GPT' }] : null;
 // 부르기 한 번마다 — 전자책 레일의 작업이면 호출 수를 센다(호출 상한, DESIGN §5-1)
-const LOCAL_DEPS = { ...engine.LOCAL, call: (args, ctx) => { rail.countCall(ctx); return engine.LOCAL.call(args, ctx); }, prepare: prepareThenStudy, workflow: workflowOf };
+const LOCAL_DEPS = { ...engine.LOCAL, call: (args, ctx) => { rail.countCall(ctx); return engine.LOCAL.call(args, ctx); }, prepare: prepareOnly, workflow: workflowOf };
 jobs.useRunner((kind, params, ctx) => runKind(LOCAL_DEPS, kind, params, ctx));
 // 호출 고삐에서 자리를 기다리는 작업 — 작업 줄에 «차례 기다림»(여러 작품이 온 차례대로 나눠 쓴다, DESIGN §6-5)
 useQueueHook(jobs.queued);
@@ -73,7 +69,7 @@ jobs.onEnd(rail.onJobEnd);
 function startAgentPrep(pid, request = '') {
   const p = state.get(pid);
   if (!p) return;
-  jobs.start(pid, { kind: 'agents', title: '자료 분석', params: { request } });   // 화면 이름 «자료 분석»(2026-10-07) — 종류 판정 · 짓기 · 자료 분석을 묶은 한 작업
+  jobs.start(pid, { kind: 'agents', title: '에이전트 구성', params: { request } });   // 화면 이름 «에이전트 구성»(2026-10-13) — 종류 판정 · 짓기만(자료 분석은 단계로)
 }
 
 // 작품 파일 가져오기 — 늘 새 id 로 세운다(있는 작품을 덮어쓰지 않는다). 문서 · 판 · 참조 · 논의는 파일의 것 그대로.
