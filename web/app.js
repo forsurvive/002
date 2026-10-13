@@ -340,7 +340,34 @@ async function pull(force) {
   const sig = JSON.stringify([S.pid, S.projects, S.project]);
   if (!force && sig === S.last) return;
   S.last = sig;
+  railNotify();
   render();
+}
+
+// 이야기 자동 실행이 끝났거나 멈추면 한 번 알린다(사용자 지시 2026-10-13 «자동실행 종료 시 사용자에게 종료 알림 띄우기» — DESIGN §5-2).
+// 서버가 그때의 시각(noticeAt)을 실어 보내고, 본 시각은 이 브라우저에 적어 둔다 — 적지 못하면 이번 창에서만 기억한다
+const RAIL_SEEN_KEY = 'se-rail-seen';
+function railNotify() {
+  if (S.me || S.confirm) return;
+  if (!S.railSeen) { try { S.railSeen = JSON.parse(localStorage.getItem(RAIL_SEEN_KEY) || '{}') || {}; } catch { S.railSeen = {}; } }
+  const list = (S.projects || []).filter((x) => x.railNotice).map((x) => ({ id: x.id, name: x.name, ...x.railNotice }));
+  const r = S.project && S.project.rail;
+  if (r && r.kind === 'story' && r.noticeAt && ['done', 'waiting', 'failed'].includes(r.status)) list.push({ id: S.project.id, name: S.project.name, at: r.noticeAt, status: r.status, why: r.why || '' });
+  const hit = list.find((x) => (Number(S.railSeen[x.id]) || 0) < x.at);
+  if (!hit) return;
+  S.railSeen[hit.id] = hit.at;
+  try { localStorage.setItem(RAIL_SEEN_KEY, JSON.stringify(S.railSeen)); } catch { /* 이번 창에서만 기억한다 */ }
+  if (S.pid === hit.id && S.open && S.open.type === 'rail') return;   // 이미 자동 실행 창을 보고 있다
+  const say = hit.status === 'done' ? '자동 실행이 끝났습니다' : hit.status === 'failed' ? '자동 실행이 실패했습니다' : '자동 실행이 멈췄습니다';
+  S.confirm = {
+    text: '«' + hit.name + '» ' + say + (hit.status !== 'done' && hit.why ? ' — ' + hit.why : ''),
+    acts: [{ label: '보기', class: 'btn', run: () => {
+      S.confirm = null;
+      if (S.pid !== hit.id) { S.pid = hit.id; S.project = null; S.tab = '작업실'; }
+      S.open = { type: 'rail' };
+      pull(true);
+    } }],
+  };
 }
 
 // ---------------------------------------------------------------- 그리기
@@ -475,6 +502,7 @@ function projectList() {
     // 작품을 나가도 작업은 돈다 — 도는 작업 · 승인을 기다리는 레일이 있으면 카드에 보인다(DESIGN §6-5)
     p.running ? h('span', { class: 'mark', text: '진행 중 ' + p.running }) : null,
     p.waiting ? h('span', { class: 'mark', text: '승인 대기' }) : null,
+    p.railNotice ? h('span', { class: 'mark', text: p.railNotice.status === 'done' ? '자동 실행 끝' : '자동 실행 멈춤' }) : null,
     h('div', { class: 'when', text: when(p.updatedAt || p.createdAt) })))),
     brandMark('text-align:center;padding:56px 0 8px'));
 }

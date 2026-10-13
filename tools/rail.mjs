@@ -1,4 +1,6 @@
 // 전자책 작품의 자동 실행(레일) — 반자동 · 완전 자동(DESIGN.md §5-1, 사용자 결정 2026-10-13).
+// 이야기 작품의 자동 실행(DESIGN.md §5-2, 같은 날)은 tools/rail-story.mjs 가 걸음을 정하고 띄운다(p.rail.kind = 'story') —
+// 멈춤 · 되돌리기 · 이어 하기 · 호출 세기 · 다시 켰을 때 잇기는 여기서 함께 맡는다.
 // 레일은 단계 «위에» 얹은 순서다. 걸음마다 지금의 단계 작업(stage) 하나를 띄우고, 그 작업이 끝나면(jobs.onEnd) 다음을 정한다.
 // 다음 걸음은 core/rail/next.mjs(순수)가 단계 상태 · 문서에서 그때그때 읽어 정한다 — 그래서 사람이 손으로 승인 · 다시 생성해도 따르고, 다시 켜도 잇는다.
 // 반자동은 도장에서 멈춰 사람을 기다리고(작업을 붙잡지 않는다), 완전 자동은 편집장(judge 작업)이 판단한다.
@@ -10,14 +12,17 @@ import * as wf from '../core/workflow/stages.mjs';
 import { nextStep, POINTS, CRITERIA, revisionPlan, reviseRequest } from '../core/rail/next.mjs';
 import { baseTemplate, templateKeyOf } from './workflow.mjs';
 import { newId } from '../core/ids.mjs';
+import * as story from './rail-story.mjs';
+import { withRailRequest, REQUEST_MAX } from '../core/rail/story.mjs';
 
 export const MODES = ['semi', 'auto'];
 export const ON_FAIL = ['pass', 'stop'];
-const DEFAULTS = { cap: 0, stopEachChapter: false, rounds: 2, onFail: 'pass', criteria: '' };
+const DEFAULTS = { cap: 0, stopEachChapter: false, rounds: 2, onFail: 'pass', criteria: '', request: '' };
 const ok = (extra = {}) => ({ ok: true, ...extra });
 const bad = (error) => ({ ok: false, error: String(error) });
 
 const tplOf = (p) => (p && templateKeyOf(p) === 'ebook' ? baseTemplate('ebook') : null);
+const isStory = (p) => !!(p && p.rail && p.rail.kind === 'story');
 const live = (j) => j && (j.status === 'running' || j.status === 'paused');
 
 function cleanSettings(s = {}, base = DEFAULTS) {
@@ -27,6 +32,7 @@ function cleanSettings(s = {}, base = DEFAULTS) {
   if (s.rounds !== undefined) out.rounds = Math.min(5, Math.max(0, Math.floor(Number(s.rounds) || 0)));
   if (s.onFail !== undefined && ON_FAIL.includes(s.onFail)) out.onFail = s.onFail;
   if (s.criteria !== undefined) out.criteria = String(s.criteria || '').slice(0, 4000);
+  if (s.request !== undefined) out.request = String(s.request || '').slice(0, REQUEST_MAX);   // 자동 실행 요청사항 — 모든 걸음에
   return out;
 }
 
@@ -39,7 +45,7 @@ function fresh(mode, settings) {
 // 레일이 한 일(생성 · 다시 생성 · 개정 · 승인)마다 «하기 직전»을 남긴다 — 문서의 본문 · 확정본 · 단계 상태 · 레일의 셈.
 // 되돌리면 그 걸음과 그 뒤의 걸음을 거꾸로 푼다. 레일이 새로 만든 문서는 휴지통으로(되살릴 수 있다), 고친 문서는 앞 본문을 새 판으로(이력에 남는다).
 // 기록에 없는 것 — 사람이 중간에 만들거나 들여온 문서 · 손으로 고친 다른 문서 — 는 건드리지 않는다.
-const KEEP = ['wrote', 'acked', 'revise', 'rounds', 'notes', 'unreviewed'];
+const KEEP = ['wrote', 'acked', 'revise', 'rounds', 'notes', 'unreviewed', 'story'];
 const keepOf = (r) => JSON.parse(JSON.stringify(Object.fromEntries(KEEP.map((k) => [k, r[k]]))));
 const snapStage = (p, slot) => (p.stages && p.stages[slot] ? { ...p.stages[slot] } : null);
 const KIND_SAY = { write: '생성', fix: '다시 생성(수정 요청)', revise: '개정' };
@@ -59,13 +65,18 @@ const waitAt = (r, point, why = '', episode = 0) => Object.assign(r, { status: '
 export function start(pid, mode, settings = {}) {
   const p = state.get(pid);
   if (!p) return bad('프로젝트를 찾을 수 없습니다');
-  if (!tplOf(p)) return bad('자동 실행은 전자책 작품에서만 됩니다');
+  // 이야기 작품 — 한 가지 진행(완전 자동)뿐이다. mode 'fresh' 는 다 쓴 뒤 처음부터
+  if (!tplOf(p)) {
+    const got = story.start(pid, mode, settings);
+    if (got.ok) tick(pid);
+    return got;
+  }
   if (!MODES.includes(mode)) return bad('반자동 또는 완전 자동을 골라 주세요');
   state.update(pid, (pr) => {
     const r = pr.rail;
     // 도는 중 · 기다리는 중이면 진행 방식과 설정만 바꾼다(센 것 · 소견은 그대로) — 끝났거나 멈췄으면 새로 시작한다(쓴 글은 그대로, 레일은 단계에서 다시 읽는다)
     if (r && (r.status === 'running' || r.status === 'waiting')) Object.assign(r, { mode, settings: cleanSettings(settings, r.settings) });
-    else pr.rail = { ...fresh(mode, settings), calls: r ? r.calls || 0 : 0, notes: r ? r.notes || [] : [], steps: r ? r.steps || [] : [] };   // 지난 걸음 기록도 남긴다(되돌리기)
+    else pr.rail = { ...fresh(mode, { ...(r ? r.settings : {}), ...settings }), calls: r ? r.calls || 0 : 0, notes: r ? r.notes || [] : [], steps: r ? r.steps || [] : [] };   // 지난 걸음 기록도 남긴다(되돌리기)
     if (pr.rail.status === 'waiting' && pr.rail.point !== 'chapter' && mode === 'auto') pr.rail.status = 'running';   // 완전 자동으로 바꾸면 기다리던 도장을 편집장이 맡는다
   });
   tick(pid);
@@ -99,6 +110,7 @@ export function rollback(pid, stepId) {
 }
 
 function undoStep(p, st) {
+  if (st.prevLength !== undefined) p.spec = { ...(p.spec || {}), length: st.prevLength };   // 이야기 — 자료 분석이 채운 분량
   if (st.slot) { p.stages = p.stages || {}; if (st.stage) p.stages[st.slot] = { ...st.stage }; else delete p.stages[st.slot]; }
   const d = st.docId ? model.findDoc(p, st.docId) : null;
   if (!d) return;   // 사람이 이미 지운 문서는 그대로 둔다
@@ -119,6 +131,12 @@ export function resume(pid) {
 export function settings(pid, s = {}) {
   const r = (state.get(pid) || {}).rail;
   if (!r) return bad('자동 실행이 없습니다');
+  if (r.kind === 'story') {
+    story.settings(pid, s);
+    const now = state.get(pid).rail;
+    if (now.status === 'waiting' && String(now.why || '').startsWith('호출 상한')) resume(pid);
+    return ok();
+  }
   state.update(pid, (p) => {
     p.rail.settings = cleanSettings(s, p.rail.settings);
     if (s.mode !== undefined && MODES.includes(s.mode)) p.rail.mode = s.mode;
@@ -201,7 +219,7 @@ export function boot() {
 }
 
 // 첫 화면 카드 — 승인을 기다리는가
-export const waiting = (pid) => { const p = state.get(pid); return !!(p && p.rail && p.rail.status === 'waiting'); };
+export const waiting = (pid) => { const p = state.get(pid); return !!(p && p.rail && p.rail.kind !== 'story' && p.rail.status === 'waiting'); };   // 이야기는 railNotice 로
 
 // ---------------------------------------------------------------- 작업이 끝날 때(jobs.onEnd)
 
@@ -213,7 +231,10 @@ export function onJobEnd(pid, id) {
   if (id === r.jobId) {
     // 레일이 띄운 걸음을 사람이 지웠거나 중지했으면 레일도 선다(지운 걸음을 다시 띄우지 않는다)
     if (!j || j.status === 'stopped') { if (r.status === 'running') state.update(pid, (pr) => Object.assign(pr.rail, { status: 'stopped', jobId: '', why: '' })); return; }
-    if (j.status === 'failed') { state.update(pid, (pr) => Object.assign(pr.rail, { status: 'failed', jobId: '', why: j.error || '걸음이 실패했습니다' })); return; }
+    if (j.status === 'failed') {
+      state.update(pid, (pr) => { Object.assign(pr.rail, { status: 'failed', jobId: '', why: j.error || '걸음이 실패했습니다' }); if (pr.rail.kind === 'story') story.noticed(pr.rail); });
+      return;
+    }
     if (j.status === 'done') {
       const tag = String((j.params && j.params.railTag) || '');
       state.update(pid, (pr) => {
@@ -228,6 +249,7 @@ export function onJobEnd(pid, id) {
         }
       });
       if (j.kind === 'judge') { applyVerdict(pid); return; }
+      if (r.kind === 'story') story.after(pid, j);
     }
   }
   tick(pid);
@@ -279,6 +301,11 @@ export function tick(pid) {
   const p = state.get(pid);
   const r = p && p.rail;
   if (!r || r.status !== 'running') return;
+  if (isStory(p)) {
+    // 레일이 띄운 걸음 · 만들 때 도는 에이전트 구성이 아직 돌면 기다린다(끝나면 onJobEnd 가 다시 부른다)
+    if (!p.jobs.some((j) => live(j) && (j.rail || j.kind === 'agents'))) story.tick(pid);
+    return;
+  }
   const t = tplOf(p);
   if (!t) { state.update(pid, (pr) => Object.assign(pr.rail, { status: 'failed', why: '전자책 단계를 읽지 못했습니다' })); return; }
   // 레일이 띄운 걸음 · 책을 만들 때 도는 준비(자료 분석)가 아직 돌면 그것이 끝나기를 기다린다(끝나면 onJobEnd 가 다시 부른다)
@@ -336,7 +363,7 @@ function launchStage(pid, key, episode = 0, { requestOnce = '', tag = '', withRe
   if (!made || !made.ok) return bad((made && made.error) || '시작하지 못했습니다');
   const d = model.findDoc(state.get(pid), made.docId);
   const got = jobs.start(pid, { kind: 'stage', title: d ? d.title : s.title, targetId: made.docId, rail: true,
-    params: { stageKey: key, episode, requestOnce, modelPick: '', railTag: tag } });
+    params: { stageKey: key, episode, requestOnce: withRailRequest((p.rail.settings || {}).request, requestOnce), modelPick: '', railTag: tag } });
   if (!got.ok) return got;
   state.update(pid, (pr) => Object.assign(pr.rail, { status: 'running', point: '', why: '', jobId: got.jobId }));
   return ok();
@@ -358,7 +385,8 @@ function launchJudge(pid, key) {
       : key === 'review' ? ids(doc('design'), doc('toc'))
         : ids(doc('design'), doc('toc'), doc('review'));
   if (!targetIds.length) return bad('판단할 문서가 없습니다');
-  const criteria = '이 지점의 기준: ' + CRITERIA[key] + (String(p.rail.settings.criteria || '').trim() ? '\n\n작가가 덧붙인 기준: ' + p.rail.settings.criteria.trim() : '');
+  const criteria = '이 지점의 기준: ' + CRITERIA[key] + (String(p.rail.settings.criteria || '').trim() ? '\n\n작가가 덧붙인 기준: ' + p.rail.settings.criteria.trim() : '')
+    + (String(p.rail.settings.request || '').trim() ? '\n\n' + withRailRequest(p.rail.settings.request) : '');
   const agentIds = model.agentsByIds(p, ((p.positions || {})['E-JUDGE']) || []).map((a) => a.id);
   const got = jobs.start(pid, { kind: 'judge', title: '편집장 — ' + POINTS[key], targetId: targetIds[0], rail: true,
     params: { point: key, targetIds, refIds, agentIds, criteria } });
@@ -368,11 +396,18 @@ function launchJudge(pid, key) {
 }
 
 // 화면에 내려 줄 꼴 — 판단 원문(verdict) · 작업 id 는 빼고
-export function view(r) {
+export function view(r, p = null) {
   if (!r) return null;
-  const { verdict, jobId, steps, ...rest } = r;
-  return { ...rest, pointName: POINTS[r.point] || '', steps: (steps || []).map((x) => ({ id: x.id, at: x.at, label: x.label || '' })) };
+  const { verdict, jobId, steps, story: st, ...rest } = r;
+  return { ...rest, pointName: POINTS[r.point] || '', steps: (steps || []).map((x) => ({ id: x.id, at: x.at, label: x.label || '' })),
+    ...(r.kind === 'story' && p ? { progress: story.progress(p) } : {}) };
 }
+
+// 이야기 자동 실행이 끝났거나 멈췄다는 알림 — 첫 화면 목록에 싣는다(화면이 시각을 보고 한 번 알린다)
+export const notice = (pid) => {
+  const r = (state.get(pid) || {}).rail;
+  return r && r.kind === 'story' && r.noticeAt && ['done', 'waiting', 'failed'].includes(r.status) ? { at: r.noticeAt, status: r.status, why: r.why || '' } : null;
+};
 
 // 포지션에 사람을 앉힌다(빈 목록이면 내린다) — 그 템플릿의 포지션 · 이 작품의 에이전트만
 export function seat(pid, position, agentIds = []) {

@@ -259,7 +259,7 @@ async function handle(plan, req, res) {
 
 // 첫 화면의 작품 목록 — 작품마다 지금 도는 작업 수(나가도 돈다는 것이 보이게, DESIGN §6-5)
 function listed() {
-  return state.list().map((x) => ({ ...x, running: jobs.liveCount(x.id), waiting: rail.waiting(x.id) }));
+  return state.list().map((x) => ({ ...x, running: jobs.liveCount(x.id), waiting: rail.waiting(x.id), railNotice: rail.notice(x.id) }));
 }
 
 // 시험이 다른 계획(바깥에 연 꼴)으로 한 벌 더 띄워 볼 수 있게 계획을 받는다.

@@ -1921,6 +1921,135 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
+  // 이야기 작품의 자동 실행(사용자 지시 2026-10-13 — DESIGN §5-2): 자료 분석부터 회차별 집필 계획 세부까지, 주기마다 모순 검사
+  const story = await import('../core/rail/story.mjs');
+  const railStory = await import('./rail-story.mjs');
+  eq('선정 줄을 읽는다(꾸밈이 붙어도)', story.pickedPlan('까닭\n**선정: 기획안 3**', 8), 3);
+  eq('범위 밖의 선정은 0', story.pickedPlan('선정: 기획안 9', 8), 0);
+  eq('주요 인물 줄을 가른다(괄호 풀이는 뺀다)', JSON.stringify(story.leadNames('…\n주요 인물: 서린 · 강도윤(반대자), 미호')), JSON.stringify(['서린', '강도윤', '미호']));
+  eq('회차 수', story.unitCount('…\n회차 수: 12'), 12);
+  ok('단위 이름 — 적었으면 그것, 없으면 화', story.unitWord('단위: 장\n회차 수: 5') === '장' && story.unitWord('회차 수: 5') === '화');
+  ok('모순 있음 · 없음 · 못 읽음', story.contraFound('모순: 있음') === true && story.contraFound('**모순: 없음**') === false && story.contraFound('글') === null);
+  eq('분량 줄', story.lengthLine('…\n분량: 12화, 화당 5,000자 안팎'), '12화, 화당 5,000자 안팎');
+  ok('검사 주기 — 짧으면 한 번에 · 길수록 넓게 · 정해 두면 그대로', story.cycleSize(4) === 4 && story.cycleSize(12) === 3 && story.cycleSize(30) === 5 && story.cycleSize(100) === 8 && story.cycleSize(12, 2) === 2);
+  eq('주기로 나눈다', JSON.stringify(story.cycles(7, 3)), '[[1,2,3],[4,5,6],[7]]');
+  ok('설정 — 기획안은 3~8개 · 다시 쓰기는 0~3번', JSON.stringify(story.cleanStorySettings({ plans: 20, reruns: 9, cap: -3 })) === JSON.stringify({ cap: 0, plans: 8, cycle: 0, reruns: 3, request: '' }));
+  ok('**작품 규격(형식)과 자료가 없으면 시작하지 않는다**', railStory.missing({ spec: {}, docs: [] }).join() === '작품 규격(형식),자료' && railStory.missing({ spec: { form: '소설' }, docs: [{ id: 'd1', material: true }] }).length === 0);
+
+  const seenS = [];
+  let contraTimes = 0;
+  let selectSay = '견줌\n선정: 기획안 2';
+  globalThis.__SE2_MOCK_FN = ({ mockKey, prompt }) => {
+    const P = String(prompt || '');
+    seenS.push({ key: mockKey, prompt: P });
+    const again = P.includes('다시 쓴다');   // 다시 쓰기 — 본문이 달라야 새 판이 쌓인다
+    if (P.includes('«모순: 있음» 또는 «모순: 없음»')) { contraTimes++; return '모순 검사 본문\n모순: ' + (contraTimes === 1 ? '있음' : '없음'); }
+    if (P.includes('«선정: 기획안 N»')) return selectSay;
+    if (P.includes('«주요 인물: 이름')) return '주요 인물 본문\n주요 인물: 서린 · 도윤';
+    if (P.includes('«회차 수: N»')) return (again ? '회차 계획 고친 본문' : '회차 계획 본문') + '\n회차 수: 4';
+    if (P.includes('«분량: …»')) return '자료 분석 본문\n분량: 4화';
+    return again ? '(다시 쓴) ' + mockKey : MOCK_FN({ mockKey });
+  };
+  async function storySettle(pid, ms = 60000) {
+    const t0 = Date.now();
+    for (;;) {
+      const st = (await stateOf(pid)).project;
+      const busy = (st.jobs || []).some((j) => j.status === 'running');
+      if (!busy && (!st.rail || st.rail.status !== 'running')) return st;
+      if (Date.now() - t0 > ms) return st;
+      await sleep(25);
+    }
+  }
+  const sp = await post('project.create', { name: '이야기 자동', spec: { form: '웹소설' }, materials: [{ name: '자료', text: '이야기 자료' }] });
+  await settle(sp.pid, 60000);
+  ok('이야기 작품 — 시작 전에는 자동 실행이 없다', !(await stateOf(sp.pid)).project.rail);
+  const fromS = seenS.length;   // 만들 때의 에이전트 구성 호출은 빼고 센다
+  ok('시작', (await post('rail.start', { pid: sp.pid, mode: 'auto', settings: { plans: 3, cycle: 2, reruns: 1, request: '주인공은 끝까지 비밀을 말하지 않는다' } })).ok);
+  let st = await storySettle(sp.pid);
+  const by = (t) => st.docs.find((d) => d.title === t && !d.trashed);
+  const cat = st.categories.find((c) => c.name === '자동 실행');
+  ok('**끝까지 간다 — 상태 «완성» · 알림 시각이 선다**', st.rail.kind === 'story' && st.rail.status === 'done' && st.rail.noticeAt > 0, st.rail.status + ' ' + st.rail.why);
+  const titles = ['자료 분석', '세계관', '서사 재료', '기획안 1 — 자료 충실', '기획안 2 — 장르 독자', '기획안 3 — 인물 내면', '기획서 선정', '인물 풀', '대략 플롯', '주요 인물',
+    '인물 설계 — 서린', '인물 설계 — 도윤', '상세 플롯', '상세 플롯 합평', '회차 계획', '회차 계획 합평',
+    '1화 집필 계획', '1화 집필 계획 세부', '2화 집필 계획', '2화 집필 계획 세부', '3화 집필 계획', '3화 집필 계획 세부', '4화 집필 계획', '4화 집필 계획 세부',
+    '모순 검사 — 1화~2화', '모순 검사 — 1화~2화 (재검사 1)', '모순 검사 — 3화~4화'];
+  ok('**걸음마다 문서 하나 — 모두 «자동 실행» 카테고리에**', !!cat && titles.every((t) => by(t) && by(t).categoryId === cat.id), titles.filter((t) => !by(t) || by(t).categoryId !== (cat || {}).id).join(' / '));
+  eq('기획안은 설정한 수만큼', st.docs.filter((d) => d.title.startsWith('기획안 ')).length, 3);
+  eq('**분량이 비어 있으면 자료 분석이 정한 분량을 작품 규격에 적는다**', st.spec.length, '4화');
+  ok('**세계관 · 상세 플롯 · 회차 계획은 다시 써서 새 판으로 쌓인다(앞 판은 이력에)**', ['세계관', '상세 플롯', '회차 계획'].every((t) => by(t).versions.length === 2 && by(t).versions[1].body !== by(t).body)
+    && by('회차 계획').body === '회차 계획 고친 본문\n회차 수: 4');
+  ok('**회차 계획(다시 쓴 판)만 확정본이다**', by('회차 계획').isFinal && st.docs.filter((d) => d.isFinal).length === 1);
+  // 참조 · 에이전트 · 요청사항 — 문서에 적혀 사람이 다시 생성해도 같은 꼴
+  const ids = (...ts) => ts.map((t) => by(t).id);
+  ok('자료 분석 — 자료를 참조하고 자료 분석가가 쓴다', by('자료 분석').refIds.includes(st.docs.find((d) => d.material).id) && by('자료 분석').agentIds.join() === 'seat:S02' && by('자료 분석').seatOff === true);
+  ok('세계관 — 자료 분석을 참조 · 세계 짓는이', by('세계관').refIds.join() === ids('자료 분석').join() && by('세계관').agentIds.join() === 'seat:N-WORLD');
+  ok('기획서 선정 — 자료 분석과 기획안 모두를 참조 · 합평하는 눈과 도식 짓는이가 함께', ids('자료 분석', '기획안 1 — 자료 충실', '기획안 2 — 장르 독자', '기획안 3 — 인물 내면').every((x) => by('기획서 선정').refIds.includes(x))
+    && by('기획서 선정').agentIds.join() === 'seat:F-REVIEW,seat:N-PLAN');
+  ok('**세계관 다시 쓰기에는 고른 기획안(2)과 선정 문서가 이번 한 번만 실린다**', seenS.some((x) => x.prompt.includes('선정된 «기획안 2»') && x.prompt.includes('기획안 2 — 장르 독자') && x.prompt.includes('기획서 선정'))
+    && !by('세계관').refIds.includes(by('기획안 2 — 장르 독자').id));
+  ok('인물 풀 · 대략 플롯은 고른 기획안을 참조한다(고르지 않은 것은 아니다)', ['인물 풀', '대략 플롯'].every((t) => by(t).refIds.includes(by('기획안 2 — 장르 독자').id) && !by(t).refIds.includes(by('기획안 1 — 자료 충실').id)));
+  ok('**주요 인물마다 인물 설계 — 소개 · 아크 · 보이스 · 대화 스타일을 요청한다**', ['서린', '도윤'].every((n) => /캐릭터 아크/.test(by('인물 설계 — ' + n).request) && /보이스/.test(by('인물 설계 — ' + n).request) && /대화 스타일/.test(by('인물 설계 — ' + n).request)));
+  const rv = by('상세 플롯 합평');
+  ok('**상세 플롯 합평 — 합평회 문서(대상 상세 플롯 · 세 사람이 따로 말하고 모은다)**', rv.kind === 'review' && rv.targetIds.join() === by('상세 플롯').id && rv.agentIds.length === 3 && rv.seatOff
+    && seenS.filter((x) => x.key === 'F-MERGE').length >= 2);
+  ok('상세 플롯 다시 쓰기에 합평이 실린다', seenS.some((x) => x.prompt.includes('«상세 플롯 합평»의 지적을 반영') && x.prompt.includes('상세 플롯 합평')));
+  const labels = st.rail.steps.map((x) => x.label);
+  const at = (l) => labels.indexOf(l);
+  ok('**회차마다 집필 계획 → 세부 차례로**', at('1화 집필 계획 생성') < at('1화 집필 계획 세부 생성') && at('1화 집필 계획 세부 생성') < at('2화 집필 계획 생성') && at('2화 집필 계획 세부 생성') < at('모순 검사 — 1화~2화 생성')
+    && at('모순 검사 — 1화~2화 생성') < at('3화 집필 계획 생성'), labels.join(' / '));
+  const ck = by('모순 검사 — 1화~2화');
+  ok('**모순 검사 — 회차 계획(확정본)과 그 주기의 계획 · 세부를 맞대어 본다**', ck.kind === 'check' && ids('회차 계획', '1화 집필 계획', '1화 집필 계획 세부', '2화 집필 계획', '2화 집필 계획 세부').every((x) => ck.targetIds.includes(x)));
+  ok('**모순이 있으면 그 주기를 다시 쓰고(검사 문서를 참조해) 다시 검사한다**', at('1화 집필 계획 다시 씀(모순 검사 1)') > at('모순 검사 — 1화~2화 생성') && at('2화 집필 계획 세부 다시 씀(모순 검사 1)') > 0
+    && at('모순 검사 — 1화~2화 (재검사 1) 생성') > at('2화 집필 계획 세부 다시 씀(모순 검사 1)') && by('1화 집필 계획').versions.length === 2 && by('3화 집필 계획').versions.length === 1
+    && seenS.some((x) => x.prompt.includes('가 짚은 모순과 차이') && x.prompt.includes('모순 검사 — 1화~2화')));
+  ok('2화부터는 앞 화의 집필 계획 세부를 참조한다', by('2화 집필 계획').refIds.includes(by('1화 집필 계획 세부').id) && by('2화 집필 계획 세부').agentIds.join() === 'seat:N-SCENE,seat:N-WRITE');
+  // 자동 실행 요청사항(사용자 지시 2026-10-13 — 시작하기 전에 적는다)
+  const railCalls = seenS.slice(fromS);
+  const tagged = railCalls.filter((x) => x.prompt.includes('자동 실행 요청사항(모든 걸음에 걸린다): 주인공은 끝까지 비밀을 말하지 않는다'));
+  ok('**자동 실행 요청사항이 모든 걸음(합평의 사람마다 · 모으기 · 모순 검사까지)에 실린다 · 문서에는 남지 않는다**', tagged.length === railCalls.length && railCalls.length > 30
+    && st.docs.every((d) => !String(d.request || '').includes('비밀을 말하지')), tagged.length + ' / ' + railCalls.length);
+  ok('진행 표 — 큰 걸음이 모두 끝남', st.rail.progress.length >= 17 && st.rail.progress.every((x) => x.state === 'done'), JSON.stringify(st.rail.progress.filter((x) => x.state !== 'done')));
+  const railM = await import('./rail.mjs');
+  ok('**첫 화면 목록에 끝났다는 알림이 실린다**', JSON.stringify(railM.notice(sp.pid)) === JSON.stringify({ at: st.rail.noticeAt, status: 'done', why: '' }) && !railM.waiting(sp.pid));
+  // 되돌리기 — 회차 계획 다시 쓰기부터: 확정본이 풀리고 · 그 뒤 문서는 휴지통으로 · 셈도 그 자리로
+  await post('rail.rollback', { pid: sp.pid, step: st.rail.steps.find((x) => x.label.startsWith('회차 계획 다시 씀')).id });
+  st = (await stateOf(sp.pid)).project;
+  ok('**되돌리기 — 회차 계획 다시 쓰기부터: 앞 판으로 · 확정본 풀림 · 회차별 문서는 휴지통으로**', !by('회차 계획').isFinal && by('회차 계획').body === '회차 계획 본문\n회차 수: 4' && !by('1화 집필 계획') && st.trash.some((e) => e.title === '1화 집필 계획')
+    && st.rail.status === 'stopped' && !!by('회차 계획 합평'));
+  // 맨 처음까지 되돌리면 분량도 비운다
+  await post('rail.rollback', { pid: sp.pid, step: st.rail.steps[0].id });
+  st = (await stateOf(sp.pid)).project;
+  ok('맨 처음까지 되돌리면 자동 실행이 쓴 문서는 모두 휴지통으로 · 채운 분량도 비운다', !by('자료 분석') && !by('세계관') && !String(st.spec.length || '') && st.rail.steps.length === 0);
+  // 선정 줄을 못 읽으면 멈추고 알린다 — 사람이 그 줄을 적고 이어 하면 잇는다
+  selectSay = '견줌만 했다';
+  await post('rail.start', { pid: sp.pid, mode: 'auto' });
+  st = await storySettle(sp.pid);
+  ok('**선정 줄을 못 읽으면 멈춘다(사람을 부른다)**', st.rail.status === 'waiting' && /선정: 기획안 N/.test(st.rail.why) && st.rail.noticeAt > 0 && railM.notice(sp.pid).status === 'waiting');
+  await post('doc.write', { pid: sp.pid, id: by('기획서 선정').id, body: '사람이 고름\n선정: 기획안 3' });
+  selectSay = '견줌\n선정: 기획안 2';
+  await post('rail.resume', { pid: sp.pid });
+  st = await storySettle(sp.pid);
+  ok('사람이 적은 선정을 따라 잇는다', st.rail.status === 'done' && by('인물 풀').refIds.includes(by('기획안 3 — 인물 내면').id));
+  // 중지
+  await post('rail.start', { pid: sp.pid, mode: 'fresh' });
+  await post('rail.stop', { pid: sp.pid });
+  st = await storySettle(sp.pid);
+  ok('처음부터 다시 → 언제든 중지', st.rail.status === 'stopped' && st.rail.steps.length <= 1);
+  await post('project.delete', { pid: sp.pid });
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+
+  // 화면 — 위쪽 바의 [자동 실행]이 이야기 작품에도 서고, 끝나면 한 번 알린다
+  const railJs = src(join(ROOT, 'web', 'rail.js'));
+  const appJs = src(join(ROOT, 'web', 'app.js'));
+  ok('**자동 실행 요청사항 — 시작하기 전에 적는 칸(전자책 · 이야기 모두) · 도는 동안은 설정에서 고친다**', (railJs.match(/railRequestBox\(\),/g) || []).length === 2
+    && railJs.includes("const request = typedVal('rail-request', railSettingsNow().request || '');") && (railJs.match(/railRequestEdit\(ro\)/g) || []).length === 2);
+  ok('**이야기 작품에도 [자동 실행] — 한 가지 진행 · 시작/이어 하기/처음부터 다시 · 진행 표 · 설정(상한 · 기획안 수 · 검사 주기 · 다시 쓰기)**', railJs.includes('if (railStory()) return storyRailPanel(close);')
+    && railJs.includes("return !S.me && !!S.project && !!S.project.workflow;") && ["text: '시작'", "text: '처음부터 다시'", "'기획안 수'", "'모순 검사 주기'", "'모순이 남으면 그 주기를 다시 쓰는 횟수'"].every((x) => railJs.includes(x)));
+  ok('**끝나거나 멈추면 한 번 알린다(본 시각은 이 브라우저에)**', appJs.includes('function railNotify()') && appJs.includes("'자동 실행이 끝났습니다'") && /S\.last = sig;\s*railNotify\(\);/.test(appJs)
+    && src(join(HERE, 'server.mjs')).includes('railNotice: rail.notice(x.id)'));
+}
+
+{
   const state = await import('./state.mjs');
   const jobsMod = await import('./jobs.mjs');
   const railMod = await import('./rail.mjs');
@@ -1962,7 +2091,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 이야기 작품에는 레일이 서지 않는다
   const story = await post('project.create', { name: '이야기 작품', spec: { form: '장편' }, materials: MAT });
   await settle(story.pid, 60000);
-  ok('이야기 작품에는 자동 실행이 없다', !(await post('rail.start', { pid: story.pid, mode: 'semi' })).ok && (await stateOf(story.pid)).project.rail === null);
+  // 이야기 작품에도 자동 실행이 선다(사용자 지시 2026-10-13 — DESIGN §5-2). 다만 반자동 · 완전 자동을 고르지 않는다(한 가지 진행)
+  ok('이야기 작품은 반자동 · 완전 자동을 고르지 않는다(한 가지 진행 — 시작하지 않는다)', !(await post('rail.start', { pid: story.pid, mode: 'semi' })).ok && (await stateOf(story.pid)).project.rail === null);
   ok('이야기 작품에는 포지션이 없다', !(await post('position.set', { pid: story.pid, position: 'E-JUDGE', agentIds: [] })).ok);
   await post('project.delete', { pid: story.pid });
 
@@ -2145,9 +2275,9 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const railJs = src(join(ROOT, 'web', 'rail.js'));
   const html = src(join(ROOT, 'web', 'index.html'));
   ok('레일 화면은 따로 실리고 app.js 보다 먼저 온다', html.indexOf('src="rail.js"') > 0 && html.indexOf('src="rail.js"') < html.indexOf('src="app.js"'));
-  ok('위쪽 바에 [자동 실행] — 개인판의 전자책 작품에서만 · 누르면 그 창', app.includes("        railButton(),\n        whoLine()),") && app.includes("t === 'rail' ? railPanel(close)")
-    && railJs.includes("return !S.me && !!S.project && !!S.project.workflow && S.project.workflow.template === 'ebook';") && railJs.includes("onclick: () => { S.open = { type: 'rail' }; render(); }"));
-  ok('단추가 상태를 말한다(자동 실행 중 · 승인 대기)', railJs.includes("st === 'running' ? '자동 실행 중' : st === 'waiting' ? '승인 대기' : '자동 실행'"));
+  ok('위쪽 바에 [자동 실행] — 개인판의 작품(전자책 · 이야기 — 2026-10-13 넓힘)에서 · 누르면 그 창', app.includes("        railButton(),\n        whoLine()),") && app.includes("t === 'rail' ? railPanel(close)")
+    && railJs.includes("return !S.me && !!S.project && !!S.project.workflow;") && railJs.includes("onclick: () => { S.open = { type: 'rail' }; render(); }"));
+  ok('단추가 상태를 말한다(자동 실행 중 · 승인 대기 — 이야기는 «자동 실행 멈춤»)', railJs.includes("st === 'running' ? '자동 실행 중' : st === 'waiting' ? (railStory() ? '자동 실행 멈춤' : '승인 대기') : '자동 실행'"));
   ok('창에서 반자동 · 완전 자동을 고른다', railJs.includes("text: '반자동', onclick: () => railStart('semi')") && railJs.includes("text: '완전 자동', onclick: () => railStart('auto')"));
   ok('언제든 [중지] — 도는 중 · 기다리는 중 모두', railJs.includes("const live = r && (r.status === 'running' || r.status === 'waiting');") && railJs.includes("text: '중지', onclick: () => railDo('rail.stop')"));
   ok('걸음마다 [여기로 되돌리기] — 묻고 되돌린다', railJs.includes("text: '여기로 되돌리기'") && railJs.includes("railDo('rail.rollback', { step: x.id })") && railJs.includes('직접 만들거나 들여온 문서는 그대로입니다'));

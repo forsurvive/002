@@ -14,7 +14,8 @@ const seatsOf = (seatOf, project) => (seatOf ? (code) => seatOf(project, code) :
 
 // 갱신 — 문서·모순 검사·합평회가 모두 이 길을 쓴다.
 // modelPick 은 작가가 «어느 모델로 모을지»를 고른 값(비어 있으면 평소대로).
-export async function runUpdate({ store, call, seatOf }, pid, docId, ctx, { modelPick = '' } = {}) {
+// requestOnce · extraRefIds 는 이번 한 번만 — 문서에 남기지 않는다(이야기 자동 실행이 «다시 쓰기»에 합평 · 모순 검사를 실어 보낸다, DESIGN §5-2).
+export async function runUpdate({ store, call, seatOf }, pid, docId, ctx, { modelPick = '', requestOnce = '', extraRefIds = [] } = {}) {
   const project = await store.get(pid);
   const d = project && model.findDoc(project, docId);
   if (!d) return { ok: false, error: '문서를 찾을 수 없습니다' };
@@ -23,12 +24,12 @@ export async function runUpdate({ store, call, seatOf }, pid, docId, ctx, { mode
   const targetIds = d.kind === 'doc'
     ? (d.body.trim() ? [d.id] : [])
     : (d.targetIds || []).slice();
-  const refIds = (d.refIds || []).filter((id) => id !== d.id);
+  const refIds = [...new Set([...(d.refIds || []), ...(Array.isArray(extraRefIds) ? extraRefIds : [])])].filter((id) => id !== d.id && model.findDoc(project, id));
   const agentIds = (d.agentIds || []).slice();
   // 자리 사람을 뗐으면(DESIGN §6-8) 걸린 사람만 쓴다 — 아무도 없으면 자리 사람이 쓴다(에이전트는 필수 항목이 아니다, 2026-10-13)
   const off = !!d.seatOff && model.agentsByIds(project, agentIds, seatsOf(seatOf, project)).length > 0;
   const common = {
-    pid, refIds, targetIds, request: d.request || '',
+    pid, refIds, targetIds, request: [d.request, requestOnce].filter((x) => String(x || '').trim()).join('\n\n'),
     finalFirst: d.kind === 'check', keepSeat: !off, dropSeat: off, modelPick,
     signal: ctx && ctx.signal,
   };

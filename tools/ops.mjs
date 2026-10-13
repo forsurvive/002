@@ -483,6 +483,7 @@ export function createOps(d) {
         categoryId: d.categoryId, request: d.request, refIds: d.refIds, targetIds: d.targetIds,
         agentIds: d.agentIds || [],
         seatOff: !!d.seatOff,
+        ...(d.material ? { material: true } : {}),   // 만들 때 넣은 자료(자동 실행의 시작 조건 — DESIGN §5-2)
         versions: (d.versions || []).map((v, i) => ({ i, at: v.at, title: v.title, body: v.body })),
         updatedAt: d.updatedAt,
       })),
@@ -510,7 +511,7 @@ export function createOps(d) {
       // 자료 분석 준비 — 자리마다 지었는가(DESIGN §6-7). 화면이 «자료 분석 준비» 칸에 «지음 · 짓는 중 · 기다림»을 그린다
       prep: { kind: (p.agents && p.agents.__kind) || '', seats: EDITABLE_CODES.map((code) => ({ code, label: SLOT_LABEL[code] || code, made: !!(p.agents && p.agents[code] && String(p.agents[code].craft || '').trim()), fallback: !!(p.agents && p.agents[code] && p.agents[code].fallback) })) },
       // 전자책 작품의 자동 실행(레일)과 포지션에 앉힌 사람(DESIGN §5-1) — 개인판만
-      rail: d.rail ? d.rail.view(p.rail) : null,
+      rail: d.rail ? d.rail.view(p.rail, p) : null,
       positions: p.positions || {},
       // 무엇으로 돈이 나가는가 — 화면에 반드시 보여 준다.
       // 「구독으로 돕니다」라고 말하면서 물려받은 ANTHROPIC_API_KEY 때문에 말없이 종량 과금되면
