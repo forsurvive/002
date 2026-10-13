@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveCliDetailed, childEnv, authStatus, installClaudeCode, INSTALL_URL } from './claude-cli.mjs';
-import { resolveCodex, codexLoggedIn, codexLogin } from './codex-cli.mjs';
+import { resolveCodex, codexLoggedIn, codexLogin, codexAccount } from './codex-cli.mjs';
 import { fetchClaude, codexIntoFolder } from './usb-build.mjs';
 import * as auth from './auth.mjs';
 
@@ -131,7 +131,12 @@ if (!before.loggedIn) {
   }
   line('  [LOGIN OK] Starting the app...');
   line();
+  before = after;
 }
+
+// 어느 계정으로 도는가 — 남의 PC 면 그 PC 주인의 로그인으로 돌 수 있다. 이메일만(ASCII) 한 줄(2026-10-13 «등록된 계정 보이게»)
+const acct = String((auth.read().mode === 'chatgpt' ? codexAccount() : viaGemini ? '' : before.account) || '').match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
+if (acct) { line('  Signed in   : ' + acct[0]); line(); }
 
 if (process.env.SE2_LAUNCH_CHECK_ONLY) {
   line('  [CHECK ONLY] Login OK. Server start skipped.');

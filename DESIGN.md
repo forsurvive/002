@@ -18,7 +18,7 @@
 - **ChatGPT 구독 · Gemini API 키**(2026-10-13): 설정 › 무엇으로 › [ChatGPT 구독] 이면 같은 한 자리(`engine.callModel`)에서 Codex CLI(`codex exec … -`)로, [Gemini API 키] 면 Gemini 어댑터(`ai/local-gemini.mjs`)로 간다.
   돌려주는 꼴 · 고삐 · 실패 갈래는 같다. ChatGPT 모델은 Codex 제 목록에서(`auth.models` — 맨 앞 «Codex 기본»), Gemini 모델은 카탈로그의 등급을 표시 이름으로 고른다. 고른 것 · Gemini 키는 `data/auth.json`(키는 화면에 내려 주지 않는다).
   화면의 갈래 이름: 그대로 · Claude 구독 · Claude API 키 · ChatGPT 구독 · Gemini API 키 · ChatGPT API 키(`ai/local-openai.mjs` — Gemini 와 한 본체 `ai/local-key.mjs`).
-  등록은 클릭과 붙여 넣기로 — 구독은 [로그인](실행기를 띄워 주소 · 코드만 잇는다, `tools/login.mjs`), API 키는 ① 페이지 열기 ② 붙여 넣기 ③ 저절로 알아보고 저장 · 확인(`tools/keytest.mjs`). ChatGPT 는 그 PC 에 로그인되어 있으면 자동 등록(`docs/PERSONAL_USB.md` §8-4). Codex 가 그 PC 에도 폴더에도 없으면 [ChatGPT 로그인]이 먼저 폴더(`tools/codex/`)로 받는다(§8-1). ChatGPT 로그인은 PC 마다. Gemini 는 구독 로그인을 쓰지 않는다(약관 — `docs/PERSONAL_USB.md` §8).
+  등록은 클릭과 붙여 넣기로 — 구독은 [로그인](실행기를 띄워 주소 · 코드만 잇는다, `tools/login.mjs`), API 키는 ① 페이지 열기 ② 붙여 넣기 ③ 저절로 알아보고 저장 · 확인(`tools/keytest.mjs`). ChatGPT 는 그 PC 에 로그인되어 있으면 자동 등록(`docs/PERSONAL_USB.md` §8-4). Codex 가 그 PC 에도 폴더에도 없으면 [ChatGPT 로그인]이 먼저 폴더(`tools/codex/`)로 받는다(§8-1). «등록됨» 옆과 검은 창에 어느 계정으로 도는지 보인다(실행기가 알려 주는 만큼 — 로그인 파일은 읽지 않는다, §8-4). ChatGPT 로그인은 PC 마다. Gemini 는 구독 로그인을 쓰지 않는다(약관 — `docs/PERSONAL_USB.md` §8).
 - `SE2_MOCK=1` 이면 호출 없이 가짜 응답(시험용).
 
 ### 파일

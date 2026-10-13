@@ -2430,6 +2430,16 @@ process.stdin.on('end', () => {
   ok('화면 — 받는 동안 그 단계를 보인다', src(join(ROOT, 'web', 'app.js')).includes("if (L.step) return h('div'"));
   const ls = await post('login.status');
   ok('로그인 상태를 묻는다(모의 — 실행기를 띄우지 않는다)', ls.ok && ls.claude === true && ls.chatgpt === false);
+  // 어느 계정으로 도는가 — 남의 PC 에서 그 사람의 로그인으로 도는 것을 알아보게(2026-10-13 «등록된 계정 보이게»)
+  const cc = await import('./claude-cli.mjs');
+  eq('Claude 계정 — 이메일 · 요금제', cc.accountOf('Login method: Claude Max account\nOrganization: a@b.com\'s Organization\nEmail: a@b.com\nAnthropic base URL: https://api.anthropic.com'), 'a@b.com · Claude Max');
+  eq('Claude 계정 — 적힌 것이 없으면 비운다', cc.accountOf('Not logged in'), '');
+  const cxa = await import('./codex-cli.mjs');
+  eq('ChatGPT 계정 — 이메일이 찍혀 있으면 그것', cxa.codexAccountOf('Logged in using ChatGPT (x@y.io)'), 'x@y.io');
+  eq('ChatGPT 계정 — 이메일이 없으면 비운다(로그인 파일은 읽지 않는다)', cxa.codexAccountOf('\nLogged in using ChatGPT\n'), '');
+  ok('상태에 계정 칸이 실린다(모의 — 비어 있다)', ls.claudeAccount === '' && ls.chatgptAccount === '');
+  ok('화면 — «등록됨» 옆에 계정', src(join(ROOT, 'web', 'app.js')).includes("good && who ? h('span', { class: 'when', text: who })") && src(join(ROOT, 'web', 'app.js')).includes('st && st.claudeAccount') && src(join(ROOT, 'web', 'app.js')).includes('st && st.chatgptAccount'));
+  ok('검은 창 — 어느 계정으로 도는지 한 줄', src(join(HERE, 'launch.mjs')).includes("line('  Signed in   : ' + acct[0])"));
   const st = await post('login.start', { who: 'chatgpt' });
   ok('화면에서 로그인을 시작한다', st.ok && st.login.who === 'chatgpt');
 

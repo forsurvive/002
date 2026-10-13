@@ -154,7 +154,17 @@ export function supportsNoPersist(cli) {
 
 export async function authStatus(cli) {
   const r = await runCli(cli, ['auth', 'status', '--text'], { timeoutMs: 60000 });
-  return { loggedIn: r.code === 0, detail: (r.out + r.err).trim() };
+  const detail = (r.out + r.err).trim();
+  return { loggedIn: r.code === 0, detail, account: r.code === 0 ? accountOf(detail) : '' };
+}
+
+// 어느 계정으로 로그인되어 있는가 — «Email: …» 와 «Login method: Claude Max account» 에서 «이메일 · Claude Max».
+// 남의 PC 에서 그 사람의 로그인으로 도는 것을 화면 · 검은 창에서 알아보게 한다(2026-10-13 사용자 지시 «등록된 계정 보이게»). 토큰은 나오지 않는 글이다.
+export function accountOf(detail) {
+  const field = (name) => ((String(detail || '').match(new RegExp('^\\s*' + name + ':\\s*(.+)$', 'mi')) || [])[1] || '').trim();
+  const email = field('Email');
+  const plan = field('Login method').replace(/\s+account$/i, '');
+  return [email, plan].filter(Boolean).join(' · ').slice(0, 160);
 }
 
 // Claude Code 가 없는 PC 에서 까는 길 — 받는 곳은 앤트로픽의 공식 자리 하나뿐이다.

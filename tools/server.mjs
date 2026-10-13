@@ -17,7 +17,7 @@ import { killAllCalls, lastLimit } from './call.mjs';
 import * as auth from './auth.mjs';
 import { createOps } from './ops.mjs';
 import { baseTemplate, templateKeyOf } from './workflow.mjs';
-import { codexModels, codexLoggedIn, forgetCodexLogin } from './codex-cli.mjs';
+import { codexModels, codexLoggedIn, forgetCodexLogin, codexAccount } from './codex-cli.mjs';
 import { authStatus, childEnv } from './claude-cli.mjs';
 import { createLogin } from './login.mjs';
 import { testKey, keyCompany, cleanKey } from './keytest.mjs';
@@ -81,11 +81,12 @@ function importProject(raw) {
 // ---- 화면에서 하는 로그인 · 키 등록(개인판 — docs/PERSONAL_USB.md §8-4)
 // 로그인되어 있는가 — Claude 는 실행기에 묻고(5초 기억), ChatGPT 는 Codex 에 묻는다. 모의 실행에서는 실행기를 띄우지 않는다
 const MOCK_RUN = process.env.SE2_MOCK === '1';
-let claudeSeen = { at: 0, ok: false };
+let claudeSeen = { at: 0, ok: false, account: '' };
 async function claudeLoggedIn() {
   if (MOCK_RUN) return true;
   if (Date.now() - claudeSeen.at < 5000) return claudeSeen.ok;
-  claudeSeen = { at: Date.now(), ok: (await authStatus(CLI)).loggedIn };
+  const st = await authStatus(CLI);
+  claudeSeen = { at: Date.now(), ok: st.loggedIn, account: st.account || '' };
   return claudeSeen.ok;
 }
 const chatgptLoggedIn = async () => (MOCK_RUN ? false : codexLoggedIn(CODEX.cli));
@@ -119,7 +120,8 @@ function codexHere() {
 }
 async function loginStatus() {
   const [claude, chatgpt] = await Promise.all([claudeLoggedIn(), chatgptLoggedIn()]);
-  return { login: login.view(), claude, chatgpt };
+  // 어느 계정으로 도는지도 함께 — 남의 PC 에서 그 사람의 로그인으로 도는 것을 알아보게(2026-10-13 «등록된 계정 보이게»)
+  return { login: login.view(), claude, chatgpt, claudeAccount: claude && !MOCK_RUN ? claudeSeen.account : '', chatgptAccount: chatgpt ? codexAccount() : '' };
 }
 // 붙여 넣은 키 — 앞머리로 회사를 알아보고 · 저장하고 · 값이 들지 않는 문으로 맞는지 본다. 키는 답에 싣지 않는다
 async function keySet(raw) {

@@ -986,14 +986,15 @@ async function loginStart(who) {
 const LOGIN_NAME = { claude: 'Claude', chatgpt: 'ChatGPT' };
 
 function accountLines(a, st) {
-  const item = (name, good, act) => h('div', { class: 'line', style: 'gap:8px' },
+  const item = (name, good, act, who = '') => h('div', { class: 'line', style: 'gap:8px' },
     h('span', { text: name }),
     h('span', { class: good ? 'notice good' : 'when', text: good ? '등록됨' : '등록 안 됨' }),
+    good && who ? h('span', { class: 'when', text: who }) : null,   // 어느 계정으로 도는가(구독) — 남의 PC 의 로그인을 알아보게
     act);
   const loginBtn = (who, good) => (good ? null : h('button', { class: 'btn-text', text: LOGIN_NAME[who] + ' 로그인', onclick: () => loginStart(who) }));
   return h('div', { style: 'margin-top:8px;display:flex;flex-direction:column;gap:2px' },
-    item('Claude 구독', !!(st && st.claude), st ? loginBtn('claude', st.claude) : null),
-    item('ChatGPT 구독', !!(st && st.chatgpt), st ? loginBtn('chatgpt', st.chatgpt) : null),
+    item('Claude 구독', !!(st && st.claude), st ? loginBtn('claude', st.claude) : null, st && st.claudeAccount),
+    item('ChatGPT 구독', !!(st && st.chatgpt), st ? loginBtn('chatgpt', st.chatgpt) : null, st && st.chatgptAccount),
     item('Claude API 키', !!a.hasKey, a.hasKey ? h('button', { class: 'btn-text red', text: '지우기', onclick: () => authWrite({ apiKey: '' }) }) : null),
     item('ChatGPT API 키', !!a.hasOpenaiKey, a.hasOpenaiKey ? h('button', { class: 'btn-text red', text: '지우기', onclick: () => authWrite({ openaiKey: '' }) }) : null),
     item('Gemini API 키', !!a.hasGeminiKey, a.hasGeminiKey ? h('button', { class: 'btn-text red', text: '지우기', onclick: () => authWrite({ geminiKey: '' }) }) : null));

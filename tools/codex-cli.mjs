@@ -73,25 +73,33 @@ export function readCodexEvents(text) {
 function run(cli, args, { timeoutMs = 30000, stdio = 'pipe' } = {}) {
   return new Promise((resolve) => {
     let p;
-    try { p = spawn(cli, args, { windowsHide: true, stdio }); } catch { return resolve({ code: -1, out: '' }); }
-    let out = '';
+    try { p = spawn(cli, args, { windowsHide: true, stdio }); } catch { return resolve({ code: -1, out: '', err: '' }); }
+    let out = '', err = '';
     if (p.stdout) { p.stdout.setEncoding('utf8'); p.stdout.on('data', (s) => { out += s; }); }
-    if (p.stderr) { p.stderr.setEncoding('utf8'); p.stderr.on('data', () => {}); }   // 경고는 읽지 않는다(stdout 만 결과)
+    if (p.stderr) { p.stderr.setEncoding('utf8'); p.stderr.on('data', (s) => { err = (err + s).slice(-4000); }); }   // 결과는 stdout — stderr 는 로그인 상태 글을 읽을 때만 쓴다
     const timer = setTimeout(() => { try { p.kill(); } catch {} }, timeoutMs);
-    p.on('error', () => { clearTimeout(timer); resolve({ code: -1, out }); });
-    p.on('close', (code) => { clearTimeout(timer); resolve({ code: code == null ? -1 : code, out }); });
+    p.on('error', () => { clearTimeout(timer); resolve({ code: -1, out, err }); });
+    p.on('close', (code) => { clearTimeout(timer); resolve({ code: code == null ? -1 : code, out, err }); });
   });
 }
 
 // 로그인되어 있는가 — 된 것은 5분 기억한다(호출마다 띄우지 않게). 안 된 것은 기억하지 않는다(그새 로그인할 수 있다).
 let okUntil = 0;
+let seenAccount = '';
 export async function codexLoggedIn(cli, { now = Date.now } = {}) {
   if (now() < okUntil) return true;
   const r = await run(cli, ['login', 'status']);
-  if (r.code === 0) okUntil = now() + 5 * 60 * 1000;
+  if (r.code === 0) { okUntil = now() + 5 * 60 * 1000; seenAccount = codexAccountOf(r.out + '\n' + r.err); }
+  else seenAccount = '';
   return r.code === 0;
 }
 export function forgetCodexLogin() { okUntil = 0; }
+// 어느 계정인가 — `codex login status` 가 찍은 글에 이메일이 있을 때만. 로그인 파일(토큰)은 읽지 않는다.
+// 0.162.1 은 «Logged in using ChatGPT» 만 찍고, `codex doctor --json` 도 계정을 가린다(2026-10-13 윈도우 실측) — 그래서 지금은 비어 있다
+export function codexAccountOf(text) {
+  return (String(text || '').match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/) || [])[0] || '';
+}
+export const codexAccount = () => (okUntil ? seenAccount : '');
 
 // 그 창에서 브라우저 로그인 — 실행기(launch.mjs)가 쓴다
 export function codexLogin(cli) {

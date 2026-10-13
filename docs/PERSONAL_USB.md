@@ -184,6 +184,10 @@ USB 에 `tools\claude\` 가 없으면(만들기 도구 없이 복사만 한 폴�
   키를 넣었다고 저절로 그 키로 돌리지 않는다 — 값이 키 주인에게 나가는 길이라 [이 키로 돌리기]를 한 번 더 누른다.
 - **ChatGPT API 키 길**(«ChatGPT API 키»): 온라인판과 같은 어댑터(`ai/openai.mjs`) · 모델은 카탈로그의 ChatGPT 세 등급을 표시 이름으로 · 같은 고삐(`ai/local-key.mjs` — Gemini 와 한 본체). 구독(Codex)과 달리 종량이다.
 - 새 문: `login.start` · `login.code` · `login.status` · `auth.key`(개인판만 — 온라인판은 «여기서는 할 수 없습니다»). 있는 문의 이름 · 응답 꼴은 그대로.
+- **등록된 계정 보이기**(사용자 지시, 2026-10-13 «등록된 계정 보이게» — 남의 PC 에 꽂으면 그 PC 주인의 로그인으로 묻지 않고 돌 수 있어서): «등록됨» 옆에 어느 계정인지 적는다(`login.status` 의 `claudeAccount` · `chatgptAccount`). 검은 창도 `Signed in : <이메일>` 한 줄.
+  Claude 는 `claude auth status --text` 의 «Email» · «Login method»(보기: «이메일 · Claude Max»). ChatGPT 는 `codex login status` 가 이메일을 찍을 때만 — 0.162.1 은 «Logged in using ChatGPT» 만 찍고 `codex doctor --json` 도 계정을 가려서 **지금은 비어 있다**.
+  이메일을 얻으려고 로그인 파일(`.codex\auth.json` — 토큰)을 열지는 않는다(§8-1 «로그인 정보는 읽지도 옮기지도 않는다»).
+- 윈도우 실측(2026-10-13, Codex 가 없던 PC): [ChatGPT 로그인] → `tools\codex\` 에 0.162.1 을 받고 → 브라우저 로그인 → «ChatGPT 구독 등록됨». 앞서 그 PC 에서는 «실행기를 띄우지 못했습니다»로 멎었다.
 
 ### 8-3. 옛 기록 — Gemini 를 멈추고 물었던 까닭
 - Gemini 는 Codex 처럼 Gemini CLI(`gemini -p`, `-o json`)를 띄울 수는 있다(조사로 확인). 그러나 **Google 계정 로그인(«Login with Google»)을 제3자 소프트웨어가 Gemini CLI 를 거쳐 쓰는 것을 Google 약관이 금하고, 실제 계정 정지 사례가 있다**(docs/OPEN_EDITION.md §1 · geminicli.com/docs/resources/tos-privacy — 검색 요약, 페이지를 직접 열지 못했다).
