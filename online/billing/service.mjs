@@ -173,6 +173,19 @@ export async function passActive(db, userId) {
   return !!(r && (r.op || r.free || r.paid));
 }
 
+// 평생 이용권 판의 구매 제안(첫 화면, §4-14) — 아직 평생 이용권이 없는 사람에게: 무료 체험이 언제까지인가 · 값(켜진 첫 결제 옵션).
+// 운영자 · 무료 이용 · 이미 산 사람은 null. 사는 것은 사람이 고른다(자동 결제 없음).
+export async function lifetimeOffer(db, userId) {
+  const r = (await db.query(
+    `SELECT u.is_platform_admin AS op, coalesce(c.free, false) AS free,
+            EXISTS (SELECT 1 FROM subscriptions s WHERE s.user_id = u.id AND s.kind = 'lifetime' AND s.paid_until > now()) AS owned,
+            (SELECT max(s.paid_until) FROM subscriptions s WHERE s.user_id = u.id AND s.provider = 'trial') AS trial_until,
+            (SELECT p.price FROM billing_plans p WHERE p.enabled AND p.kind = 'lifetime' ORDER BY p.sort_order, p.created_at LIMIT 1) AS price
+       FROM users u LEFT JOIN billing_customers c ON c.user_id = u.id WHERE u.id = $1`, [userId])).rows[0];
+  if (!r || r.op || r.free || r.owned) return null;
+  return { trialUntil: r.trial_until, price: r.price };
+}
+
 // 사람 하나의 이용권 — 줄 여럿(정기결제 · 손 연장 · 체험)을 한 줄로: 지금 쓸 수 있는가 · 대표 상태 · 기한.
 // 대표는 기한이 남은 줄 가운데 이용 중 > 해지 예정 > 결제 실패 > 해지됨 차례(같으면 기한이 늦은 것). 운영 화면의 SQL(STATUS_SQL)도 같은 차례다.
 export function summarize(rows, { free = false, operator = false, now = Date.now() } = {}) {

@@ -95,6 +95,7 @@ async function load() {
   S.loggedIn = m.ok === true;
   S.me = m.ok ? m : null;
   S.edition = (m.ok && m.edition) || 'school';
+  S.lifetime = !!(m.ok && m.billing === 'lifetime');   // 평생 이용권 판(SE_BILLING=lifetime, §4-14) — 이용권 · 운영 화면의 말을 고른다
   if (S.me && S.me.appName) document.title = document.title.replace('스토리 엔진', S.me.appName);
   S.orgs = {};
   const gb = S.me && GOOGLE_SAY[S.googleBack];
@@ -143,13 +144,14 @@ const kday = (t) => (t ? new Date(t).toLocaleDateString('sv-SE', { timeZone: 'As
 function passLine(v) {
   if (v.operator) return { good: true, text: '운영자 — 이용권 없이 씁니다' };
   if (v.free) return { good: true, text: '무료 이용(운영자가 준 계정)' };
+  if (v.active && v.lifetime) return { good: true, text: '평생 이용권 — 기한 없이 씁니다' };
   if (v.status === 'active') {
     if (v.provider === 'groble') return { good: true, text: '이용 중' + (v.nextBillingDate ? ' — 다음 결제일 ' + v.nextBillingDate : '') };
     return { good: true, text: (v.provider === 'trial' ? '무료 체험 — ' : '이용 중 — ') + kday(v.paidUntil) + '까지' };
   }
   if (v.status === 'cancel_pending') return { good: true, text: '해지 예정 — ' + kday(v.serviceEndsAt) + '까지 쓰고 그 뒤 끝납니다' };
   if (v.status === 'past_due') return { good: false, text: '결제가 실패했어요 — 카드를 확인해 주세요(그로블). ' + kday(v.paidUntil) + '까지는 그대로 씁니다' + (v.finalFailure ? ' · 마지막 재시도도 실패했습니다' : '') };
-  if (v.status === 'ended') return { good: v.active, text: v.active ? '해지됨 — ' + kday(v.paidUntil) + '까지 씁니다' : '이용권이 끝났습니다' };
+  if (v.status === 'ended') return { good: v.active, text: v.active ? '해지됨 — ' + kday(v.paidUntil) + '까지 씁니다' : S.lifetime ? '무료 체험 · 이용권이 끝났습니다 — 새 AI 작업은 평생 이용권으로' : '이용권이 끝났습니다' };
   return { good: false, text: '이용권이 없습니다' };
 }
 function passBox() {
@@ -158,7 +160,8 @@ function passBox() {
   if (S.paidPoll) setTimeout(pollPaid, 0);
   const line = passLine(v);
   // 이미 그로블 정기결제로 쓰는 중이면 [결제하기]를 세우지 않는다(두 번 결제하지 않게). 결제 실패는 카드를 고치면 그로블이 다시 시도한다.
-  const canPay = !v.operator && !v.free && !(v.status === 'active' && v.provider === 'groble') && !(v.status === 'past_due' && !v.finalFailure);
+  // 평생 이용권 판은 이미 산 사람에게만 세우지 않는다(체험 중에도 고를 수 있다 — 자동 결제는 없다)
+  const canPay = !v.operator && !v.free && (S.lifetime ? !(v.active && v.lifetime) : !(v.status === 'active' && v.provider === 'groble') && !(v.status === 'past_due' && !v.finalFailure));
   const pay = async (plan) => {
     // 새 탭은 누른 그 순간에 연다(기다린 뒤에 열면 팝업 막기에 걸린다) — 링크를 받으면 그 탭을 결제창으로
     const w = window.open('about:blank', '_blank');
@@ -174,11 +177,11 @@ function passBox() {
   const ask = (kind) => () => { S.open.quit = kind; S.quitWhy = ''; S.quitDetail = ''; render(); };
   const refundLine = !rf ? null
     : rf.reason === 'ok' ? (S.open.quit === 'refund' ? quitForm('refund', v) : h('div', { class: 'line', style: 'margin-top:10px;align-items:center' },
-      h('span', { class: 'when', text: '환불 가능 — ' + rf.until + '까지(구독 시작 ' + rf.startedOn + (rf.noUse ? ' · AI 작업을 하기 전까지' : '') + ')' }),
+      h('span', { class: 'when', text: '환불 가능 — ' + rf.until + '까지(' + (S.lifetime ? '구매 ' : '구독 시작 ') + rf.startedOn + (rf.noUse ? ' · AI 작업을 하기 전까지' : '') + ')' }),
       h('button', { class: 'btn-text', text: '환불 요청', onclick: ask('refund') })))
-    : rf.reason === 'requested' ? h('div', { class: 'notice', style: 'margin-top:10px', text: '환불 요청됨(' + kday(rf.request.createdAt) + ') — 운영자가 확인한 뒤 결제 취소와 정기결제 해지를 함께 처리합니다' })
-    : rf.reason === 'refunded' ? h('div', { class: 'when', style: 'margin-top:10px', text: '환불됐습니다' + (rf.request && !rf.request.cancelled ? ' — 정기결제 해지를 처리하는 중입니다' : '') })
-    : rf.reason === 'ai_used' ? h('div', { class: 'when', style: 'margin-top:10px', text: '구독 시작 뒤 AI 작업을 해서 환불 대상이 아닙니다(환불은 구독 시작 후 ' + rf.days + '일 안, AI 작업 전까지)' })
+    : rf.reason === 'requested' ? h('div', { class: 'notice', style: 'margin-top:10px', text: '환불 요청됨(' + kday(rf.request.createdAt) + ') — 운영자가 확인한 뒤 ' + (S.lifetime ? '결제를 취소합니다' : '결제 취소와 정기결제 해지를 함께 처리합니다') })
+    : rf.reason === 'refunded' ? h('div', { class: 'when', style: 'margin-top:10px', text: '환불됐습니다' + (!S.lifetime && rf.request && !rf.request.cancelled ? ' — 정기결제 해지를 처리하는 중입니다' : '') })
+    : rf.reason === 'ai_used' ? h('div', { class: 'when', style: 'margin-top:10px', text: (S.lifetime ? '구매' : '구독 시작') + ' 뒤 AI 작업을 해서 환불 대상이 아닙니다(환불은 ' + (S.lifetime ? '구매' : '구독 시작') + ' 후 ' + rf.days + '일 안, AI 작업 전까지)' })
     : null;
   const cancelLine = cn.request ? h('div', { class: cn.request.charged ? 'notice' : 'when', style: 'margin-top:10px', text: cn.request.charged
       ? '구독 취소를 접수한 뒤 결제가 되었습니다 — 운영자가 확인해 처리합니다'
@@ -190,10 +193,17 @@ function passBox() {
   return section('이용권',
     h('div', { class: 'notice' + (line.good ? ' good' : ''), text: line.text }),
     refundLine, cancelLine,
-    canPay && v.plans.length ? h('div', { class: 'line', style: 'margin-top:10px' },
+    // 평생 이용권 판 — «평생 이용권 99,000원 [구매하기]»: 값을 보이고 사람이 고른다(한 번 결제 · 자동으로 다시 청구되지 않는다)
+    canPay && v.plans.length && S.lifetime ? h('div', { class: 'line', style: 'margin-top:10px' },
+      v.plans.map((p) => h('div', { class: 'line', style: 'align-items:center' },
+        h('span', { class: 'name', text: p.name + (p.price ? ' ' + won(p.price) : '') }),
+        h('button', { class: 'btn-red', text: '구매하기', onclick: () => pay(p) })))) : null,
+    canPay && v.plans.length && !S.lifetime ? h('div', { class: 'line', style: 'margin-top:10px' },
       v.plans.map((p) => h('button', { class: 'btn-red', text: (v.status === 'cancel_pending' ? '다시 결제하기 — ' : '결제하기 — ') + p.name, onclick: () => pay(p) }))) : null,
     canPay && !v.plans.length ? h('div', { class: 'when', style: 'margin-top:8px', text: '아직 결제를 열지 않았습니다 — 운영자에게 문의해 주세요' }) : null,
-    v.operator ? null : h('div', { class: 'when', style: 'margin-top:8px', text: '새 AI 작업은 이용권이 있을 때만 됩니다. 편집 · 열람 · 내보내기는 늘 됩니다. 카드 바꾸기는 그로블에서 합니다.' }));
+    v.operator ? null : h('div', { class: 'when', style: 'margin-top:8px', text: S.lifetime
+      ? '새 AI 작업은 무료 체험 · 평생 이용권이 있을 때만 됩니다. 편집 · 열람 · 내보내기는 늘 됩니다. 평생 이용권은 한 번 결제하고 다시 청구되지 않습니다.'
+      : '새 AI 작업은 이용권이 있을 때만 됩니다. 편집 · 열람 · 내보내기는 늘 됩니다. 카드 바꾸기는 그로블에서 합니다.' }));
 }
 
 // 이유 묻는 칸 — [환불 요청] · [구독 취소]를 누르면 먼저 연다. 고른 것 · 적은 말은 S 에 두어 다시 그려도 남는다.
@@ -202,13 +212,14 @@ function quitForm(kind, v) {
   const go = async () => {
     if (!S.quitWhy) return tell('이유를 하나 골라 주세요');
     if (S.quitWhy === 'other' && !String(S.quitDetail || '').trim()) return tell('«기타»를 고르면 이유를 적어 주세요');
-    if (refund && !confirm('환불을 요청할까요?\n\n이용권(새 AI 작업)이 바로 멈춥니다. 편집 · 열람 · 내보내기는 그대로입니다.\n운영자가 확인한 뒤 결제 취소와 정기결제 해지를 함께 처리합니다.')) return;
+    const after = S.lifetime ? '결제를 취소합니다' : '결제 취소와 정기결제 해지를 함께 처리합니다';
+    if (refund && !confirm('환불을 요청할까요?\n\n이용권(새 AI 작업)이 바로 멈춥니다. 편집 · 열람 · 내보내기는 그대로입니다.\n운영자가 확인한 뒤 ' + after + '.')) return;
     if (!refund && !confirm('구독을 취소할까요?\n\n지금 결제 기간이 끝날 때까지는 그대로 쓰고, 그 뒤로는 청구되지 않습니다.')) return;
     const r = await edu(refund ? 'me.pass.refund' : 'me.pass.cancel', { reason: S.quitWhy, detail: S.quitDetail || '' });
     if (!r.ok) return tell(r.error);
     S.pass = r.pass; S.open.quit = ''; S.quitWhy = ''; S.quitDetail = '';
     const nb = r.pass.cancel && r.pass.cancel.request ? r.pass.cancel.request.nextBilling : '';
-    done(refund ? '환불을 요청했습니다 — 운영자가 확인한 뒤 결제 취소와 정기결제 해지를 함께 처리합니다'
+    done(refund ? '환불을 요청했습니다 — 운영자가 확인한 뒤 ' + after
       : '구독 취소를 접수했습니다 — ' + (nb ? nb + '까지 쓰고, ' : '') + '그 뒤로는 청구되지 않습니다');
   };
   return h('div', { class: 'card-box', style: 'margin-top:10px' },
@@ -1064,7 +1075,7 @@ function deleteBox() {
   const close = () => h('button', { class: 'btn-text', text: '닫기', onclick: () => { S.open[k] = false; render(); } });
   if (!S.open[k]) return section('계정 지우기', h('button', { class: 'btn-text red', text: '계정 지우기', onclick: () => { S.open[k] = true; render(); } }));
   const v = S.pass || {};
-  const live = v.provider === 'groble' && ['active', 'past_due'].includes(v.status);
+  const live = v.provider === 'groble' && !v.lifetime && ['active', 'past_due'].includes(v.status);   // 다시 청구될 정기결제(평생 이용권은 아니다)
   const g = S.me.google || {};
   const go = async () => {
     if (!confirm('계정을 지울까요?\n\n작품 · 문서 · AI 키가 모두 지워지고 되돌릴 수 없습니다.' + (live ? '\n구독은 저절로 취소 접수됩니다.' : ''))) return;
@@ -1188,6 +1199,7 @@ function wfEditor(orgId) {
 S.bill = { cust: { q: '', status: '', list: null, total: 0, open: '', detail: null }, events: null, health: null, plans: null, rules: null };
 const PASS_SAY = { active: '이용 중', past_due: '결제 실패', cancel_pending: '해지 예정', ended: '끝남', none: '없음', free: '무료 이용' };
 const PROV_SAY = { groble: '정기결제', manual: '운영자 연장', trial: '무료 체험' };
+const provSay = (s) => (s.lifetime ? '평생 이용권' : PROV_SAY[s.provider] || s.provider);
 const TYPE_SAY = {
   'subscription_payment.completed': '정기결제 결제', 'subscription_payment.failed': '갱신 실패', 'subscription.cancel_requested': '해지 예고', 'subscription.terminated': '해지 완료',
   'subscription_payment.refunded': '회차 환불', 'payment.completed': '단건 결제', 'payment.cancel_requested': '단건 취소 요청', 'payment.refunded': '단건 환불',
@@ -1213,10 +1225,11 @@ function refundRow(r, after) {
       h('span', { class: 'mark', style: r.status === 'open' ? 'color:var(--red)' : '', text: REFUND_SAY[r.status] || r.status }),
       h('span', { class: 'mark', text: r.source === 'groble' ? '그로블에서 먼저' : '사용자 요청' }),
       h('div', { class: 'when', text: when(r.createdAt) })),
-    h('div', { class: 'when', style: 'white-space:normal', text: '결제 ' + day(r.paidAt) + ' · 기한 ' + r.until + '까지 · 구독 시작 뒤 AI 작업 ' + r.aiRuns + '회 · ' + (r.inPolicy ? '규정 안' : '규정 밖') }),
+    h('div', { class: 'when', style: 'white-space:normal', text: (r.lifetime ? '평생 이용권 · ' : '') + '결제 ' + day(r.paidAt) + ' · 기한 ' + r.until + '까지 · ' + (r.lifetime ? '구매' : '구독 시작') + ' 뒤 AI 작업 ' + r.aiRuns + '회 · ' + (r.inPolicy ? '규정 안' : '규정 밖') }),
     r.reasonSay ? h('div', { class: 'when', style: 'white-space:normal', text: '이유: ' + r.reasonSay + (r.detail ? ' — ' + r.detail : '') }) : null,
     r.source === 'user' ? mailMark('refund', r, after) : null,
-    h('div', { class: 'line', style: 'margin-top:4px' }, [['① 그로블 환불', r.refundedAt], ['② 그로블 정기결제 해지', r.cancelledAt]].map(([n, at]) =>
+    // 평생 이용권(§4-14)은 끊을 정기결제가 없다 — 할 일은 환불 하나
+    h('div', { class: 'line', style: 'margin-top:4px' }, (r.lifetime ? [['① 그로블 환불', r.refundedAt]] : [['① 그로블 환불', r.refundedAt], ['② 그로블 정기결제 해지', r.cancelledAt]]).map(([n, at]) =>
       h('span', { class: 'mark', style: at ? '' : 'color:var(--red)', text: n + (at ? ' — 됨' : ' — 아직') }))),
     r.status === 'open' && r.refundedAt && !r.cancelledAt ? h('div', { class: 'notice', style: 'margin-top:6px', text: '환불은 됐는데 정기결제가 살아 있습니다 — 그로블에서 해지하지 않으면 다음 결제일에 다시 청구됩니다' }) : null,
     r.status === 'open' ? h('div', { class: 'line', style: 'margin-top:6px;align-items:center' },
@@ -1316,12 +1329,12 @@ function customerDetail(d) {
     h('div', { class: 'when', text: '가입 ' + day(u.createdAt) + (u.lastLoginAt ? ' · 마지막 로그인 ' + day(u.lastLoginAt) : '')
       + (u.google ? ' · 구글 로그인(' + u.google.email + ')' : '') + (u.noPassword ? ' · 비밀번호 없음(정하려면 재설정 코드)' : '') }),
     h('div', { class: 'lab', text: '이용권' }),
-    h('div', { class: 'notice' + (p.active ? ' good' : ''), text: (p.operator ? '운영자 — 이용권 없이' : p.free ? '무료 이용' : PASS_SAY[p.status] || p.status)
-      + (p.paidUntil && !p.free && !p.operator ? ' · 기한 ' + when(p.paidUntil) : '') + (p.nextBillingDate ? ' · 다음 결제일 ' + p.nextBillingDate : '') + (p.serviceEndsAt ? ' · ' + when(p.serviceEndsAt) + ' 해지' : '') }),
+    h('div', { class: 'notice' + (p.active ? ' good' : ''), text: (p.operator ? '운영자 — 이용권 없이' : p.free ? '무료 이용' : p.lifetime ? '평생 이용권' : PASS_SAY[p.status] || p.status)
+      + (p.paidUntil && !p.free && !p.operator && !p.lifetime ? ' · 기한 ' + when(p.paidUntil) : '') + (p.nextBillingDate ? ' · 다음 결제일 ' + p.nextBillingDate : '') + (p.serviceEndsAt ? ' · ' + when(p.serviceEndsAt) + ' 해지' : '') }),
     d.subscriptions.length ? d.subscriptions.map((s) => h('div', { class: 'row', style: 'cursor:default' },
-      h('div', { class: 'name', text: (PROV_SAY[s.provider] || s.provider) + (s.plan ? ' · ' + s.plan : '') + (s.ref ? ' · 참조 ' + s.ref : '') }),
+      h('div', { class: 'name', text: provSay(s) + (s.plan ? ' · ' + s.plan : '') + (s.ref ? ' · 참조 ' + s.ref : '') }),
       h('span', { class: 'mark', text: PASS_SAY[s.status] || s.status }),
-      h('div', { class: 'when', text: (s.paidUntil ? '~ ' + when(s.paidUntil) : '') + (s.lastPaidAt ? ' · 마지막 결제 ' + day(s.lastPaidAt) + (s.lastAmount ? ' ' + won(s.lastAmount) : '') : '') }))) : h('div', { class: 'when', text: '이용권 기록이 없습니다' }),
+      h('div', { class: 'when', text: (s.paidUntil ? (s.lifetime && s.status === 'active' ? '기한 없음' : '~ ' + when(s.paidUntil)) : '') + (s.lastPaidAt ? ' · 마지막 결제 ' + day(s.lastPaidAt) + (s.lastAmount ? ' ' + won(s.lastAmount) : '') : '') }))) : h('div', { class: 'when', text: '이용권 기록이 없습니다' }),
     h('div', { class: 'lab', text: '결제 기록(이름 · 전화 · 이메일은 가림)' }),
     d.events.length ? d.events.map((e) => h('div', { class: 'row', style: 'cursor:default' },
       h('div', { class: 'name', text: (TYPE_SAY[e.type] || e.type || '?') + (e.amount ? ' · ' + won(e.amount) : '') + ' · ' + (RESULT_SAY[e.result] || e.result) }),
@@ -1436,14 +1449,16 @@ function eventsTab() {
       lastAgo != null && lastAgo > 3 && !H.overdue ? h('div', { class: 'when', text: '사흘 넘게 받은 웹훅이 없습니다 — 그로블은 20건 연속 실패 + 3일이면 엔드포인트를 끕니다' }) : null,
       H.refundsUncancelled ? h('div', { class: 'notice', text: '환불은 됐는데 그로블 정기결제가 살아 있는 건 ' + H.refundsUncancelled + '건 — 그로블에서 해지하지 않으면 다음 결제일에 다시 청구됩니다' }) : null,
       H.cancelsLate ? h('div', { class: 'notice', text: '다음 결제일이 지났는데 그로블 해지 확인이 없는 구독 취소 ' + H.cancelsLate + '건 — 다시 청구됐을 수 있습니다' }) : null,
-      H.mail && !H.mail.on ? h('div', { class: 'notice', text: '알림 메일 꺼짐 — 환불 요청 · 구독 취소가 메일로 오지 않습니다(Secrets 의 RESEND_API_KEY)' })
+      H.mail && !H.mail.on ? h('div', { class: 'notice', text: '알림 메일 꺼짐 — ' + (S.lifetime ? '환불 요청이' : '환불 요청 · 구독 취소가') + ' 메일로 오지 않습니다(Secrets 의 RESEND_API_KEY)' })
         : H.mail && !H.mail.to ? h('div', { class: 'notice', text: '알림 메일 주소가 없습니다 — [이용 규칙]에서 넣어 주세요' }) : null,
       H.mail && H.mail.failed ? h('div', { class: 'notice', text: '알림 메일을 보내지 못한 요청 ' + H.mail.failed + '건 — 아래 줄의 [메일 다시 보내기]' }) : null,
       h('div', { class: 'when', text: '이번 달 반영된 결제 ' + E.month.count + '건 · ' + won(E.month.total) })) : null,
-    h('div', { class: 'lab', text: '환불 — 처리 중 ' + (E.refunds || []).filter((r) => r.status === 'open').length + '건 · 할 일 둘(그로블에서 이 결제 환불 · 정기결제 해지)은 웹훅이 오면 저절로 «됨»' }),
+    h('div', { class: 'lab', text: '환불 — 처리 중 ' + (E.refunds || []).filter((r) => r.status === 'open').length + '건 · '
+      + (S.lifetime ? '할 일(그로블에서 이 결제 환불)은 웹훅이 오면 저절로 «됨»' : '할 일 둘(그로블에서 이 결제 환불 · 정기결제 해지)은 웹훅이 오면 저절로 «됨»') }),
     E.refunds && E.refunds.length ? E.refunds.map((r) => refundRow(r)) : h('div', { class: 'when', text: '없음' }),
-    h('div', { class: 'lab', style: 'margin-top:16px', text: '구독 취소 — 그로블 해지 대기 ' + (E.cancels || []).filter((x) => x.status === 'open').length + '건 · 그로블에서 해지하면 저절로 «해지 확인»(그 전까지 날마다 다시 알림)' }),
-    E.cancels && E.cancels.length ? E.cancels.map((x) => cancelRow(x)) : h('div', { class: 'when', text: '없음' }),
+    // 평생 이용권 판(§4-14)에는 구독 취소가 없다 — 옛 줄이 있을 때만 보인다
+    S.lifetime && !(E.cancels && E.cancels.length) ? null : h('div', { class: 'lab', style: 'margin-top:16px', text: '구독 취소 — 그로블 해지 대기 ' + (E.cancels || []).filter((x) => x.status === 'open').length + '건 · 그로블에서 해지하면 저절로 «해지 확인»(그 전까지 날마다 다시 알림)' }),
+    S.lifetime && !(E.cancels && E.cancels.length) ? null : E.cancels && E.cancels.length ? E.cancels.map((x) => cancelRow(x)) : h('div', { class: 'when', text: '없음' }),
     h('div', { class: 'lab', style: 'margin-top:16px', text: '확인 필요 ' + E.review.length + '건' }),
     // 구매자가 그로블에서 낸 취소(환불) 요청 — 승인 · 반려는 그로블에서, 여기서는 [처리함]으로 닫는다(닫기 전까지 날마다 다시 알림)
     E.review.length ? E.review.map((e) => eventRow(e, e.type === 'payment.cancel_requested'
@@ -1470,8 +1485,9 @@ function plansTab() {
   const P = S.bill.plans;
   if (!P) return h('div', { class: 'when', text: '불러오는 중…' });
   const save = async (body, say) => { const r = await edu('billing.plan.save', body); if (!r.ok) return tell(r.error); S.bill.plans = r.plans; S.open.planEdit = ''; S.open.planNew = false; done(say); };
-  const add = () => save({ name: val('pl-name'), checkoutUrl: val('pl-url'), price: Number(val('pl-price')), cycleMonths: Number(val('pl-months') || 1), productId: val('pl-product'), sortOrder: Number(val('pl-order') || 0) },
-    '결제 옵션을 넣었습니다 — 사용자의 «내 계정 → 이용권»에 [결제하기]가 섭니다');
+  // 평생 이용권 판(§4-14) — 넣는 줄은 그로블 단건 결제 상품(주기 없음)이고, 사용자 화면에는 [구매하기]로 선다
+  const add = () => save({ name: val('pl-name'), checkoutUrl: val('pl-url'), price: Number(val('pl-price')), ...(S.lifetime ? {} : { cycleMonths: Number(val('pl-months') || 1) }), productId: val('pl-product'), sortOrder: Number(val('pl-order') || 0) },
+    '결제 옵션을 넣었습니다 — 사용자의 «내 계정 → 이용권»에 ' + (S.lifetime ? '[구매하기]' : '[결제하기]') + '가 섭니다');
   // 그로블 쪽에 넣을 주소 셋 — 손으로 짓지 않게 이 사이트의 주소로 지어 [복사]로 건넨다(게시한 주소에서 열어야 그 주소가 나온다)
   const addr = (label, url, where) => h('div', { class: 'line', style: 'align-items:center' },
     h('span', { class: 'when', style: 'min-width:84px', text: label }),
@@ -1487,7 +1503,7 @@ function plansTab() {
     P.length ? P.map((p) => h('div', { style: 'padding:10px 0;border-bottom:1px solid var(--line-soft)' + (p.enabled ? '' : ';opacity:.6') },
       h('div', { class: 'line' },
         h('div', { class: 'name', style: 'flex:1;font-weight:600', text: p.name }),
-        h('span', { class: 'mark', text: won(p.price) + ' / ' + p.cycleMonths + '개월' }),
+        h('span', { class: 'mark', text: won(p.price) + (p.kind === 'lifetime' ? ' · 평생(단건 결제)' : ' / ' + p.cycleMonths + '개월') }),
         h('span', { class: 'mark', text: p.productId ? '상품 ' + p.productId : '상품 번호 없음(금액만 견줌)' }),
         h('button', { class: 'tg' + (p.enabled ? ' on' : ''), title: p.enabled ? '켜짐' : '꺼짐', onclick: () => save({ id: p.id, enabled: !p.enabled }, p.enabled ? '껐습니다 — 새 결제는 받지 않고, 이 상품을 쓰던 사람의 갱신은 계속 받습니다' : '켰습니다') }),
         h('button', { class: 'btn-text', text: S.open.planEdit === p.id ? '닫기' : '고치기', onclick: () => { S.open.planEdit = S.open.planEdit === p.id ? '' : p.id; render(); } })),
@@ -1499,14 +1515,15 @@ function plansTab() {
         field('차례', 'pe-order-' + p.id, 'text', { value: String(p.sortOrder) }),
         h('button', { class: 'btn-line', text: '저장', onclick: () => save({ id: p.id, name: val('pe-name-' + p.id), checkoutUrl: val('pe-url-' + p.id), sortOrder: Number(val('pe-order-' + p.id) || 0),
           ...($('pe-product-' + p.id) && val('pe-product-' + p.id) ? { productId: val('pe-product-' + p.id) } : {}) }, '고쳤습니다') })) : null))
-      : h('div', { class: 'when', text: '아직 결제 옵션이 없습니다 — 그로블에서 정기결제 상품(결제창)을 만든 뒤 여기에 넣으세요' }),
+      : h('div', { class: 'when', text: '아직 결제 옵션이 없습니다 — 그로블에서 ' + (S.lifetime ? '단건 결제 상품' : '정기결제 상품') + '(결제창)을 만든 뒤 여기에 넣으세요' }),
     S.open.planNew ? h('div', { class: 'card-box', style: 'margin-top:12px' },
-      h('div', { class: 'line', style: 'align-items:flex-end' }, field('이름(사용자에게 보임)', 'pl-name', 'text', { placeholder: '예: 월 이용권(5,000원)' }), field('그로블 결제창 링크', 'pl-url', 'text', { placeholder: 'https://…', spellcheck: 'false' })),
-      h('div', { class: 'line', style: 'align-items:flex-end;margin-top:8px' }, field('가격(원)', 'pl-price', 'text', { value: '5000' }), field('주기(개월)', 'pl-months', 'text', { value: '1' }),
+      h('div', { class: 'line', style: 'align-items:flex-end' }, field('이름(사용자에게 보임)', 'pl-name', 'text', { placeholder: S.lifetime ? '예: 평생 이용권' : '예: 월 이용권(5,000원)' }), field('그로블 결제창 링크', 'pl-url', 'text', { placeholder: 'https://…', spellcheck: 'false' })),
+      h('div', { class: 'line', style: 'align-items:flex-end;margin-top:8px' }, field('가격(원)', 'pl-price', 'text', { value: S.lifetime ? '99000' : '5000' }), S.lifetime ? null : field('주기(개월)', 'pl-months', 'text', { value: '1' }),
         field('상품 번호(선택 — 웹훅의 content.id)', 'pl-product', 'text', { spellcheck: 'false' }), field('차례', 'pl-order', 'text', { value: '0' })),
       h('div', { class: 'line', style: 'margin-top:10px' }, h('button', { class: 'btn-red', text: '넣기', onclick: add }), h('button', { class: 'btn-text', text: '취소', onclick: () => { S.open.planNew = false; render(); } })))
       : h('button', { class: 'btn', style: 'margin-top:12px', text: '+ 새 결제 옵션', onclick: () => { S.open.planNew = true; render(); } }),
-    h('div', { class: 'when', style: 'margin-top:10px', text: '가격을 바꾸려면 그로블에서 새 상품을 만들고 새 줄을 넣은 뒤 옛 줄을 끕니다(그로블 정기결제는 판매된 옵션을 고칠 수 없다). 옛 상품을 쓰던 사람의 갱신은 계속 받습니다.' }));
+    h('div', { class: 'when', style: 'margin-top:10px', text: S.lifetime ? '가격을 바꾸려면 그로블에서 새 단건 상품을 만들고 새 줄을 넣은 뒤 옛 줄을 끕니다. 이미 산 사람의 평생 이용권은 그대로입니다.'
+      : '가격을 바꾸려면 그로블에서 새 상품을 만들고 새 줄을 넣은 뒤 옛 줄을 끕니다(그로블 정기결제는 판매된 옵션을 고칠 수 없다). 옛 상품을 쓰던 사람의 갱신은 계속 받습니다.' }));
 }
 
 async function loadRules() {
@@ -1519,7 +1536,7 @@ function rulesTab() {
   const R = S.bill.rules;
   if (!R) return h('div', { class: 'when', text: '불러오는 중…' });
   const save = async () => {
-    const r = await edu('billing.rules.save', { trialDays: Number(val('ru-trial')), graceDays: Number(val('ru-grace')), refundDays: Number(val('ru-refund')) });
+    const r = await edu('billing.rules.save', { trialDays: Number(val('ru-trial')), ...($('ru-grace') ? { graceDays: Number(val('ru-grace')) } : {}), refundDays: Number(val('ru-refund')) });
     if (!r.ok) return tell(r.error);
     S.bill.rules = r.rules; done('이용 규칙을 저장했습니다 — 무료 체험은 이제부터 가입하는 사람에게, 여유는 다음 결제부터');
   };
@@ -1540,20 +1557,20 @@ function rulesTab() {
   };
   return h('div', null,
     h('div', { class: 'line', style: 'align-items:flex-end' },
-      field('가입 직후 무료 체험(일, 기본 0)', 'ru-trial', 'text', { value: String(R.trialDays) }),
-      field('결제 실패 · 해지 뒤 여유(일, 기본 10)', 'ru-grace', 'text', { value: String(R.graceDays) }),
-      field('환불 기간(구독 시작 후 일, 기본 7 · 0 이면 받지 않음)', 'ru-refund', 'text', { value: String(R.refundDays) }),
+      field('가입 직후 무료 체험(일, 기본 ' + (S.lifetime ? 3 : 2) + ')', 'ru-trial', 'text', { value: String(R.trialDays) }),
+      S.lifetime ? null : field('결제 실패 · 해지 뒤 여유(일, 기본 10)', 'ru-grace', 'text', { value: String(R.graceDays) }),
+      field('환불 기간(' + (S.lifetime ? '구매' : '구독 시작') + ' 후 일, 기본 7 · 0 이면 받지 않음)', 'ru-refund', 'text', { value: String(R.refundDays) }),
       h('button', { class: 'btn-red', text: '저장', onclick: save })),
-    toggleRow('환불은 구독 시작 뒤 AI 작업을 하기 전까지만', !!R.refundNoUse, flipNoUse, '기본: 끔 — AI 작업 수는 알림 메일에 실립니다. 그로블 상품 설명 · 약관의 환불 규정과 같게 둡니다'),
+    toggleRow('환불은 ' + (S.lifetime ? '구매' : '구독 시작') + ' 뒤 AI 작업을 하기 전까지만', !!R.refundNoUse, flipNoUse, '기본: 끔 — AI 작업 수는 알림 메일에 실립니다. 그로블 상품 설명 · 약관의 환불 규정과 같게 둡니다'),
     h('div', { class: 'card-box', style: 'margin-top:16px' },
-      h('div', { class: 'lab', text: '알림 메일 — 환불 요청 · 구독 취소가 오면 이 주소로' }),
+      h('div', { class: 'lab', text: '알림 메일 — 환불 요청' + (S.lifetime ? '' : ' · 구독 취소') + '가 오면 이 주소로' }),
       h('div', { class: R.mailOn ? 'when' : 'notice', text: R.mailOn ? '보내는 길 켜짐(Secrets 의 RESEND_API_KEY)' : '보내는 길 꺼짐 — Replit Secrets 에 RESEND_API_KEY 를 넣고 다시 게시하면 켜집니다' }),
       h('div', { class: 'line', style: 'align-items:flex-end' },
         field('받을 메일 주소', 'ru-mail', 'text', { value: R.notifyEmail || '', spellcheck: 'false', inputmode: 'email', autocapitalize: 'none' }),
         h('button', { class: 'btn-line', text: '저장', onclick: saveMail }),
         h('button', { class: 'btn-text', text: '시험 메일 보내기', onclick: testMail })),
       h('div', { class: 'when', text: 'Resend 에 가입한 이메일과 같은 주소로만 갑니다(도메인을 확인하기 전).' })),
-    h('div', { class: 'when', style: 'margin-top:8px', text: '여유 — 다음 결제일 뒤 이만큼 더 씁니다(그로블의 갱신 재시도 3일 + 유예 7일). 갱신 소식이 끝내 오지 않아도 저절로 끝납니다.' }),
+    S.lifetime ? null : h('div', { class: 'when', style: 'margin-top:8px', text: '여유 — 다음 결제일 뒤 이만큼 더 씁니다(그로블의 갱신 재시도 3일 + 유예 7일). 갱신 소식이 끝내 오지 않아도 저절로 끝납니다.' }),
     toggleRow('이용권이 끝났을 때 막는 것: 새 AI 작업만', true, null, '편집 · 열람 · 내보내기는 늘 됩니다 — 바꿀 수 없습니다(원칙: AI 실패 · 결제가 작품을 막지 않는다)'),
     googleCard());
 }

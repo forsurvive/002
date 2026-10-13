@@ -30,7 +30,7 @@ import { createTenancy, SAY } from './tenancy.mjs';
 import { createEdu } from './edu.mjs';
 import { editionOf, billingOf } from './edition.mjs';
 import { purposeOf, purposeName, purposeTemplate } from './purpose.mjs';
-import { createBilling, passActive, rulesOf } from './billing/service.mjs';
+import { createBilling, passActive, rulesOf, lifetimeOffer } from './billing/service.mjs';
 import { deleteAccount } from './account.mjs';
 import { googleConfig, freshStart, authorizeUrl, exchangeCode, readIdToken, loginIdFrom, STATE_MINUTES, CALLBACK_PATH } from './google.mjs';
 import { createWorkflowSource } from './workflow.mjs';
@@ -504,7 +504,8 @@ export function createOnlineServer({ pool, plan = onlinePlan(), trustProxy = fal
         // 자유 가입판 — 기관 · 수업이 없다. 관리 단추는 운영자에게만(운영 화면), 내 수업 · 수업 자리는 없다.
         if (edition === 'open') {
           // pass — 이용권이 살아 있는가(새 AI 작업이 되는가). 첫 화면이 «이용권 없음» 한 줄을 세울 근거(막는 것은 서버다)
-          return { ...me, edition, purpose, billing: billingMode, appName: purposeName(purpose), manage: !!user.isPlatformAdmin, platformAdmin: !!user.isPlatformAdmin, classes: 0, member: false, places: [], roles: user.isPlatformAdmin ? ['platform_admin'] : [], pass: await passActive(pool, user.id) };
+          return { ...me, edition, purpose, billing: billingMode, appName: purposeName(purpose), manage: !!user.isPlatformAdmin, platformAdmin: !!user.isPlatformAdmin, classes: 0, member: false, places: [], roles: user.isPlatformAdmin ? ['platform_admin'] : [], pass: await passActive(pool, user.id),
+            ...(billingMode === 'lifetime' ? { offer: await lifetimeOffer(pool, user.id) } : {}) };
         }
         const r = (await pool.query(
           `SELECT bool_or(role = 'organization_admin') AS org_admin, count(*)::int AS n FROM organization_members WHERE user_id = $1 AND status = 'active'`, [user.id])).rows[0];

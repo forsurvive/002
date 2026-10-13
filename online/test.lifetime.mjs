@@ -75,6 +75,10 @@ export async function run({ pool, ok, eq }) {
     const p0 = (await edu(newIn, 'me.pass')).pass;
     ok('**체험 중 — 평생 이용권 결제 옵션(이름 · 값)이 보인다 · 정기결제 옵션은 없다**', p0.active && p0.provider === 'trial' && p0.mode === 'lifetime' && p0.plans.length === 1
       && p0.plans[0].name === '평생 이용권' && p0.plans[0].price === 99000 && !p0.cancel.can, JSON.stringify(p0));
+    const meOf = async (cookie) => (await (await fetch(base + '/api/me', { headers: { cookie } })).json()).me;
+    const m0 = await meOf(newIn);
+    ok('**첫 화면 — 체험 중 구매 제안(체험 끝 · 값)**', m0.billing === 'lifetime' && m0.pass === true && m0.offer && m0.offer.price === 99000
+      && Math.abs(new Date(m0.offer.trialUntil) - new Date(nu.paid_until)) < 1000, JSON.stringify(m0));
     eq('**체험 한 번 규칙은 그대로 — 체험을 받은 브라우저로 또 가입하면 체험 없음**',
       (await (await fetch(base + '/api/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', cookie: 'se_trial=1' }, body: JSON.stringify({ loginId: 'lf-again', password: 'long-enough-lf-again' }) })).json()).trialUsed, true);
 
@@ -103,6 +107,8 @@ export async function run({ pool, ok, eq }) {
     ok('**payment.completed → 평생 이용권(기한 없음 · 다음 결제일 없음)**', row && row.kind === 'lifetime' && row.status === 'active' && new Date(row.paid_until).getTime() === LIFETIME_UNTIL.getTime()
       && row.next_billing_date === null && row.last_amount === 99000, JSON.stringify(row));
     ok('이용권이 산다', await passActive(pool, nu.id));
+    eq('**산 사람에게는 첫 화면 제안이 없다**', (await meOf(newIn)).offer, null);
+    eq('운영자에게도 없다', (await meOf(rootIn)).offer, null);
     const p2 = (await edu(newIn, 'me.pass')).pass;
     ok('**내 이용권 — 평생 · 구독 취소 없음 · 환불 가능(구매 후 7일)**', p2.active && p2.lifetime && p2.nextBillingDate === '' && !p2.cancel.can && p2.refund && p2.refund.eligible, JSON.stringify(p2));
     eq('**[구독 취소]는 서지 않는다(끊을 정기결제가 없다)**', (await edu(newIn, 'me.pass.cancel', { reason: 'price' })).code, 'none');

@@ -404,9 +404,11 @@ function projectList() {
     // 새 작품 «+» — 화면 한가운데(좁은 창에서도 잘리지 않게 줄을 따로 둔다)
     h('div', { class: 'new-row' }, h('button', { class: 'plus big', text: '+', title: W('새 작품'), onclick: newProjectOpen })),
     S.homeSay ? h('div', { class: 'new-row' }, h('div', { class: 'notice', text: S.homeSay })) : null,
-    // 자유 가입판 — 이용권이 없으면 새 AI 작업이 서지 않는다는 것만 한 줄로(편집 · 열람 · 내보내기는 된다)
-    S.me && S.me.edition === 'open' && S.me.pass === false ? h('div', { class: 'new-row' },
-      h('a', { class: 'notice', href: '/account.html', text: '이용권이 없어 새 AI 작업은 멈춰 있습니다 — 내 계정 → 이용권' })) : null,
+    // 자유 가입판 — 이용권이 없으면 새 AI 작업이 서지 않는다는 것만 한 줄로(편집 · 열람 · 내보내기는 된다).
+    // 평생 이용권 판(§4-14)은 무료 체험 중 · 끝난 뒤 구매를 제안한다 — 사는 것은 사람이 고른다(자동 결제 없음)
+    S.me && S.me.edition === 'open' && S.me.offer ? offerRow(S.me.offer, S.me.pass)
+      : S.me && S.me.edition === 'open' && S.me.pass === false ? h('div', { class: 'new-row' },
+        h('a', { class: 'notice', href: '/account.html', text: '이용권이 없어 새 AI 작업은 멈춰 있습니다 — 내 계정 → 이용권' })) : null,
     h('div', { class: 'cards' }, S.projects.map((p) => h('div', {
       class: 'card', onclick: () => { S.pid = p.id; S.tab = '작업실'; S.project = null; pull(true); },
     },
@@ -1816,3 +1818,14 @@ setInterval(() => {
   if (EV.ok && Date.now() - EV.lastPull < 15000) return;
   pull(false);
 }, 1500);
+
+// 평생 이용권 제안 한 줄(첫 화면) — 체험 중이면 남은 때, 끝났으면 «새 AI 작업은 평생 이용권으로». 값은 운영자가 넣은 결제 옵션에서.
+function offerRow(o, live) {
+  const day = o.trialUntil ? new Date(o.trialUntil).toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' }) : '';
+  const trial = live && o.trialUntil && new Date(o.trialUntil).getTime() > Date.now();
+  if (live && !trial) return null;   // 운영자가 연장해 준 기간 등 — 제안하지 않는다
+  const price = o.price ? ' ' + Number(o.price).toLocaleString('ko-KR') + '원' : '';
+  return h('div', { class: 'new-row' },
+    h('a', { class: 'notice' + (trial ? ' good' : ''), href: '/account.html',
+      text: (trial ? '무료 체험 중 — ' + day + '까지' : '무료 체험이 끝났습니다 — 새 AI 작업은 멈춰 있습니다(편집 · 열람 · 내보내기는 그대로)') + ' · 평생 이용권' + price + ' [구매하기]' }));
+}
