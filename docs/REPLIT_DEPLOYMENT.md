@@ -81,6 +81,7 @@ Replit 이 주는 것(문서 발췌): `REPLIT_DOMAINS`(앱의 모든 도메인, 
 `DATABASE_URL`(Replit 이 넣어 줌) · `SESSION_SECRET` · `CREDENTIALS_KEY_V1`(credential 암호화 마스터 키, 32바이트 base64) · `NODE_ENV`(`staging`/`production`) ·
 `SE_EDITION`(`school` 기본 — 교육기관판 · `open` — 자유 가입판, docs/OPEN_EDITION.md. 모르는 값은 `school`) ·
 `SE_PURPOSE`(`novel` 기본 — 지금 그대로 · `ebook` — 전자책 오토(전자책 집필만 하는 앱), docs/EBOOK_EDITION.md · §4-7. 모르는 값은 `novel`) ·
+`SE_BILLING`(자유 가입판만 — `subscription` 기본 · 월 정기결제 그대로 · `lifetime` — 평생 이용권(그로블 단건 결제 한 번), docs/OPEN_EDITION.md §4-14 · §4-8. 모르는 값은 `subscription`) ·
 `GROBLE_WEBHOOK_SECRET` · `GROBLE_WEBHOOK_SECRET_PREVIOUS`(자유 가입판만 — 그로블 웹훅 서명 시크릿, 교체하는 24시간만 옛 값도 · §4-4) ·
 `GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET`(자유 가입판만 — 구글 로그인, 둘 다 있을 때만 단추가 선다 · §4-5) ·
 `RESEND_API_KEY`(자유 가입판만 — 환불 요청 · 구독 취소를 운영자에게 알리는 메일, §4-6) · `MAIL_FROM`(선택 — Resend 에서 도메인을 확인한 뒤의 보내는 주소) ·
@@ -255,6 +256,22 @@ DB · AI 키 봉인 열쇠 · 구글 로그인(구글 클라우드 «ebook auto�
     걸음마다 [생성] → 읽기 → (이번 요청사항을 붙여 다시 생성 — 새 판) → [승인] 으로 끝까지 간다(완전 수동).
 
 **새 판 받기**는 다른 두 앱과 같다 — Shell `npm run update` → ▶ 를 누르기 전에 곧바로 다시 게시 → 확인 → ▶ (§4-4 맨 아래).
+
+## 4-8. 평생 이용권 앱 — 네 번째 앱(2026-10-13, docs/OPEN_EDITION.md §4-14)
+
+코드는 같다 — 같은 GitHub 브랜치를 **App 하나 더**로 띄우고 Secrets 에 `SE_BILLING=lifetime` 하나를 더한다. 지금 앱(정기결제)의 구독자 · DB 에 손대지 않는다.
+(지금 앱을 바꾸는 길도 있다 — 그 앱의 Secrets 에 `SE_BILLING=lifetime` 을 넣고 다시 게시. 다만 그 앱의 [구독 취소] 단추가 사라지므로 남은 정기결제는 운영자가 그로블에서 해지해야 한다 — 사람이 정한다, OPEN_EDITION §4-14.)
+
+1. **App 하나 더 · 데이터베이스**: §4-7 의 1 · 2 와 같다.
+2. **Secrets**: `SE_EDITION` = `open` · (전자책이면) `SE_PURPOSE` = `ebook` · **`SE_BILLING` = `lifetime`** · `CREDENTIALS_KEY_V1` = Shell 에서 `npm run key` 로 만든 44자(**다른 앱들과 다른 값**).
+3. ▶ 실행 → Console 에 `Billing : lifetime (one-time lifetime pass)` 가 찍히는지 → 처음 설정(운영자 계정) → 첫 게시(§4-7 의 5 와 같다).
+4. **그로블 상품** — **단건 결제** · 99,000원 · **결제창**으로. 진입 페이지 · 이동 페이지 · 웹훅 주소는 게시한 사이트의 관리 → 운영 → [결제 옵션] 위에 [복사]와 함께 있다(정기결제 앱과 같은 자리).
+   웹훅 이벤트는 단건 결제 셋(`payment.completed` · `payment.cancel_requested` · `payment.refunded`)이 꼭 켜져 있어야 한다(나머지를 켜 두어도 된다 — «확인 필요»로만 선다).
+   시크릿은 처음 한 번만 보인다 — 곧바로 이 앱의 Secrets `GROBLE_WEBHOOK_SECRET` 에(대화창에 붙여 넣지 않는다) → 다시 게시.
+5. 운영 → [결제 옵션] → [+ 새 결제 옵션] — 이름 «평생 이용권» · 그로블 결제창 링크 · 가격 99000 · (있으면) 상품 번호 → [넣기]. 이 앱에서 넣은 줄은 «평생(단건 결제)»로 보인다.
+6. 운영 → [이용 규칙] — 무료 체험 3(기본) · 환불 기간(사람이 정한 값) · 알림 메일(§4-6).
+7. **확인**: 로그아웃한 창에서 가입 → 첫 화면 «무료 체험 중 — ~까지 · 평생 이용권 99,000원 [구매하기]» → 내 계정 → [구매하기] → 그로블 결제창 주소에 `?ref=` 가 붙었는지 →
+   **시험 결제 한 번 + 환불 한 번** → 운영 → [결제 기록]에서 «단건 결제 · 반영»(사람이 이어졌는지) · «단건 환불» 줄을 본다. «연결 안 된 결제»로 서면 그로블 단건 결제창이 참조값을 돌려주지 않은 것 — 그 원문의 꼴을 알려 주면 어댑터를 맞춘다.
 
 ## 5. PostgreSQL (Phase 3 계획)
 

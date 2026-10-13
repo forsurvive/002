@@ -15,7 +15,7 @@
 | [REPLIT_DEPLOYMENT.md](REPLIT_DEPLOYMENT.md) | Replit 배포 구조 · 환경 변수 · Sprint 1 사용자 절차 · 비용 감 · 막힐 때 · 미확인 목록 |
 | [SECURITY.md](SECURITY.md) | 위협 모델 · 지금 있는 것 · 인증 · 권한 매트릭스 · credential 암호화 · **사람이 정할 정책** |
 | [TEST_PLAN.md](TEST_PLAN.md) | 시험 돌리는 법 · 규칙 · 지금 있는 것 · 단계별로 더할 시험 |
-| [OPEN_EDITION.md](OPEN_EDITION.md) | 자유 가입판(개인 가입 · 본인 키 · 월 이용료 — 그로블 정기결제) — 회사별 «구독으로 돌리기» 허용 여부(출처) · 결정 · **만든 것(§4)** · 사람이 할 것(§5) |
+| [OPEN_EDITION.md](OPEN_EDITION.md) | 자유 가입판(개인 가입 · 본인 키 · 월 이용료 — 그로블 정기결제 · **평생 이용권 판 `SE_BILLING=lifetime`(§4-14)**) — 회사별 «구독으로 돌리기» 허용 여부(출처) · 결정 · **만든 것(§4)** · 사람이 할 것(§5) |
 | [EBOOK_EDITION.md](EBOOK_EDITION.md) | **«전자책 오토» 개발 계획서 v2**(2026-10-10 — 아직 계획) — 용도 축 `SE_PURPOSE=ebook` · 반자동 · 완전 자동(편집장 에이전트) 레일 · 사용자가 만들고 앉히는 포지션 에이전트 · AI 가 정하는 분량 · 구성 · 웹 조사 기본 켬 · TXT · PDF · 호출 60~75 → 약 22~30 · 로드맵 E0~E7 |
 
 ## 진행 상태 (2026-10-06)
@@ -32,6 +32,7 @@
 | Sprint 15~16 — 파일럿 · production | 게시 중(Replit). 사람 검수 → 파일럿 |
 | 자유 가입판(2026-10-09) — 판 스위치 `SE_EDITION` · 자유 가입 · 키 등록(클릭 몇 번 + 붙여 넣기) · 이용권(그로블 정기결제 웹훅) · 고객 · 결제 관리 화면 | 완료 · 사람: 그로블 상품 · 웹훅 시크릿 · 두 번째 Replit 앱 · 약관(OPEN_EDITION §5 · REPLIT_DEPLOYMENT §4-4) |
 | 7일 환불(2026-10-10, OPEN_EDITION §4-8) — 판정 · [환불 요청](이용권 즉시 정지) · 그로블 환불 · 해지 «둘 다» 확인 | 완료 · 구글 로그인(§4-9)은 설계만 |
+| 평생 이용권 판(2026-10-13, OPEN_EDITION §4-14) — 스위치 `SE_BILLING=lifetime` · 그로블 단건 결제 · 체험 3일 → 구매 제안 | 완료(시험) · 사람: 띄울 앱 · 환불 규정 · «평생»의 뜻 · 그로블 단건 결제창 확인(REPLIT_DEPLOYMENT §4-8) |
 | 전자책 오토(2026-10-10) | 계획서 v2([EBOOK_EDITION.md](EBOOK_EDITION.md)) — 원칙 8 예외 승인 · 남은 결정 9건(정하지 않으면 권고대로) · 다음은 E0 |
 
 2026-10-07 더한 것: 운영자 구독(AI_PROVIDER §9-1) · 바뀜 알림 SSE/NOTIFY(API.md) · docx/pdf 자료(DESIGN «자료») · 사용량 장부 · 키 고삐(AI_PROVIDER §7-1) · DB 2차 격리 RLS(ERD «격리»).
