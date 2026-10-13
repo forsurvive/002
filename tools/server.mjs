@@ -16,7 +16,7 @@ import { prepareAgents, agentsReady, runStudy, STUDY_TITLE } from './agents.mjs'
 import { killAllCalls, lastLimit } from './call.mjs';
 import * as auth from './auth.mjs';
 import { createOps } from './ops.mjs';
-import { baseTemplate } from './workflow.mjs';
+import { baseTemplate, templateKeyOf } from './workflow.mjs';
 import { normalizeProject, saveProject, newId, DATA_DIR } from './store.mjs';
 import { acquire as lockData } from './datalock.mjs';
 import { backupProjects } from './backup.mjs';
@@ -48,7 +48,9 @@ async function prepareThenStudy(pid, ctx, request = '') {
   if ((state.get(pid) || { docs: [] }).docs.some((d) => d.title === STUDY_TITLE)) return { ok: true, skipped: true };
   return runStudy(pid, ctx, request);   // 이어서 자료를 한 번 읽는다
 }
-const LOCAL_DEPS = { ...engine.LOCAL, prepare: prepareThenStudy, workflow: async () => baseTemplate() };
+// 작품마다 제 용도의 단계 템플릿(이야기 만들기 · 전자책) — 적혀 있지 않은 작품은 이야기 만들기(지금까지의 모든 작품)
+const workflowOf = async (pid) => baseTemplate(templateKeyOf(state.get(pid)));
+const LOCAL_DEPS = { ...engine.LOCAL, prepare: prepareThenStudy, workflow: workflowOf };
 jobs.useRunner((kind, params, ctx) => runKind(LOCAL_DEPS, kind, params, ctx));
 
 // 프로젝트를 만든 직후 그 프로젝트 전용 에이전트를 짓는다(소설이면 판정만 남기고 끝난다).
@@ -67,7 +69,7 @@ function importProject(raw) {
   return { pid: p.id };
 }
 
-const { OPS, stateOf, downloadOf } = createOps({ state, jobs, engine, auth, limit: lastLimit, prepared, startAgentPrep, workflow: async () => baseTemplate(), importProject });
+const { OPS, stateOf, downloadOf } = createOps({ state, jobs, engine, auth, limit: lastLimit, prepared, startAgentPrep, workflow: workflowOf, importProject, purposeChoice: true });
 
 export const OP_NAMES = Object.keys(OPS);
 

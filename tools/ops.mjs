@@ -31,6 +31,7 @@ const pickModel = (v, fallback) => (MODELS.includes(String(v || '')) ? String(v 
  *   prepared(p) · startAgentPrep(pid, request)
  *   workflow(pid) : 그 프로젝트에 쓸 단계 템플릿(개인판은 설정 파일, 온라인은 고쳐 쓴 것까지) — 없으면 단계 기능이 서지 않는다
  *   cardsOn(p)    : 작업 중 강의 카드를 보이는가(개인판 기본 꺼짐 · 기관 프로젝트는 기관 설정)
+ *   purposeChoice : 새 작품을 만들 때 용도(purpose: 'ebook')를 받는가 — 개인판만. 온라인판은 앱의 용도(templateKey)가 정한다
  */
 export function createOps(d) {
   const { state, jobs, engine, auth, limit, prepared, startAgentPrep } = d;
@@ -68,7 +69,9 @@ export function createOps(d) {
       if (materials.some((m) => binary(m.text))) return bad(NOT_TEXT);
       const p = await state.create({ name, spec, standard: b.standard, request: b.request, materials });
       // 앱의 용도가 정한 단계 템플릿(전자책 오토 — ebook). 이야기 만들기(기본)는 적지 않는다 — 지금까지의 작품과 같은 꼴
-      const tpl = d.templateKey && d.templateKey !== 'story_creation' ? String(d.templateKey) : '';
+      // 개인판은 앱이 용도를 정하지 않고 작품마다 고른다(purposeChoice — docs/PERSONAL_USB.md §7). 고르지 않으면 이야기
+      const tpl = d.templateKey && d.templateKey !== 'story_creation' ? String(d.templateKey)
+        : d.purposeChoice && b.purpose === 'ebook' ? 'ebook' : '';
       // 작법서를 문서로 세워 둔다 — 본문은 베끼지 않고 가리키기만 한다. 걸고 싶을 때 참조로 걸고, 필요 없으면 지운다.
       const books = bookList();
       if (books.length || tpl) {
@@ -408,6 +411,7 @@ export function createOps(d) {
         const defs = new Map(t.stages.map((s) => [s.key, s]));
         return {
           title: t.title, bodyOn, cards, episodeWord: t.episodeWord || '화',   // 회차 단계의 말(전자책 — 장)
+          template: t.key,   // 이 작품의 용도(story_creation · ebook) — 개인판 화면이 작품마다 말을 바꾼다
           stages: wf.view(p, t, { bodyOn }).map((v) => {
             const s = defs.get(v.key);
             return { ...v, task: wf.stageTask(s, 0), ...(cards && s.card ? { card: s.card } : {}) };

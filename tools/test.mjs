@@ -2177,6 +2177,30 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('창을 닫아도 잠금을 걷고 나간다', sv.includes("'SIGHUP'") && sv.includes("process.on('exit', lock.release)"));
 }
 
+// ---------------------------------------------------------------- 개인판 — 작품마다 용도(이야기 · 전자책) (docs/PERSONAL_USB.md §7)
+{
+  const mk = (extra) => post('project.create', { name: '용도 시험', spec: { form: '실용서' }, materials: [{ name: '자료', text: '내용' }], ...extra });
+  const rb = await mk({ purpose: 'ebook' });
+  const bookP = await settle(rb.pid);
+  const bookSt = await stateOf(rb.pid);
+  ok('전자책을 고르면 그 작품은 전자책 단계로 연다', rb.ok && bookSt.project.workflow && bookSt.project.workflow.template === 'ebook');
+  ok('전자책 작품의 글 종류는 «전자책»(소설/비소설을 가리는 호출 없이)', bookP && bookP.agentKind === '전자책');
+  const tplBook = (await import('./workflow.mjs')).baseTemplate('ebook');
+  ok('전자책 단계 목록이 그대로 선다', bookSt.project.workflow.stages.length === tplBook.stages.length && bookSt.project.workflow.episodeWord === (tplBook.episodeWord || '화'));
+  const rs = await mk({});
+  await settle(rs.pid);
+  const storySt = await stateOf(rs.pid);
+  ok('고르지 않으면 이야기(지금까지와 같다)', storySt.project.workflow.template === 'story_creation');
+  const { readJson: rj } = await import('./store.mjs');
+  ok('이야기 작품의 파일에는 템플릿이 적히지 않는다(지금까지의 작품과 같은 꼴)', !(rj(join(BOX, 'projects', rs.pid + '.json')).workflow || {}).template);
+  const rx = await mk({ purpose: 'something' });
+  await settle(rx.pid);
+  ok('모르는 용도는 이야기로 읽는다', (await stateOf(rx.pid)).project.workflow.template === 'story_creation');
+  ok('온라인판은 작품마다 용도를 받지 않는다(앱의 용도가 정한다)', !src(join(ROOT, 'online', 'server.mjs')).includes('purposeChoice'));
+  ok('개인판 서버는 작품마다 제 템플릿을 쓴다', src(join(HERE, 'server.mjs')).includes('baseTemplate(templateKeyOf(state.get(pid)))'));
+  for (const pid of [rb.pid, rs.pid, rx.pid]) await post('project.delete', { pid });
+}
+
 // ---------------------------------------------------------------- USB 휴대판 — 만들기 도구 (망 없이 순수 부분만)
 {
   const ub = await import('./usb-build.mjs');
@@ -2370,7 +2394,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('탭 제목도 서버가 준 이름으로', app.includes('document.title = S.me.appName') && login.includes('document.title = S.name') && school.includes("document.title = document.title.replace('스토리 엔진', S.me.appName)"));
   ok('로그인 화면의 이름은 /api/setup 의 name', login.includes("text: appName() }), form,") && !login.includes("text: '스토리 엔진'"));
   ok('보내는 링크의 제목도 그 이름', !school.includes("'스토리 엔진 초대'") && !school.includes("'스토리 엔진 비밀번호 재설정'") && school.includes("appName() + ' 초대'"));
-  ok('**말 바꾸기는 전자책 용도에서만**', app.includes("const isBook = () => !!(S.me && S.me.purpose === 'ebook');") && app.includes("const W = (s) => (isBook() ? String(s).replace(/작품/g, '책') : s);"));
+  ok('**말 바꾸기는 전자책 용도에서만**(온라인 — 앱의 용도 · 개인판 — 그 작품의 용도)', app.includes("const isBook = () => !!(S.me ? S.me.purpose === 'ebook'")
+    && app.includes("(S.open && S.open.type === 'newproject') ? S.open.purpose === 'ebook'") && app.includes("S.project.workflow.template === 'ebook'")
+    && app.includes("const W = (s) => (isBook() ? String(s).replace(/작품/g, '책') : s);"));
+  ok('개인판의 새 작품 창에만 용도(이야기 · 전자책)가 선다', /function purposeChoice\(\) \{\n  if \(S\.me\) return null;/.test(app) && app.includes("if (!S.me && S.open.purpose === 'ebook') body.purpose = 'ebook';"));
   const wCalls = app.match(/(?<![A-Za-z0-9_$.])W\([^)]/g) || [];
   ok('**말 바꾸기는 고정 문구에만(W 는 글자 그대로의 문구만 받는다 — 사용자가 쓴 글에 닿지 않는다)**', wCalls.length >= 10 && wCalls.every((x) => x === "W('"), wCalls.filter((x) => x !== "W('").join(' '));
   ok('새 작품 · 작품 파일 · 개인 작품이 전자책에서 «책»으로', ["W('새 작품')", "W('작품 파일 가져오기')", "W('작품 파일 내려받기')", "W('내 개인 작품')"].every((x) => app.includes(x)));

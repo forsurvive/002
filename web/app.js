@@ -37,8 +37,11 @@ const BODY_HINT = '직접 입력하거나 아래의 요청사항을 작성해주
 const STUDIO = 'Old Tower Studio';
 const brandMark = (style) => h('div', { class: 'brand', style, text: STUDIO });
 // 용도(docs/EBOOK_EDITION.md §8) — 이름은 서버가 준다(me.appName). 말 바꾸기(작품 → 책)는 고정 문구에만 쓴다(사용자가 쓴 글은 건드리지 않는다).
-// «작품»과 «책»은 둘 다 받침이 있어 토씨가 그대로 맞는다. 개인판 · 소설판은 me.purpose 가 ebook 이 아니라 한 글자도 바뀌지 않는다.
-const isBook = () => !!(S.me && S.me.purpose === 'ebook');
+// «작품»과 «책»은 둘 다 받침이 있어 토씨가 그대로 맞는다. 이야기 작품 · 소설판은 한 글자도 바뀌지 않는다.
+// 개인판은 작품마다 용도를 고른다(docs/PERSONAL_USB.md §7) — 보는 작품이 전자책이거나, 새 작품 창에서 전자책을 골랐을 때
+const isBook = () => !!(S.me ? S.me.purpose === 'ebook'
+  : (S.open && S.open.type === 'newproject') ? S.open.purpose === 'ebook'
+  : (S.pid && S.project && S.project.workflow && S.project.workflow.template === 'ebook'));
 const appName = () => (S.me && S.me.appName) || '스토리 엔진';
 const W = (s) => (isBook() ? String(s).replace(/작품/g, '책') : s);
 // 토씨 — 받침이 있으면 a(을 · 이), 없으면 b(를 · 가). 데이터에서 온 낱말(걸음 이름)에 붙일 때
@@ -1561,6 +1564,7 @@ function newProjectPanel(close) {
     h('div', { class: 'panel-head' }, h('div', { class: 'name', text: W('새 작품') }), h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body' },
       placeChoice(),
+      purposeChoice(),
       h('div', { class: 'grid2' },
         h('div', null, h('div', { class: 'lab', text: '이름' }), textbox('n-name', '이름')),
         h('div', null, h('div', { class: 'lab', text: '형식' }), textbox('n-form', '형식'))),
@@ -1584,6 +1588,18 @@ function newProjectPanel(close) {
           h('button', { class: 'btn', text: '생성', onclick: makeProject }),
           S.open.err ? h('span', { class: 'notice', text: S.open.err }) : null),
         S.open.note ? h('div', { class: 'lab', style: 'margin-top:8px', text: S.open.note }) : null)));
+}
+
+// 개인판 — 이야기인가 전자책인가. 만들 때 한 번 고른다(에이전트가 그 종류로 지어지고 단계가 그 템플릿에 묶인다). 온라인판은 앱이 정한다
+function purposeChoice() {
+  if (S.me) return null;
+  const pick = S.open.purpose === 'ebook' ? 'ebook' : 'story';
+  const choose = (v) => { S.open.purpose = v; render(); };
+  return h('div', null,
+    h('div', { class: 'lab', text: '용도' }),
+    h('div', { class: 'line' },
+      h('button', { class: pick === 'story' ? 'btn' : 'btn-line', text: '이야기', onclick: () => choose('story') }),
+      h('button', { class: pick === 'ebook' ? 'btn' : 'btn-line', text: '전자책', onclick: () => choose('ebook') })));
 }
 
 // 온라인판 — 어디에 만들까요? 수업 작품은 기관 키로, 내 개인 작품은 내 AI 키로 돈다(개인판에는 이 칸이 없다).
@@ -1623,6 +1639,7 @@ async function makeProject() {
     return false;
   }
   if (S.me && S.open.place) body.classId = S.open.place;
+  if (!S.me && S.open.purpose === 'ebook') body.purpose = 'ebook';
   const r = await api('project.create', body);
   if (r.ok) { S.pid = r.pid; S.draft = []; S.open = null; S.project = null; S.typed = {}; pull(true); return true; }
   S.open.err = r.error;
