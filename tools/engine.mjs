@@ -65,7 +65,7 @@ export async function callOnce({
   materials = false, allFinals = false, talk = [], prev = '', next = '',
   signal = null, noCount = null, finalFirst = false, keepSeat = false, dropSeat = false,
   extraTargets = [], modelPick = '', digests = null, reading = null, targetPart = null, continueFrom = null,
-  extraDigests = null, talkCut = null, fixedDigests = null,
+  extraDigests = null, talkCut = null, fixedDigests = null, summary = null, extraRefs = [],
 }) {
   // **막히는 것은 새 호출뿐이다** — 읽기·내보내기·되짚기는 이 문을 지나지 않는다.
   const missing = promptsMissing();
@@ -77,7 +77,7 @@ export async function callOnce({
   const plan = planCall(project, {
     refIds, targetIds, agentIds, request, taskExtra, materials, allFinals, talk, prev, next,
     noCount, finalFirst, keepSeat, dropSeat, extraTargets, modelPick, digests, reading, targetPart, continueFrom,
-    extraDigests, talkCut, fixedDigests,
+    extraDigests, talkCut, fixedDigests, summary, extraRefs,   // 요약하여 참조(DESIGN §6-11)
   }, { pr: promptFor(project, code), slotModel: slotModel(project, code), seatOf: (c) => seatAgent(project, c) });
 
   const r = await callModel({ systemPrompt: plan.systemPrompt, prompt: plan.userPrompt, code, signal, model: plan.model, webSearch: !!plan.webSearch, images: picturesFor(pid, plan.images) });

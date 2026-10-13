@@ -345,7 +345,7 @@ export function createOps(d) {
         conflict = !!cur && b.baseAt != null && (b.body != null || b.title != null) && (cur.updatedAt || 0) > Number(b.baseAt);
         model.docWrite(p, b.id, {
           title: b.title, body: b.body, request: b.request,
-          refIds: b.refIds, targetIds: b.targetIds, agentIds: b.agentIds,
+          refIds: b.refIds, sumRefIds: Array.isArray(b.sumRefIds) ? b.sumRefIds : null, targetIds: b.targetIds, agentIds: b.agentIds,
           seatOff: b.seatOff == null ? null : !!b.seatOff,
           categoryId: b.categoryId === undefined ? undefined : b.categoryId,
         });
@@ -480,7 +480,7 @@ export function createOps(d) {
         // 가리키는 문서(작법서)는 본문을 내려 주지 않는다 — 펼쳐 볼 때 peek 이 푼다.
         id: d.id, kind: d.kind, title: d.title, body: d.src ? '' : d.body, src: d.src || '', chars: d.src ? model.bodyOf(d).length : 0,
         isFinal: d.isFinal,
-        categoryId: d.categoryId, request: d.request, refIds: d.refIds, targetIds: d.targetIds,
+        categoryId: d.categoryId, request: d.request, refIds: d.refIds, sumRefIds: d.sumRefIds || [], targetIds: d.targetIds,
         agentIds: d.agentIds || [],
         seatOff: !!d.seatOff,
         ...(d.material ? { material: true } : {}),   // 만들 때 넣은 자료(자동 실행의 시작 조건 — DESIGN §5-2)

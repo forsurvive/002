@@ -50,6 +50,21 @@ export function readTask({ name, k, n, role = 'reference', again = false, later 
   ].filter((x) => x !== null).join('\n');
 }
 
+// 요약하여 참조(DESIGN §6-11) — 참조 문서 하나(긴 것은 그 k/n 부분)를 요약한다. 요약은 원문 대신 참조로 실린다(저장하지 않는다).
+// 나중에 할 일에 쓰일 것을 앞세워 줄인다 — 이름 · 설정 · 사건 · 관계 · 순서 · 수치는 원문의 말로 남긴다
+export function summaryTask({ name, k = 1, n = 1, later = '' }) {
+  return [
+    n > 1 ? `지금은 참조 문서 «${s(name)}»를 요약하는 중이다. «요약할 글»은 그 문서의 ${k}/${n} 부분이다 — 이 부분만 요약한다.`
+      : `지금은 참조 문서 «${s(name)}»를 요약하는 중이다.`,
+    '이 요약은 원문 대신 참조로 실린다. 아래 «나중에 할 일»과 요청사항(작품 요청사항 · 이번 요청사항)에 쓰일 것을 앞세워, 원문을 크게 줄인 요약을 써라.',
+    '이름 · 설정 · 규칙 · 사건 · 관계 · 순서 · 수치는 원문의 말로 남기고, 꾸밈 · 되풀이 · 예시는 덜어 낸다. 원문의 차례를 따른다.',
+    '원문에 없는 것을 지어내지 않고, 평가나 제안을 붙이지 않는다. 요약만 내놓는다.',
+    '',
+    '나중에 할 일:',
+    s(later).trim() || '(이 작품의 다음 글을 쓴다)',
+  ].join('\n');
+}
+
 // 고칠 원고가 한 번에 실리지 않을 때 — 원고를 부분으로 나눠 부분마다 고치고 잇는다(보고서꼴은 부분마다 따로 본다)
 export function partTask({ k, n, mode = 'rewrite', before = '', after = '' }) {
   const lines = mode === 'rewrite'
@@ -150,7 +165,7 @@ export function specBlock(project, { capNote = true } = {}) {
  * 어느 구획도 자르지 않는다.
  */
 export function buildUser({
-  project, materials = [], refs = [], finals = [], targets = [], talk = [], reading = [], written = '',
+  project, materials = [], refs = [], finals = [], targets = [], talk = [], reading = [], summarize = [], written = '',
   request = '', task = '', noCount = true, images = [], imagesOmitted = 0,
 } = {}) {
   // 한 문서가 여러 자격을 가지면 한 구획에만 남긴다(부르는 쪽에서 이미 갈라 놓지만 한 번 더 막는다).
@@ -172,6 +187,7 @@ export function buildUser({
     section('그림 목록', images.length ? [images.map((x, i) => '그림 ' + (i + 1) + ' — img:' + s(x.id) + ' · «' + s(x.doc) + '»' + (s(x.alt).trim() ? ' · ' + s(x.alt).trim() : '')).join('\n')
       + (imagesOmitted ? '\n(그림 ' + imagesOmitted + '장은 한 번에 붙일 수 없어 빠졌다 — 글 속 자리만 남는다)' : '')] : []),
     section('나눠 읽는 부분', itemsOf(reading)),
+    section('요약할 글', itemsOf(summarize)),
     // 이어 쓰기 — 끊긴 응답 통째(자르지 않는다)
     s(written) ? section('이미 쓴 부분(끊긴 응답)', [neutralize(written)]) : '',
     s(request).trim() ? section('이번 요청사항', [neutralize(request)]) : '',

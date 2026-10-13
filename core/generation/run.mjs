@@ -8,6 +8,7 @@
 import * as model from '../domain/model.mjs';
 import * as wf from '../workflow/stages.mjs';
 import { saveCheckpoint } from './reading.mjs';
+import { summarizeRefs } from './summary.mjs';
 
 const KIND_CODE = { doc: 'F-UPDATE', check: 'F-CONTRA', review: 'F-REVIEW' };
 const seatsOf = (seatOf, project) => (seatOf ? (code) => seatOf(project, code) : null);
@@ -33,6 +34,11 @@ export async function runUpdate({ store, call, seatOf }, pid, docId, ctx, { mode
     finalFirst: d.kind === 'check', keepSeat: !off, dropSeat: off, modelPick,
     signal: ctx && ctx.signal,
   };
+
+  // 요약하여 참조(DESIGN §6-11) — 건 문서를 먼저 요약하고 그 요약본을 참조로 싣는다(저장하지 않는다)
+  const sum = await summarizeRefs(call, project, d, { ...common, code: KIND_CODE[d.kind] || 'F-UPDATE', agentIds }, ctx);
+  if (!sum.ok) return sum;
+  if (sum.refs.length) common.extraRefs = sum.refs;
 
   // 합평회에 여럿이 걸렸으면 각자 제 합평을 내고, 그 뒤에 한 자리가 그것들을 모은다(사용자 지시).
   if (ctx && ctx.gate) await ctx.gate();
@@ -183,13 +189,17 @@ export async function runStage({ store, call, workflow, seatOf }, pid, { stageKe
   // 문서에서 자리 사람을 뗐으면(DESIGN §6-8) 걸린 사람만 — 앉힌 사람이 있으면 그것이 먼저라 뗄 것이 없다
   // 아무도 걸지 않았으면 자리 사람이 쓴다(에이전트는 필수 항목이 아니다, 2026-10-13)
   const off = !seated.length && !!d.seatOff && model.agentsByIds(project, d.agentIds || [], seatsOf(seatOf, project)).length > 0;
-  const r = await call({
+  const args = {
     pid, code: s.code || 'F-UPDATE',
     refIds: (d.refIds || []).filter((id) => id !== d.id), targetIds: String(d.body || '').trim() ? [d.id] : [],
     agentIds: [...new Set([...seated, ...(d.agentIds || [])])], request, requestOnce, taskExtra: wf.stageTask(s, ep),
     materials: !!s.materials, allFinals: !!s.materials, keepSeat: !seated.length && !off, dropSeat: off, modelPick, stageKey, stageTier: String(s.tier || ''),
     signal: ctx && ctx.signal,
-  }, ctx);
+  };
+  // 요약하여 참조(DESIGN §6-11) — 단계 문서에 걸었어도 같다
+  const sum = await summarizeRefs(call, project, d, args, ctx);
+  if (!sum.ok) return sum;
+  const r = await call(sum.refs.length ? { ...args, extraRefs: sum.refs } : args, ctx);
   if (!r.ok) return r;
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   await store.update(pid, (p) => {

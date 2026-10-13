@@ -1726,6 +1726,8 @@ function docPanel(close) {
       d.src ? null : h('div', null, h('div', { class: 'lab', text: '요청사항' }), area('d-req', '요청사항', d.request, { onblur: saveFields })),
       d.src || d.kind === 'doc' ? null : refLine('대상', d.targetIds, byId, (ids) => api('doc.write', { id: d.id, targetIds: ids }), d.id),
       d.src ? null : refLine('참조', d.refIds, byId, (ids) => api('doc.write', { id: d.id, refIds: ids }), d.id),
+      // 요약하여 참조(사용자 지시 2026-10-13 — DESIGN §6-11) — 생성할 때마다 요약해 싣는다(요약은 저장하지 않는다). 온라인판은 아직
+      d.src || S.me ? null : refLine('요약하여 참조', d.sumRefIds || [], byId, (ids) => api('doc.write', { id: d.id, sumRefIds: ids }), d.id),
       d.src ? null : docAgentLine(d),
       d.src ? null : h('div', { class: 'line' }, S.open.err ? h('span', { class: 'notice', text: S.open.err }) : null, h('button', {
         class: 'btn', text: busy ? verb + ' 중' : verb, disabled: busy,

@@ -50,6 +50,8 @@ export function docCreate(p, fields = {}) {
     agentIds: Array.isArray(fields.agentIds) ? fields.agentIds.slice() : [],
     versions: [],
     ...(fields.material ? { material: true } : {}),
+    // 요약하여 참조(사용자 지시 2026-10-13 — DESIGN §6-11) — 생성할 때마다 요약해 참조로 싣는다. 요약은 저장하지 않는다. 비었으면 적지 않는다
+    ...(Array.isArray(fields.sumRefIds) && fields.sumRefIds.length ? { sumRefIds: fields.sumRefIds.filter((id) => !(fields.refIds || []).includes(id)) } : {}),
     ...(fields.seatOff ? { seatOff: true } : {}),
     createdAt: now(),
     updatedAt: now(),
@@ -107,11 +109,16 @@ export function docWrite(p, id, next = {}, { keepHistory = true } = {}) {
   }
   // «언제 손댔는가»는 참조·대상·에이전트·요청사항·그릇까지 센다.
   // 폰은 이 시각이 그대로면 문서를 다시 받아 오지 않는다 — 여기서 안 찍으면 폰 화면이 옛 값에 머문다.
-  const before = JSON.stringify([d.request, d.refIds, d.targetIds, d.agentIds, d.categoryId, !!d.seatOff]);
+  const before = JSON.stringify([d.request, d.refIds, d.sumRefIds || [], d.targetIds, d.agentIds, d.categoryId, !!d.seatOff]);
   if (next.title != null) d.title = str(next.title).trim() || '제목 없음';
   if (next.body != null && !d.src) d.body = str(next.body);   // 가리키는 문서는 고쳐 쓰지 않는다
   if (next.request != null) d.request = str(next.request);
   if (next.refIds != null) d.refIds = next.refIds.slice();
+  // 요약하여 참조 — 한 문서는 참조와 요약하여 참조 가운데 한쪽에만 선다. 이번에 고친 쪽이 이긴다
+  if (next.sumRefIds != null) d.sumRefIds = next.sumRefIds.slice();
+  if (next.sumRefIds != null) d.refIds = (d.refIds || []).filter((id) => !d.sumRefIds.includes(id));
+  else if (next.refIds != null && d.sumRefIds) d.sumRefIds = d.sumRefIds.filter((id) => !d.refIds.includes(id));
+  if (d.sumRefIds && !d.sumRefIds.length) delete d.sumRefIds;
   if (next.targetIds != null) d.targetIds = next.targetIds.slice();
   if (next.agentIds != null) d.agentIds = next.agentIds.slice();
   // 그 문서 종류의 자리 사람을 뗐는가(DESIGN §6-8) — 붙어 있는 것이 기본이라 뗐을 때만 적는다
@@ -120,7 +127,7 @@ export function docWrite(p, id, next = {}, { keepHistory = true } = {}) {
     d.categoryId = next.categoryId && findCategory(p, next.categoryId) ? next.categoryId : null;
     d.orphanFrom = null; // 손으로 옮긴 순간 옛 그릇과의 연고가 끊긴다
   }
-  const touched = JSON.stringify([d.request, d.refIds, d.targetIds, d.agentIds, d.categoryId, !!d.seatOff]) !== before;
+  const touched = JSON.stringify([d.request, d.refIds, d.sumRefIds || [], d.targetIds, d.agentIds, d.categoryId, !!d.seatOff]) !== before;
   if (changed || touched) d.updatedAt = now();
   return d;
 }
@@ -144,7 +151,7 @@ export function docSetFinal(p, id, on) {
 // 차림표에서 만들어지기만 하고 아무것도 담기지 않은 문서 — 이름까지 그대로여야 «갓 만든 것»이다.
 export function docIsFresh(d) {
   return !!d && !str(d.body).trim() && !str(d.request).trim()
-    && !(d.refIds || []).length && !(d.targetIds || []).length && !(d.agentIds || []).length && !d.seatOff
+    && !(d.refIds || []).length && !(d.sumRefIds || []).length && !(d.targetIds || []).length && !(d.agentIds || []).length && !d.seatOff
     && !(d.versions || []).length && !d.isFinal && !d.categoryId
     && d.title === DOC_NAME[d.kind || 'doc'];
 }

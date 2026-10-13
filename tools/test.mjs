@@ -1921,6 +1921,60 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
+  // 요약하여 참조(사용자 지시 2026-10-13 — DESIGN §6-11): 건 문서는 생성할 때마다 요약되어 요약본으로 참조된다 · 요약본은 저장하지 않는다
+  const { planCall } = await import('../core/reference/plan.mjs');
+  const mp = store.blankProject('p_sum', '요약');
+  const a = model.docCreate(mp, { title: '긴 설정집', body: '설정 본문' });
+  const b = model.docCreate(mp, { title: '쓸 글', refIds: [a.id] });
+  model.docWrite(mp, b.id, { sumRefIds: [a.id] });
+  ok('**요약하여 참조로 걸면 참조에서는 빠진다(한쪽에만 선다)**', b.sumRefIds.join() === a.id && !b.refIds.includes(a.id));
+  model.docWrite(mp, b.id, { refIds: [a.id] });
+  ok('참조로 다시 걸면 요약하여 참조에서 빠지고 · 비면 적지 않는다', b.refIds.join() === a.id && !('sumRefIds' in b));
+  ok('요약하여 참조만 걸어도 «갓 만든 빈 문서»가 아니다', !model.docIsFresh({ ...model.docCreate(mp, { title: '문서' }), sumRefIds: [a.id] }));
+
+  const pr = { name: '자리이', role: '역할', task: '이 문서를 쓴다', craft: '' };
+  const pp = { name: '작', spec: {}, docs: [a], crew: [] };
+  const sp0 = planCall(pp, { targetIds: [], summary: { id: a.id, name: a.title, k: 1, n: 1, text: '설정 본문' } }, { pr });
+  ok('요약하는 호출 — 요약할 글 하나와 나중에 할 일(본래의 할 일)을 싣는다', sp0.userPrompt.includes('■ 요약할 글\n▶ 긴 설정집\n설정 본문') && sp0.userPrompt.includes('나중에 할 일:\n이 문서를 쓴다')
+    && sp0.userPrompt.includes('원문 대신 참조로 실린다') && !sp0.userPrompt.includes('■ 참조 문서'));
+  const sp1 = planCall(pp, { refIds: [], extraRefs: [{ id: 'sum:' + a.id, name: '긴 설정집 (요약)', text: '요약본' }] }, { pr });
+  ok('본래의 호출 — 요약본은 참조 구획에 «이름 (요약)»으로 선다', sp1.userPrompt.includes('■ 참조 문서\n▶ 긴 설정집 (요약)\n요약본') && !sp1.userPrompt.includes('설정 본문')
+    && sp1.inputs.some((x) => x.role === 'reference' && x.id === 'sum:' + a.id));
+
+  // 서버 — 문서 생성 한 번: 요약하는 호출이 먼저 돌고, 본래의 호출에는 원문 대신 요약본이 실린다
+  const calls = [];
+  globalThis.__SE2_MOCK_FN = (x) => {
+    const P = String(x.prompt || '');
+    calls.push(P);
+    if (P.includes('■ 요약할 글')) return '설정의 요약';
+    return MOCK_FN(x);
+  };
+  const sp = await post('project.create', { name: '요약 참조', spec: { form: '소설' }, materials: [{ name: '자료', text: '자료 본문' }] });
+  await settle(sp.pid, 60000);
+  const big = await post('doc.create', { pid: sp.pid, title: '설정집', body: '아주 긴 설정집 원문' });
+  const mine = await post('doc.create', { pid: sp.pid, title: '1화' });
+  await post('doc.write', { pid: sp.pid, id: mine.id, sumRefIds: [big.id], request: '1화를 쓴다' });
+  let st = (await stateOf(sp.pid)).project;
+  ok('상태에 요약하여 참조가 실린다', st.docs.find((d) => d.id === mine.id).sumRefIds.join() === big.id);
+  const before = st.docs.length;
+  calls.length = 0;
+  await post('doc.update', { pid: sp.pid, id: mine.id });
+  st = await settle(sp.pid, 60000);
+  const sumCall = calls.find((x) => x.includes('■ 요약할 글'));
+  const mainCall = calls.find((x) => !x.includes('■ 요약할 글'));
+  ok('**요약하는 호출이 먼저 돌고 · 원문을 읽는다**', calls.length === 2 && calls[0] === sumCall && sumCall.includes('아주 긴 설정집 원문') && sumCall.includes('1화를 쓴다'));
+  ok('**본래의 호출에는 원문 대신 요약본이 참조로 실린다**', mainCall.includes('▶ 설정집 (요약)\n설정의 요약') && !mainCall.includes('아주 긴 설정집 원문'));
+  ok('**요약본은 저장하지 않는다(문서가 늘지 않고 원문도 그대로)**', st.docs.length === before && st.docs.find((d) => d.id === big.id).body === '아주 긴 설정집 원문'
+    && !st.docs.some((d) => String(d.body || '').includes('설정의 요약')));
+  await post('project.delete', { pid: sp.pid });
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  const appS = src(join(ROOT, 'web', 'app.js'));
+  ok('**문서 창 — «참조» 아래 «요약하여 참조» 줄(개인판)**', appS.includes("d.src || S.me ? null : refLine('요약하여 참조', d.sumRefIds || [], byId, (ids) => api('doc.write', { id: d.id, sumRefIds: ids }), d.id),")
+    && appS.indexOf("refLine('요약하여 참조'") > appS.indexOf("d.src ? null : refLine('참조', d.refIds"));
+  ok('단계 생성에도 요약하여 참조가 실린다', src(join(ROOT, 'core', 'generation', 'run.mjs')).includes('const sum = await summarizeRefs(call, project, d, args, ctx);'));
+}
+
+{
   // 이야기 작품의 자동 실행(사용자 지시 2026-10-13 — DESIGN §5-2): 자료 분석부터 회차별 집필 계획 세부까지, 주기마다 모순 검사
   const story = await import('../core/rail/story.mjs');
   const railStory = await import('./rail-story.mjs');

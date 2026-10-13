@@ -4,7 +4,7 @@
 // tools/engine.mjs 의 callOnce 앞부분을 의미 그대로 옮겼다(온라인화 Phase 1 — Core 분리).
 // 계획이 «실은 것의 목록»(inputs)을 함께 돌려주므로, 생성 기록이 «이 결과는 무엇을 보고 만들었나»를 남길 수 있다.
 
-import { buildSystem, buildUser, readTask, partTask, digestNote, continueTask, writtenOf } from '../prompt/assemble.mjs';
+import { buildSystem, buildUser, readTask, partTask, digestNote, continueTask, writtenOf, summaryTask } from '../prompt/assemble.mjs';
 import * as model from '../domain/model.mjs';
 
 const asItem = (d) => ({ id: d.id, name: d.title, text: model.bodyOf(d) });
@@ -71,6 +71,7 @@ export function planCall(project, {
   noCount = null, finalFirst = false, keepSeat = false, dropSeat = false,
   extraTargets = [], modelPick = '', digests = null, reading = null, targetPart = null, continueFrom = null,
   extraDigests = null, talkCut = null, fixedDigests = null, webSearch = null, withImages = true,
+  summary = null, extraRefs = [],
 } = {}, { pr, slotModel = '', seatOf = null } = {}) {
   // 아주 길어 나눠 읽은 요청사항 · 집필 기준 · 작품 요청사항 · 개요는 원문 자리에 옮긴 것을 싣는다
   const fx = fixedDigests || {};
@@ -115,7 +116,8 @@ export function planCall(project, {
     finals = finalsAll.filter((d) => !taken.has(d.id));
     finals.forEach((d) => taken.add(d.id));
   }
-  const refs = docsByIds(project, refIds).filter((d) => !taken.has(d.id));
+  // 요약하여 참조(DESIGN §6-11) — 요약본은 문서가 아니다(id 'sum:<문서 id>'). 참조 구획의 끝에 «이름 (요약)»으로 선다
+  const refs = [...docsByIds(project, refIds).filter((d) => !taken.has(d.id)), ...(Array.isArray(extraRefs) ? extraRefs : []).filter((x) => x && !taken.has(x.id))];
   // 그림 — 원문(나눠 읽은 것으로 바꾸기 전)의 자리에서 고른다. 나눠 읽는 조각 호출(아래 reading)에는 붙이지 않는다
   const pics = collectImages(project, [targets, finals, refs, mats, extraTargets]);
   const attach = withImages && !reading ? pics.list : [];
@@ -150,6 +152,18 @@ export function planCall(project, {
   // 부르는 쪽이 따로 정하지 않았으면 작품에 걸어 둔 토글을 따른다.
   const nc = noCount == null ? project.noCount !== false : !!noCount;
   const tag = (role) => (d) => ({ role, id: d.id || '', name: d.name, text: String(d.text || '') });
+
+  // 요약하는 호출(요약하여 참조 — DESIGN §6-11) — 요약할 글 하나와 요청사항 · 할 일만 싣는다. 나중에 할 일은 이 문서를 쓰는 본래의 일이다
+  if (summary) {
+    const later = [task0, targets.length ? '쓰거나 고칠 대상: ' + targets.map((d) => '«' + d.name + '»').join(' ') : ''].filter(Boolean).join('\n');
+    const part = { id: summary.id || '', name: summary.name + (summary.n > 1 ? ' — ' + summary.k + '/' + summary.n + ' 부분' : ''), text: String(summary.text || '') };
+    return {
+      systemPrompt: buildSystem({ prompt: pr, crew, withFinalRule: false, withNoCount: false }),
+      userPrompt: buildUser({ project, summarize: [part], request, task: goOn(summaryTask({ name: summary.name, k: summary.k, n: summary.n, later })), noCount: false }),
+      model: useModel, modelSource,
+      inputs: [{ role: 'reference', id: part.id, name: part.name, text: part.text }],
+    };
+  }
 
   // 나눠 읽는 호출 — 그 조각 하나와 요청사항 · 할 일만 싣고 «반영할 것»을 뽑는다. 대상은 이름만 세운다(본문은 모아 쓸 때 싣는다).
   // 수치 · 고유한 표현을 그대로 옮겨야 하므로 «쓰지 않는 말» 규칙을 걸지 않는다.
