@@ -2088,12 +2088,29 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
+{
+  // 레일의 화면 — 단계 탭 맨 위의 «자동 실행» 칸(web/rail.js) · 새 작품 창의 «진행»
+  const app = src(join(ROOT, 'web', 'app.js'));
+  const railJs = src(join(ROOT, 'web', 'rail.js'));
+  const html = src(join(ROOT, 'web', 'index.html'));
+  ok('레일 화면은 따로 실리고 app.js 보다 먼저 온다', html.indexOf('src="rail.js"') > 0 && html.indexOf('src="rail.js"') < html.indexOf('src="app.js"'));
+  ok('단계 탭 맨 위에 «자동 실행» 칸 — 개인판의 전자책 작품에서만', /return h\('div', null,\n[^\n]*\n    railBox\(\),\n    banner,/.test(app) && railJs.includes("return !S.me && !!S.project && !!S.project.workflow && S.project.workflow.template === 'ebook';"));
+  ok('도장 칸 — [승인] · [수정 요청] · [문서 열기] · [멈춤] · 도장 ① 은 확정본으로도(기본 켬)', ["text: '승인'", "text: '수정 요청'", "text: '문서 열기'", "text: '멈춤'", "text: '확정본으로도'", 'S.railFinal = true'].every((x) => railJs.includes(x)));
+  ok('장마다 멈춤 — [다음 장으로]', railJs.includes("text: '다음 장으로', onclick: () => railDo('rail.next')"));
+  ok('설정 — 호출 상한 · 장마다 멈춤 · 판정 횟수 · 통과 못 하면 · 덧붙일 기준', ['호출 상한', '장마다 멈춤', '고쳐 오게 할 수 있는 횟수', '끝내 통과 못 하면', '편집장에게 덧붙일 기준'].every((x) => railJs.includes(x)));
+  ok('자리 — 포지션마다 사람을 앉힌다(내장 · 만든 사람)', railJs.includes("railDo('position.set', { position: x.key, agentIds: [] })") && railJs.includes('S.project.workflow.positions'));
+  ok('«사람 검토 전» · 남은 소견이 보인다', railJs.includes("text: '사람 검토 전'") && railJs.includes('남은 소견'));
+  ok('새 작품 창 — 전자책이면 «진행»(완전 수동 · 반자동 · 완전 자동), 고른 것만 보낸다', app.includes("[['', '완전 수동'], ['semi', '반자동'], ['auto', '완전 자동']]") && app.includes("['semi', 'auto'].includes(S.open.railMode)) body.railMode = S.open.railMode;"));
+  ok('«자동 집필»이라 부르지 않는다(이야기 작품의 그 기능은 없다)', !railJs.includes('자동 집필') && !app.includes('자동 집필'));
+}
+
 // ---------------------------------------------------------------- 화면-서버 배선
 
 {
   const app = src(join(ROOT, 'web', 'app.js'));
   const used = new Set();
-  for (const m of app.matchAll(/api\(\s*'([^']+)'/g)) used.add(m[1]);
+  // 전자책 레일의 화면(web/rail.js)도 같은 배선 그물 안에 둔다
+  for (const m of (app + '\n' + src(join(ROOT, 'web', 'rail.js'))).matchAll(/(?:api|railDo)\(\s*'([^']+)'/g)) used.add(m[1]);
   ok('화면이 부르는 문이 하나라도 있다', used.size > 5, String(used.size));
   ok('시작 검사가 개요를 보지 않는다', !/const ready[^\n]*spec\.outline/.test(app));
   ok('작업 줄이 지난 시간을 말한다', /function jobLine\(/.test(app) && /since\(/.test(app));
@@ -2211,7 +2228,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 온라인판의 로그인 화면도 같은 그물 안에 둔다(같은 style.css · 같은 팔레트)
   const login = existsSync(join(ROOT, 'web', 'login.js')) ? src(join(ROOT, 'web', 'login.js')) : '';
   const school = existsSync(join(ROOT, 'web', 'school.js')) ? src(join(ROOT, 'web', 'school.js')) : '';
-  const screens = app + '\n' + login + '\n' + school;
+  const screens = app + '\n' + login + '\n' + school + '\n' + src(join(ROOT, 'web', 'rail.js'));   // 전자책 레일의 화면도 같은 그물(색 · 반 이름)
   const strayApp = (screens.match(/#[0-9a-f]{3,8}/gi) || []);
   ok('화면 코드에 색을 박지 않는다', strayApp.length === 0, strayApp.join(' '));
   // 화면이 붙이는 반 이름이 style.css 에 실제로 있어야 한다 — 어긋나면 꾸밈이 통째로 죽는다(폰에서 실제로 났다).
@@ -2786,7 +2803,7 @@ process.stdin.on('end', () => {
   ok('gzip 을 풀어 꺼내는 길도 같다', !!ub.untarOne((await import('node:zlib')).gunzipSync(gzipSync(tar)), 'package/claude.exe'));
 
   const files = ub.appFiles();
-  ok('담는 앱 파일에 실행기 · 서버 · 화면 · Core · 단계 템플릿이 있다', ['스토리 엔진 개인판.cmd', 'tools/launch.mjs', 'tools/server.mjs', 'web/index.html', 'core/workflow/stages.mjs', 'config/workflows/ebook.json', 'tools/prompts.data.json'].every((f) => files.includes(f)));
+  ok('담는 앱 파일에 실행기 · 서버 · 화면 · Core · 단계 템플릿이 있다', ['스토리 엔진 개인판.cmd', 'tools/launch.mjs', 'tools/server.mjs', 'web/index.html', 'core/workflow/stages.mjs', 'config/workflows/ebook.json', 'tools/prompts.data.json', 'tools/prompts.ebook.json', 'tools/rail.mjs', 'core/rail/next.mjs', 'core/rail/judge.mjs', 'web/rail.js'].every((f) => files.includes(f)));
   // 결제 관련 부가 기능은 USB 판에 싣지 않는다(사용자 지시, 2026-10-13) — 저장소에서는 지우지 않는다(온라인 앱 · 그 시험이 쓴다)
   ok('**결제 · 이용권 · 체험 · 환불 · 계정 · 운영 화면은 USB 에 싣지 않는다**', ['web/account.html', 'web/manage.html', 'web/login.html', 'web/login.js', 'web/school.html', 'web/school.js', 'web/terms.html', 'web/privacy.html', 'web/about.html', 'web/policy.js'].every((f) => !files.includes(f) && existsSync(join(ROOT, f))));
   // Gemini 어댑터 · 카탈로그는 «Gemini API 키» 길이 쓴다(2026-10-13) — 그 밖의 온라인 어댑터는 싣지 않는다

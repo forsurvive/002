@@ -64,7 +64,7 @@ node tools/usb-build.mjs --out <USB 의 폴더> --skip-download       앱 파일
 
 | 무엇 | 어디서 | 버전 | 확인 |
 |---|---|---|---|
-| 앱 파일 | 이 저장소(도구가 있는 자리) — 실행기 · 서버(`tools/launch.mjs` · `tools/server.mjs` · `tools/usb-build.mjs`)에서 import 를 따라간 모듈 · 첫 화면(`web/index.html`)이 부르는 파일 · 모듈이 읽는 자료(`tools/prompts.data.json` · `tools/books/` · `config/workflows/`) · 루트의 `.cmd` · `README.md` · `DESIGN.md` · `기획서.md` · `docs/PERSONAL_USB.md` · `docs/WORKFLOW.md` | 저장소 그대로 | 그 밖은 싣지 않는다 — 아래 «결제 기능 빼기» |
+| 앱 파일 | 이 저장소(도구가 있는 자리) — 실행기 · 서버(`tools/launch.mjs` · `tools/server.mjs` · `tools/usb-build.mjs`)에서 import 를 따라간 모듈 · 첫 화면(`web/index.html`)이 부르는 파일 · 모듈이 읽는 자료(`tools/prompts.data.json` · `tools/prompts.ebook.json` · `tools/books/` · `config/workflows/`) · 루트의 `.cmd` · `README.md` · `DESIGN.md` · `기획서.md` · `docs/PERSONAL_USB.md` · `docs/WORKFLOW.md` | 저장소 그대로 | 그 밖은 싣지 않는다 — 아래 «결제 기능 빼기» |
 | `tools\node\node.exe` | `https://nodejs.org/dist/<판>/win-x64/node.exe` | 기본 `v22.23.3`(2026-09-23 Node 22 LTS) · `--node` 로 바꾼다 | 같은 폴더의 `SHASUMS256.txt` 에 적힌 sha256 |
 | `tools\claude\claude.exe` | 앤트로픽이 npm 에 올린 윈도우 패키지 `@anthropic-ai/claude-code-win32-x64`(`registry.npmjs.org`) — 공식 설치기(`claude.ai/install.cmd`)가 받는 것과 같은 실행 파일 | 기본 `latest` · `--claude` 로 못박는다 | 레지스트리가 적은 sha512(`dist.integrity`) |
 
