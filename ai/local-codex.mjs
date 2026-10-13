@@ -7,8 +7,8 @@ import { success, failure } from './provider.mjs';
 
 export const localCodexProvider = {
   id: 'local-codex',
-  async generate({ model, systemPrompt, userPrompt, signal = null, webSearch = false, metadata = {} } = {}) {
-    const r = await runCodexCall({ systemPrompt, prompt: userPrompt, mockKey: (metadata && metadata.code) || '', signal, model, webSearch });
+  async generate({ model, systemPrompt, userPrompt, signal = null, webSearch = false, images = [], metadata = {} } = {}) {
+    const r = await runCodexCall({ systemPrompt, prompt: userPrompt, mockKey: (metadata && metadata.code) || '', signal, model, webSearch, images });
     const common = { limit: null, elapsedMs: r.elapsedMs || 0, authSource: r.authSource || 'chatgpt' };
     if (!r.ok) return failure(r.reason, r.error, common);
     const u = r.usage || {};

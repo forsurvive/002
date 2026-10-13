@@ -9,6 +9,27 @@ import * as model from '../domain/model.mjs';
 
 const asItem = (d) => ({ id: d.id, name: d.title, text: model.bodyOf(d) });
 
+// 그림(DESIGN §6-9) — 한 호출에 붙이는 그림은 이만큼까지. 실린 문서의 그림을 대상 › 확정본 › 참조 › 자료 › 그 밖(합평 모으기의 합평) 차례로 고른다
+export const IMAGE_CAP = 20;
+function collectImages(project, groups) {
+  const seen = new Set();
+  const list = [];
+  let omitted = 0;
+  let refs = false;
+  for (const g of groups) {
+    for (const d of g) {
+      for (const r of model.imageRefs(d.text)) {
+        refs = true;
+        if (seen.has(r.id) || !model.findImage(project, r.id)) continue;
+        seen.add(r.id);
+        if (list.length >= IMAGE_CAP) { omitted++; continue; }
+        list.push({ id: r.id, alt: r.alt, doc: d.name });
+      }
+    }
+  }
+  return { list, omitted, refs };
+}
+
 export function docsByIds(project, ids = []) {
   const out = [];
   for (const id of ids) {
@@ -40,7 +61,8 @@ export function materialItems(project) {
  *   extraDigests { [extraTargets 의 차례]: 글 }           — 합평 모으기가 받는 여러 합평 같은 것
  *   talkCut      { upto, text }                          — 논의의 앞선 대화(upto 마디까지)를 옮긴 것, 뒤 마디는 원문 그대로
  *   fixedDigests { request, standard, projectRequest, outline } — 아주 긴 요청사항 · 집필 기준 · 작품 요청사항 · 개요(마지막 수단)
- * 돌려주는 값: { systemPrompt, userPrompt, model, modelSource, inputs }
+ * withImages — 실린 문서의 그림을 이 호출에 붙이는가(개인판 — 온라인판은 아직 false: 자리를 지키라는 규칙만 싣는다)
+ * 돌려주는 값: { systemPrompt, userPrompt, model, modelSource, inputs, webSearch, images: [{ id, label }] } — images 는 붙일 차례 그대로
  *   inputs = [{ role: 'material'|'final'|'target'|'reference'|'extra'|'talk', id, name, text }] — 실린 차례 그대로
  */
 export function planCall(project, {
@@ -48,7 +70,7 @@ export function planCall(project, {
   materials = false, allFinals = false, talk = [], prev = '', next = '',
   noCount = null, finalFirst = false, keepSeat = false, dropSeat = false,
   extraTargets = [], modelPick = '', digests = null, reading = null, targetPart = null, continueFrom = null,
-  extraDigests = null, talkCut = null, fixedDigests = null, webSearch = null,
+  extraDigests = null, talkCut = null, fixedDigests = null, webSearch = null, withImages = true,
 } = {}, { pr, slotModel = '', seatOf = null } = {}) {
   // 아주 길어 나눠 읽은 요청사항 · 집필 기준 · 작품 요청사항 · 개요는 원문 자리에 옮긴 것을 싣는다
   const fx = fixedDigests || {};
@@ -94,6 +116,9 @@ export function planCall(project, {
     finals.forEach((d) => taken.add(d.id));
   }
   const refs = docsByIds(project, refIds).filter((d) => !taken.has(d.id));
+  // 그림 — 원문(나눠 읽은 것으로 바꾸기 전)의 자리에서 고른다. 나눠 읽는 조각 호출(아래 reading)에는 붙이지 않는다
+  const pics = collectImages(project, [targets, finals, refs, mats, extraTargets]);
+  const attach = withImages && !reading ? pics.list : [];
   // 한 번에 실리지 않아 나눠 읽은 문서는 원문 자리에 «뽑아 옮긴 것»을 싣는다(core/generation/reading.mjs). 자르지 않는다.
   const swap = (xs) => (digests ? xs.map((d) => (digests[d.id] != null ? { ...d, text: digestNote(String(d.text || '').length) + digests[d.id] } : d)) : xs);
   if (digests) targets = swap(targets);   // 큰 대상이 여럿일 때 — 부분씩 보는 하나 말고는 나눠 읽은 것으로
@@ -149,12 +174,13 @@ export function planCall(project, {
   const mSwap = swap(mats); const rSwap = swap(refs); const fSwap = swap(finals);
   // 웹 검색 — 부르는 쪽이 정하지 않았으면 작품의 스위치를 따른다(DESIGN §6-6). 나눠 읽는 조각 호출(위)에는 붙이지 않는다
   const web = webSearch == null ? model.webSearchOn(project) : !!webSearch;
-  const systemPrompt = buildSystem({ prompt: pr, prev, next, crew, withFinalRule: finals.length > 0, withNoCount: nc, withWebSearch: web });
+  const systemPrompt = buildSystem({ prompt: pr, prev, next, crew, withFinalRule: finals.length > 0, withNoCount: nc, withWebSearch: web, images: attach.length, imageRefs: pics.refs });
   const userPrompt = buildUser({
     project,
     // 에이전트 준비만 자료를 통째로 싣는다. 손으로 여는 자리에서 고른 자료는 참조 · 확정본 구획으로 간다.
     materials: mSwap,
     refs: rSwap, finals: fSwap, targets, talk, written, request, task, noCount: nc,
+    images: attach, imagesOmitted: attach.length ? pics.omitted : 0,
   });
 
   // 실린 것의 목록 — buildUser 의 구획 차례(자료 → 참조 → 확정본 → 대상 → 대화)대로.
@@ -162,5 +188,5 @@ export function planCall(project, {
     ...mSwap.map(tag('material')), ...rSwap.map(tag('reference')), ...fSwap.map(tag('final')),
     ...docTargets.map(tag('target')), ...extraTargets.map(tag('extra')), ...talk.map(tag('talk')),
   ];
-  return { systemPrompt, userPrompt, model: useModel, modelSource, inputs, webSearch: web };
+  return { systemPrompt, userPrompt, model: useModel, modelSource, inputs, webSearch: web, images: attach.map((x, i) => ({ id: x.id, label: '그림 ' + (i + 1) + ' — img:' + x.id })) };
 }

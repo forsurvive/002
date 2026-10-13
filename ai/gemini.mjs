@@ -28,7 +28,7 @@ export function createGeminiProvider({ baseUrl = 'https://generativelanguage.goo
   return {
     id: 'google',
 
-    async generate({ model, systemPrompt = '', userPrompt = '', credential = null, maxOutputTokens = 0, temperature, signal = null, timeoutMs, onProgress = null, webSearch = false } = {}) {
+    async generate({ model, systemPrompt = '', userPrompt = '', credential = null, maxOutputTokens = 0, temperature, signal = null, timeoutMs, onProgress = null, webSearch = false, images = [] } = {}) {
       const started = Date.now();
       const done = (r) => ({ ...r, elapsedMs: Date.now() - started });
       if (!String(userPrompt || '').trim()) return done(failure('empty', SAY.empty));
@@ -39,7 +39,8 @@ export function createGeminiProvider({ baseUrl = 'https://generativelanguage.goo
       const cut = (why) => done(success({ providerRequestId: responseId, usage: usageOf(usage), text, finishReason: 'length', cut: why }));
       const body = {
         ...(String(systemPrompt).trim() ? { systemInstruction: { parts: [{ text: String(systemPrompt) }] } } : {}),
-        contents: [{ role: 'user', parts: [{ text: String(userPrompt) }] }],
+        // 그림(DESIGN §6-9) — 그림 이름 · inline_data 를 장마다, 본문은 맨 뒤
+        contents: [{ role: 'user', parts: [...(images || []).flatMap((x) => [{ text: String(x.label || '그림') }, { inline_data: { mime_type: x.mime, data: x.data } }]), { text: String(userPrompt) }] }],
         // 웹 검색(개인판 작품의 «웹 검색» — DESIGN §6-6): Google 검색 그라운딩
         ...(webSearch ? { tools: [{ google_search: {} }] } : {}),
         generationConfig: {

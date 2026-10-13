@@ -12,6 +12,8 @@ import { localOpenAIProvider } from '../ai/local-openai.mjs';
 import { isProvider } from '../ai/provider.mjs';
 import * as auth from './auth.mjs';
 import * as state from './state.mjs';
+import * as model from './model.mjs';
+import * as pictures from './images.mjs';
 
 // 자리마다 프롬프트 · 모델을 고르는 셈은 tools/prompt-pick.mjs 로 옮겼다(온라인 서버가 CLI 없이 쓴다) — 이름은 그대로 내보낸다.
 export { promptFor, slotModel, promptView, seatCodes, seatAgent } from './prompt-pick.mjs';
@@ -29,9 +31,20 @@ export function useGenerator(p) { generator = isProvider(p) ? p : localCliProvid
 // 개인판에서 «ChatGPT 구독» · «Gemini API 키»를 골랐으면(설정 › 무엇으로) 같은 자리에서 그 길로 간다 — 꽂아 둔 다른 Provider(온라인 · 시험)는 그대로
 const BY_MODE = { chatgpt: localCodexProvider, gemini: localGeminiProvider, openai: localOpenAIProvider };
 // webSearch — 작품의 «웹 검색»(DESIGN §6-6): 부르는 길(Claude Code · Codex · Gemini · OpenAI)마다 제 검색 도구를 연다
-export function callModel({ systemPrompt, prompt, code = '', signal = null, model = '', webSearch = false }) {
+// images — 함께 보낼 그림 [{ mime, data(base64), label }](DESIGN §6-9): 길마다 제 꼴로 싣는다
+export function callModel({ systemPrompt, prompt, code = '', signal = null, model = '', webSearch = false, images = [] }) {
   const g = generator === localCliProvider ? BY_MODE[auth.read().mode] || generator : generator;
-  return g.generate({ model, systemPrompt, userPrompt: prompt, signal, webSearch: !!webSearch, metadata: { code } });
+  return g.generate({ model, systemPrompt, userPrompt: prompt, signal, webSearch: !!webSearch, images, metadata: { code } });
+}
+
+// 계획이 고른 그림을 파일에서 읽어 보낼 꼴로 — 못 읽은 것(지워진 파일)은 건너뛴다
+function picturesFor(pid, list) {
+  const out = [];
+  for (const x of list || []) {
+    const got = pictures.read(pid, x.id);
+    if (got) out.push({ mime: got.mime, data: got.buf.toString('base64'), label: x.label });
+  }
+  return out;
 }
 
 // 일하는 법(tools/prompts.data.json)을 읽지 못했으면 부르지 않는다.
@@ -67,14 +80,15 @@ export async function callOnce({
     extraDigests, talkCut, fixedDigests,
   }, { pr: promptFor(project, code), slotModel: slotModel(project, code), seatOf: (c) => seatAgent(project, c) });
 
-  const r = await callModel({ systemPrompt: plan.systemPrompt, prompt: plan.userPrompt, code, signal, model: plan.model, webSearch: !!plan.webSearch });
+  const r = await callModel({ systemPrompt: plan.systemPrompt, prompt: plan.userPrompt, code, signal, model: plan.model, webSearch: !!plan.webSearch, images: picturesFor(pid, plan.images) });
   // 사유(reason)와 한도(limit)를 떨어뜨리지 않는다 — 작업이 이것으로 «멈출까 실패할까»를 가른다.
   if (!r.ok) return { ok: false, error: r.error, reason: r.reason, limit: r.limit, ...(r.fit ? { fit: r.fit } : {}) };
   // 이어 쓴 조각은 다듬지 않는다(잇는 자리) · 길이 한도에 닿은 응답은 끝을 다듬지 않는다(core/generation/continue.mjs)
-  const text = continueFrom ? cleanPart(r.text) : cleanResponse(r.text, { keepEnd: r.finishReason === 'length' });
+  // 이 작품에 없는 그림 자리(지어낸 id)는 «[그림: 설명]» 글로(DESIGN §6-9)
+  const text = model.keepKnownImages(project, continueFrom ? cleanPart(r.text) : cleanResponse(r.text, { keepEnd: r.finishReason === 'length' }));
   if (!text.trim()) return { ok: false, error: '빈 응답', reason: 'empty', limit: r.limit };
   // planned — 무엇을 보고 만들었나(본문은 빼고 이름·길이만). 생성 기록(generation_runs)의 재료다.
-  const planned = { model: plan.model, modelSource: plan.modelSource, inputs: plan.inputs.map(({ role, id, name, text: t }) => ({ role, id, name, chars: t.length })) };
+  const planned = { model: plan.model, modelSource: plan.modelSource, inputs: plan.inputs.map(({ role, id, name, text: t }) => ({ role, id, name, chars: t.length })), images: (plan.images || []).length };
   return { ok: true, text, usage: r.usage, costUsd: r.costUsd, limit: r.limit, authSource: r.authSource, planned, finishReason: r.finishReason || 'stop' };
 }
 

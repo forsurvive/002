@@ -33,7 +33,7 @@ export function createOpenAIProvider({ baseUrl = 'https://api.openai.com', fetch
   return {
     id: 'openai',
 
-    async generate({ model, systemPrompt = '', userPrompt = '', credential = null, maxOutputTokens = 0, temperature, signal = null, timeoutMs, onProgress = null, webSearch = false } = {}) {
+    async generate({ model, systemPrompt = '', userPrompt = '', credential = null, maxOutputTokens = 0, temperature, signal = null, timeoutMs, onProgress = null, webSearch = false, images = [] } = {}) {
       const started = Date.now();
       const done = (r) => ({ ...r, elapsedMs: Date.now() - started });
       if (!String(userPrompt || '').trim()) return done(failure('empty', SAY.empty));
@@ -46,7 +46,10 @@ export function createOpenAIProvider({ baseUrl = 'https://api.openai.com', fetch
       const body = {
         model,
         ...(String(systemPrompt).trim() ? { instructions: String(systemPrompt) } : {}),
-        input: String(userPrompt),
+        // 그림(DESIGN §6-9) — 있으면 사용자 메시지 하나에 그림 이름 · input_image(data URL)를 장마다, 본문은 맨 뒤. 없으면 지금 그대로 글 한 덩이
+        input: images && images.length
+          ? [{ role: 'user', content: [...images.flatMap((x) => [{ type: 'input_text', text: String(x.label || '그림') }, { type: 'input_image', image_url: 'data:' + x.mime + ';base64,' + x.data }]), { type: 'input_text', text: String(userPrompt) }] }]
+          : String(userPrompt),
         // 웹 검색(개인판 작품의 «웹 검색» — DESIGN §6-6): Responses 의 web_search 도구
         ...(webSearch ? { tools: [{ type: 'web_search' }] } : {}),
         ...(Number(maxOutputTokens) > 0 ? { max_output_tokens: Number(maxOutputTokens) } : {}),

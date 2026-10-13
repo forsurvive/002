@@ -7,8 +7,8 @@ import { success, failure } from './provider.mjs';
 
 export const localCliProvider = {
   id: 'local-cli',
-  async generate({ model, systemPrompt, userPrompt, signal = null, webSearch = false, metadata = {} } = {}) {
-    const r = await runClaudeCall({ systemPrompt, prompt: userPrompt, mockKey: (metadata && metadata.code) || '', signal, model, webSearch });
+  async generate({ model, systemPrompt, userPrompt, signal = null, webSearch = false, images = [], metadata = {} } = {}) {
+    const r = await runClaudeCall({ systemPrompt, prompt: userPrompt, mockKey: (metadata && metadata.code) || '', signal, model, webSearch, images });
     const common = { limit: r.limit || null, elapsedMs: r.elapsedMs || 0, authSource: r.authSource || '' };
     if (!r.ok) return failure(r.reason, r.error, { ...common, ...(r.fit ? { fit: r.fit } : {}) });
     const u = r.usage || {};

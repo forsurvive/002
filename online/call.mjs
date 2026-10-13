@@ -118,7 +118,7 @@ export function createOnlineCall({ pool, store, generator, aliasTiers = DEFAULT_
     const project = await store.get(pid);
     if (!project) return { ok: false, error: '프로젝트를 찾을 수 없습니다', reason: 'other' };
     // 웹 검색은 아직 개인판에만 이어 두었다(DESIGN §6-6) — 온라인판은 도구를 싣지 않으므로 «■ 웹 검색» 구획도 싣지 않는다(EBOOK_EDITION E1 에서 잇는다)
-    const plan = planCall(project, { ...args, webSearch: false }, { pr: promptFor(project, code), slotModel: slotModel(project, code) });
+    const plan = planCall(project, { ...args, webSearch: false, withImages: false }, { pr: promptFor(project, code), slotModel: slotModel(project, code) });
     return send(pid, project, {
       systemPrompt: plan.systemPrompt, userPrompt: plan.userPrompt, alias: plan.model, modelSource: plan.modelSource, code,
       inputs: plan.inputs, request: args.request, requestOnce: args.requestOnce, stageKey: args.stageKey, stageTier: args.stageTier, target: (args.targetIds || [])[0] || '', signal: args.signal,

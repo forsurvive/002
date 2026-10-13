@@ -1186,7 +1186,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 부르는 길은 그대로 구독(claude CLI)이다
   const callSrc = src(join(HERE, 'call.mjs'));
   // 온라인 운영자 구독(ai/subscription.mjs)만 실행기 자리 · 'sub' 를 넘긴다. 개인판은 넘기지 않으므로 탐색한 실행기 · 그 PC 의 auth.json 그대로.
-  ok('**부르는 길은 클로드 실행기 그대로다**', callSrc.includes("spawn(cli || CLI, buildCallArgs(spFile, model, { noPersist, webSearch })") && callSrc.includes('childEnv(authMode ? { mode: authMode } : auth.read())'));
+  ok('**부르는 길은 클로드 실행기 그대로다**', callSrc.includes("spawn(cli || CLI, buildCallArgs(spFile, model, { noPersist, webSearch, streamInput: pics.length > 0 })") && callSrc.includes('childEnv(authMode ? { mode: authMode } : auth.read())'));
   ok('처음 한 번 로그인과 설치는 그대로다', launchSrc.includes("'auth', 'login', '--claudeai'") && launchSrc.includes('await installClaudeCode()')
     && src(join(HERE, 'claude-cli.mjs')).includes("'https://claude.ai/install.cmd'"));
   // 지어진 에이전트를 고칠 수 있다(사용자 지시, 2026-09-22)
@@ -2179,7 +2179,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   await createOpenAIProvider({ fetchImpl: fakeFetch }).generate({ model: 'o', userPrompt: 'u', credential: { apiKey: 'k' } });
   ok('Gemini — google_search 도구(끄면 없음)', JSON.stringify(bodies[0].tools) === JSON.stringify([{ google_search: {} }]) && !bodies[1].tools);
   ok('ChatGPT API 키 — Responses 의 web_search 도구(끄면 없음)', JSON.stringify(bodies[2].tools) === JSON.stringify([{ type: 'web_search' }]) && !bodies[3].tools);
-  ok('온라인판은 아직 웹 검색을 잇지 않았다 — 구획도 싣지 않는다', src(join(ROOT, 'online', 'call.mjs')).includes('planCall(project, { ...args, webSearch: false }'));
+  ok('온라인판은 아직 웹 검색을 잇지 않았다 — 구획도 싣지 않는다', src(join(ROOT, 'online', 'call.mjs')).includes('planCall(project, { ...args, webSearch: false, withImages: false }'));
 
   // 서버 — 작품의 스위치가 실제 부르기까지 간다
   const seen = [];
@@ -2447,6 +2447,85 @@ function tinyPng(rgb = [220, 20, 20], w = 4, h = 4) {
     && appSrc.includes('const PIC_EDGE = 1600;'));
   const css = src(join(ROOT, 'web', 'style.css'));
   ok('그림 반 이름이 style.css 에', css.includes('.md .md-img') && css.includes('.md .md-noimg'));
+}
+
+{
+  // ---- AI 에게도 그림(DESIGN §6-9) — 계획 · 프롬프트 · 부르는 길마다 · 서버 끝까지
+  const asm = await import('../core/prompt/assemble.mjs');
+  const { planCall, IMAGE_CAP } = await import('../core/reference/plan.mjs');
+  ok('시스템 프롬프트 — 그림이 붙으면 «붙어 있다 + 자리 지키기», 자리만 있으면 «자리 지키기»만, 없으면 구획 없음',
+    asm.buildSystem({ prompt: { name: 'ㄱ', role: 'ㄴ' }, images: 2 }).includes('■ 그림\n' + asm.IMAGE_ATTACHED + '\n' + asm.IMAGE_RULE)
+    && asm.buildSystem({ prompt: { name: 'ㄱ', role: 'ㄴ' }, imageRefs: true }).includes('■ 그림\n' + asm.IMAGE_RULE)
+    && !asm.buildSystem({ prompt: { name: 'ㄱ', role: 'ㄴ' } }).includes('■ 그림'));
+  const doc = (id, title, body) => ({ id, kind: 'doc', title, body, isFinal: false, refIds: [], targetIds: [], agentIds: [], versions: [] });
+  const pp = {
+    name: '작', spec: {}, crew: [], images: [{ id: 'i_a' }, { id: 'i_b' }, { id: 'i_c' }],
+    docs: [doc('d_t', '대상 글', '대상 ![가](img:i_b) ![가짜](img:i_none)'), doc('d_r', '참조 글', '참조 ![나](img:i_a) ![가](img:i_b)'), { ...doc('d_f', '확정 글', '확정 ![다](img:i_c)'), isFinal: true }],
+  };
+  const pr = { name: '자리', role: '역할', task: '할 일', craft: '' };
+  const pl = planCall(pp, { targetIds: ['d_t'], refIds: ['d_r', 'd_f'] }, { pr });
+  ok('**계획 — 실린 문서의 그림을 대상 › 확정본 › 참조 차례로 · 겹친 것 한 번 · 작품에 없는 id 는 빼고**', pl.images.map((x) => x.id).join() === 'i_b,i_c,i_a'
+    && pl.images[0].label === '그림 1 — img:i_b' && pl.userPrompt.includes('■ 그림 목록\n그림 1 — img:i_b · «대상 글» · 가\n그림 2 — img:i_c · «확정 글» · 다\n그림 3 — img:i_a · «참조 글» · 나')
+    && pl.systemPrompt.includes(asm.IMAGE_ATTACHED), pl.userPrompt.slice(-400));
+  const off = planCall(pp, { targetIds: ['d_t'], withImages: false }, { pr });
+  ok('그림을 붙이지 않는 자리(온라인판)는 목록 없이 자리 지키기 규칙만', off.images.length === 0 && !off.userPrompt.includes('■ 그림 목록') && off.systemPrompt.includes('■ 그림\n' + asm.IMAGE_RULE) && !off.systemPrompt.includes(asm.IMAGE_ATTACHED));
+  const many = { ...pp, images: Array.from({ length: IMAGE_CAP + 3 }, (_, i) => ({ id: 'i_' + i })), docs: [doc('d_m', '많은 글', Array.from({ length: IMAGE_CAP + 3 }, (_, i) => '![p' + i + '](img:i_' + i + ')').join('\n'))] };
+  const plm = planCall(many, { targetIds: ['d_m'] }, { pr });
+  ok('한 호출 ' + IMAGE_CAP + '장까지 — 넘친 것은 글 속 자리만 남는다고 적는다', plm.images.length === IMAGE_CAP && plm.userPrompt.includes('(그림 3장은 한 번에 붙일 수 없어 빠졌다'));
+  ok('나눠 읽는 조각 호출에는 그림을 붙이지 않는다', (planCall(pp, { targetIds: ['d_t'], reading: { id: 'd_t', name: '대상 글', k: 1, n: 2, text: '조각' } }, { pr }).images || []).length === 0);
+  ok('그림이 없는 호출은 지금과 같다', planCall({ ...pp, docs: [doc('d_x', '글', '그냥 글')] }, { targetIds: ['d_x'] }, { pr }).images.length === 0);
+
+  // 부르는 길마다
+  const callMod = await import('./call.mjs');
+  const cx = await import('./codex-cli.mjs');
+  const a1 = callMod.buildCallArgs('sp.txt', 'opus', { streamInput: true });
+  ok('Claude — 그림이 있을 때만 stream-json 입력(--tools 는 여전히 맨 뒤)', a1[a1.indexOf('--input-format') + 1] === 'stream-json' && a1.at(-2) === '--tools' && !callMod.buildCallArgs('sp.txt', 'opus', {}).includes('--input-format'));
+  const line = JSON.parse(callMod.claudeUserLine('본문', [{ mime: 'image/png', data: 'QUJD', label: '그림 1 — img:i_a' }]));
+  ok('Claude — 사용자 메시지 한 줄: 그림 이름 → 그림 → 본문', line.type === 'user' && line.message.content.map((c) => c.type).join() === 'text,image,text'
+    && line.message.content[1].source.media_type === 'image/png' && line.message.content[1].source.data === 'QUJD' && line.message.content[2].text === '본문');
+  const cArgs = cx.buildCodexArgs({ dir: 'd', systemPromptFile: 's', outFile: 'o', images: ['d/pic-1.png', 'd/pic-2.jpg'] });
+  ok('ChatGPT 구독(Codex) — «--image=<파일>» 을 장마다 · 프롬프트는 여전히 표준 입력(-)', cArgs.slice(2, 4).join() === '--image=d/pic-1.png,--image=d/pic-2.jpg' && cArgs.at(-1) === '-');
+  const { createGeminiProvider } = await import('../ai/gemini.mjs');
+  const { createOpenAIProvider } = await import('../ai/openai.mjs');
+  const bodies = [];
+  const fakeFetch = async (url, init) => { bodies.push(JSON.parse(init.body)); return new Response('', { status: 400 }); };
+  const pic = [{ mime: 'image/png', data: 'QUJD', label: '그림 1 — img:i_a' }];
+  await createGeminiProvider({ fetchImpl: fakeFetch }).generate({ model: 'g', userPrompt: 'u', credential: { apiKey: 'k' }, images: pic });
+  await createOpenAIProvider({ fetchImpl: fakeFetch }).generate({ model: 'o', userPrompt: 'u', credential: { apiKey: 'k' }, images: pic });
+  await createOpenAIProvider({ fetchImpl: fakeFetch }).generate({ model: 'o', userPrompt: 'u', credential: { apiKey: 'k' } });
+  ok('Gemini — 그림 이름 · inline_data · 본문', JSON.stringify(bodies[0].contents[0].parts) === JSON.stringify([{ text: '그림 1 — img:i_a' }, { inline_data: { mime_type: 'image/png', data: 'QUJD' } }, { text: 'u' }]));
+  ok('ChatGPT API 키 — input_image(data URL) · 그림이 없으면 지금 그대로 글 한 덩이', bodies[1].input[0].content[1].type === 'input_image' && bodies[1].input[0].content[1].image_url === 'data:image/png;base64,QUJD' && bodies[2].input === 'u');
+
+  // 서버 끝까지 — 자료의 그림이 자료 분석에 · 참조로 건 문서의 그림이 갱신에 · 지어낸 그림 자리는 글로
+  const png = tinyPng([1, 2, 3]);
+  const seen = [];
+  let iidReal = '';
+  globalThis.__SE2_MOCK_FN = (a) => {
+    seen.push({ key: a.mockKey, n: (a.images || []).length, labels: (a.images || []).map((x) => x.label), mime: (a.images || []).map((x) => x.mime), data: (a.images || []).map((x) => x.data), sys: String(a.systemPrompt || '') });
+    if (a.mockKey === 'F-UPDATE' && iidReal) return '새 글 ![지도](img:' + iidReal + ') 그리고 ![지어냄](img:i_made_up)';
+    return MOCK_FN(a);
+  };
+  const sp = await post('project.create', { name: '그림 보내기', purpose: 'ebook', spec: { form: '실용서' }, materials: [{ name: '자료', text: '설명\n![지도](img:k1)', images: [{ key: 'k1', name: '지도', data: png.toString('base64') }] }] });
+  await settle(sp.pid, 60000);
+  const stateMod = await import('./state.mjs');
+  const raw = stateMod.get(sp.pid);
+  iidReal = raw.images[0].id;
+  const study = seen.find((x) => x.key === 'S02');
+  ok('**자료 분석(S02)이 자료의 그림을 받는다 · 종류 판정 · 에이전트 짓기(제어 호출)는 받지 않는다**', !!study && study.n === 1 && study.mime[0] === 'image/png' && study.data[0] === png.toString('base64')
+    && study.labels[0] === '그림 1 — img:' + iidReal && study.sys.includes('■ 그림') && seen.filter((x) => x.key === 'F-KIND' || x.key === 'F-AGENT').every((x) => x.n === 0));
+  const mat = raw.docs.find((x) => x.material);
+  const dd = await post('doc.create', { pid: sp.pid, title: '그림 보는 글' });
+  await post('doc.write', { pid: sp.pid, id: dd.id, request: '지도를 설명하라', refIds: [mat.id] });
+  seen.length = 0;
+  await post('doc.update', { pid: sp.pid, id: dd.id });
+  await settle(sp.pid);
+  const upd = seen.find((x) => x.key === 'F-UPDATE');
+  const body = stateMod.get(sp.pid).docs.find((x) => x.id === dd.id).body;
+  ok('**참조로 건 문서의 그림이 갱신 호출에 함께 간다**', !!upd && upd.n === 1 && upd.labels[0] === '그림 1 — img:' + iidReal);
+  ok('응답의 그림 자리 — 작품의 그림은 남고, 지어낸 id 는 «[그림: 설명]» 글로', body === '새 글 ![지도](img:' + iidReal + ') 그리고 [그림: 지어냄]', body);
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  await post('project.delete', { pid: sp.pid });
+  ok('온라인판은 아직 그림을 붙이지 않는다(자리 지키기 규칙만)', src(join(ROOT, 'online', 'call.mjs')).includes('withImages: false'));
 }
 
 // ---------------------------------------------------------------- 화면-서버 배선

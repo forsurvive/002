@@ -40,10 +40,12 @@ export function resolveCodex(env = process.env) {
 // TOML 기본 문자열 — 윈도우 경로의 \ 와 따옴표를 그대로 넘기려면 JSON 꼴이 그대로 맞는다
 const toml = (s) => JSON.stringify(String(s));
 
-export function buildCodexArgs({ dir, systemPromptFile, outFile, model = '', webSearch = false }) {
+// images — 함께 보낼 그림 파일들(DESIGN §6-9). «--image» 는 값을 여럿 받는 깃발이라 «--image=<파일>» 꼴로 장마다 붙인다(뒤의 «-» 를 그림으로 삼키지 않게)
+export function buildCodexArgs({ dir, systemPromptFile, outFile, model = '', webSearch = false, images = [] }) {
   const m = String(model || '').trim();
   return [
     'exec', '--json',
+    ...(Array.isArray(images) ? images : []).map((f) => '--image=' + f),
     ...(m ? ['-m', m] : []),      // 사람이 고른 모델(설정 › 무엇으로 › ChatGPT 구독) — 없으면 Codex 의 기본
     '--skip-git-repo-check',      // 빈 임시 폴더는 깃 저장소가 아니다
     '--ephemeral',                // 대화 기록을 그 PC 에 남기지 않는다

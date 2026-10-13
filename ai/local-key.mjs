@@ -16,9 +16,9 @@ export function createLocalKeyProvider({ id, provider, name, keyField, tierField
   const SAY = { auth: name + ' API 키가 없습니다 — 설정 › 무엇으로 에서 키를 넣어 주십시오', model: '카탈로그(config/models.json)에 그 ' + name + ' 모델이 없습니다' };
   return {
     id,
-    async generate({ model, systemPrompt, userPrompt, signal = null, webSearch = false, metadata = {} } = {}) {
+    async generate({ model, systemPrompt, userPrompt, signal = null, webSearch = false, images = [], metadata = {} } = {}) {
       if (mock) {
-        const r = await runClaudeCall({ systemPrompt, prompt: userPrompt, mockKey: (metadata && metadata.code) || '', signal, model, webSearch });
+        const r = await runClaudeCall({ systemPrompt, prompt: userPrompt, mockKey: (metadata && metadata.code) || '', signal, model, webSearch, images });
         return r.ok ? success({ text: r.text, finishReason: r.finishReason || 'stop', authSource: 'mock', elapsedMs: r.elapsedMs || 0 })
           : failure(r.reason, r.error, { elapsedMs: r.elapsedMs || 0 });
       }
@@ -28,7 +28,7 @@ export function createLocalKeyProvider({ id, provider, name, keyField, tierField
       if (!entry) return failure('model', SAY.model);
       const r = await withSeat(signal, () => adapter.generate({
         model: entry.modelId, systemPrompt, userPrompt, credential: { apiKey: a[keyField] },
-        maxOutputTokens: entry.maxOutputTokens, signal, timeoutMs: CALL_TIMEOUT_MS, webSearch: !!webSearch,
+        maxOutputTokens: entry.maxOutputTokens, signal, timeoutMs: CALL_TIMEOUT_MS, webSearch: !!webSearch, images,
       }));
       if (!r) return failure('stopped', '중지됨');
       return { ...r, authSource: id };
