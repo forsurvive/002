@@ -2,6 +2,7 @@
 //   node tools/usb-build.mjs --out <USB 의 폴더>                # 처음 만들기 · 업데이트(같은 명령)
 //   node tools/usb-build.mjs --out <USB 의 폴더> --node v22.23.3 --claude 2.1.296
 //   node tools/usb-build.mjs --out <USB 의 폴더> --skip-download  # 앱 파일만 바꾼다(동봉물은 그대로)
+//   tools\node\node.exe tools\usb-build.mjs --here               # USB 의 그 폴더 안에서 — Node · Claude Code 만 새로 받는다(앱 파일은 그대로)
 //   node tools/usb-build.mjs --out <USB 의 폴더> --with-codex     # ChatGPT 구독 길(Codex CLI)도 담는다 — 한 번 담으면 업데이트 때 함께 바뀐다
 // 받는 곳은 둘뿐이다 — Node 는 nodejs.org 의 배포 폴더(SHASUMS256.txt 의 sha256 과 맞춰 본다),
 // Claude Code 는 앤트로픽이 npm 에 올린 윈도우 패키지 @anthropic-ai/claude-code-win32-x64(레지스트리가 적은 sha512 와 맞춰 본다).
@@ -233,6 +234,7 @@ function args(argv) {
     const a = argv[i];
     if (a === '--skip-download') o.skip = true;
     else if (a === '--with-codex') o.codex = 'latest';
+    else if (a === '--here') o.here = true;
     else if (a.startsWith('--')) o[a.slice(2)] = argv[++i];
   }
   return o;
@@ -241,19 +243,21 @@ function args(argv) {
 async function main() {
   const log = (s) => console.log(s);
   const o = args(process.argv.slice(2));
-  if (!o.out) {
-    log('Usage: node tools/usb-build.mjs --out <folder on the USB stick> [--node ' + DEFAULT_NODE + '] [--claude latest|<version>] [--with-codex] [--codex-version <version>] [--skip-download]');
+  if (!o.out && !o.here) {
+    log('Usage: node tools/usb-build.mjs --out <folder on the USB stick> [--node ' + DEFAULT_NODE + '] [--claude latest|<version>] [--with-codex] [--codex-version <version>] [--skip-download]   or   --here');
     process.exit(2);
   }
-  const out = resolve(o.out);
+  // --here — 이 폴더(이미 USB 에 있는 휴대판) 자체의 Node · Claude Code(· Codex)만 새로 받는다. 앱 파일은 건드리지 않는다
+  const here = !!o.here;
+  const out = here ? ROOT : resolve(o.out);
   const rel = relative(ROOT, out);
-  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) {
+  if (!here && (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel)))) {
     log('  [STOP] --out must be outside this repository folder');
     process.exit(2);
   }
   mkdirSync(out, { recursive: true });
   log('  Story Engine USB build -> ' + out.replace(/[^\x20-\x7e]/g, '?'));
-  const files = copyApp(out, { log });
+  const files = here ? ((() => { try { return JSON.parse(readFileSync(join(out, MANIFEST), 'utf8')).files || []; } catch { return appFiles(); } })()) : copyApp(out, { log });
   const prev = (() => { try { return JSON.parse(readFileSync(join(out, MANIFEST), 'utf8')); } catch { return {}; } })();
   let node = prev.node || null, claude = prev.claude || null, codex = prev.codex || null;
   if (!o.skip) {

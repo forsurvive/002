@@ -1,5 +1,5 @@
 // 원클릭 실행기 — 「스토리 엔진 개인판.cmd」 더블클릭 한 번으로 로그인 확인부터 서버 기동·브라우저 열기까지.
-//   1) Claude Code 실행기 탐색 — 없으면 앤트로픽 공식 설치기로 깐다
+//   1) Claude Code 실행기 탐색 — 없으면 USB 휴대판(폴더의 node 로 돈다)은 폴더 안으로 받아 오고, 그 밖은 앤트로픽 공식 설치기로 깐다
 //   2) 로그인 상태 확인 → 안 되어 있으면 이 창에서 브라우저 로그인(그 PC 에서 처음 한 번)
 //   3) 서버 기동(tools/server.mjs) + 기본 브라우저 열기
 // 콘솔 문구는 ASCII만 — 윈도우 cmd 창의 코드페이지에 따라 한글이 깨진다.
@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveCliDetailed, childEnv, authStatus, installClaudeCode, INSTALL_URL } from './claude-cli.mjs';
 import { resolveCodex, codexLoggedIn, codexLogin } from './codex-cli.mjs';
+import { fetchClaude } from './usb-build.mjs';
 import * as auth from './auth.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -16,6 +17,19 @@ const PORT = Number(process.env.SE2_PORT || 8801);
 const line = (s = '') => console.log(s);
 
 let R = resolveCliDetailed();
+
+// USB 휴대판(폴더의 tools\node\node.exe 로 도는 창)인데 Claude Code 가 아직 폴더에 없으면 — PC 에 깔지 않고 **폴더 안으로** 받아 온다.
+// 앱 묶음만 내려받아 USB 에 푼 첫날이 그때다(docs/PERSONAL_USB.md §5). 받는 곳 · 확인은 만들기 도구와 같다(npm 의 앤트로픽 윈도우 패키지 · sha512).
+const portableNode = process.execPath.toLowerCase().startsWith(join(HERE, 'node').toLowerCase());
+if (!R.found && portableNode && process.platform === 'win32' && process.arch === 'x64') {
+  line('  ------------------------------------------------------------');
+  line('   Claude Code is not in this folder yet. Downloading it into');
+  line('   tools\\claude\\ (once - about 80MB, checked with sha512).');
+  line('  ------------------------------------------------------------');
+  try { await fetchClaude(dirname(HERE), 'latest', line); } catch (e) { line('  [WARN] ' + String((e && e.message) || e).replace(/[^\x20-\x7e]/g, '?')); }
+  line();
+  R = resolveCliDetailed();
+}
 
 // 없으면 **여기서 깐다.** USB 로 옮겨 온 PC 의 첫날이 바로 그때다 —
 // 폴더는 따라왔지만 Claude Code 는 그 PC 에 없다. 그때 「직접 깔아 오십시오」로 끝내면

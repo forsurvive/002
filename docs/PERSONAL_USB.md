@@ -88,6 +88,12 @@ node tools/usb-build.mjs --out <USB 의 폴더> --skip-download       앱 파일
 2. USB 를 꽂고 `node tools/usb-build.mjs --out <USB 의 폴더>`. 끝나면 `Done.` 과 Node · Claude 판이 찍힌다.
 3. 지금 쓰던 개인판이 있으면 그 폴더의 `data\` 를 USB 폴더의 `data\` 로 복사한다(아래 «데이터 옮기기»).
 
+### 앱 묶음(zip)으로 시작하기 — 만들기 도구를 돌릴 PC 가 없을 때
+1. 앱 묶음 `StoryEngineUSB-app.zip`(약 1MB — 앱 파일만)을 받아 **오른쪽 클릭 › 속성 › «차단 해제»**를 켠 뒤 USB 에 압축을 푼다.
+2. `https://nodejs.org/dist/v22.23.3/win-x64/node.exe` 를 받아 그 폴더의 `tools\node\` 에 넣는다(파일 하나, 약 87MB).
+3. `스토리 엔진 개인판.cmd` 더블클릭 — 폴더의 node 로 도는 창은 Claude Code 가 없으면 **PC 에 깔지 않고 `tools\claude\` 로 받아 온다**(한 번, sha512 확인 — `launch.mjs` 가 만들기 도구의 `fetchClaude` 를 쓴다). 이어서 로그인 → 앱.
+4. 나중에 Node · Claude Code 를 새로 받으려면 그 폴더에서 `tools\node\node.exe tools\usb-build.mjs --here`(앱 파일은 그대로 둔다).
+
 ### 새 PC 에서
 1. USB 를 꽂고 그 폴더의 `스토리 엔진 개인판.cmd` 를 더블클릭한다. 검은 창은 쓰는 동안 닫지 않는다.
 2. 그 PC 에서 처음이면 브라우저 로그인 창이 뜬다 — claude.ai 계정으로 로그인하고 승인한다(Claude Code 는 USB 에 있어 설치하지 않는다).

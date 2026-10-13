@@ -703,6 +703,7 @@ callOnce 를 지나지 않고 곧장 부르는 에이전트 준비(`agents.prepa
 - **노드는 `%~dp0tools\node\node.exe` → PATH 의 `node` 순서로만 찾는다.** 옆 폴더는 뒤지지 않는다 —
   USB 로 옮겨 가면 옆에 무엇이 있을지 모르고, 남의 판의 노드를 주워 돌면 그 판을 지우는 날 이 판이 멎는다.
 - `launch.mjs` 는 Claude Code 가 없으면 **앤트로픽의 공식 설치기로 스스로 깐다.** 옮겨 온 PC 의 첫날이 그때다.
+  단 폴더의 `tools\node\node.exe` 로 도는 창(USB 휴대판)은 PC 에 깔지 않고 폴더 안(`tools\claude\`)으로 받아 온다 — 만들기 도구와 같은 곳 · 같은 sha512 확인(2026-10-13, `docs/PERSONAL_USB.md` §5).
   설치 한 줄(curl → `%TEMP%\cc-install.cmd` → 실행 → 지우기)은 `claude-cli.installClaudeCode` 한 곳이 맡고,
   cmd 에 **손대지 않고** 넘긴다(`/d /s /c "…"` + `windowsVerbatimArguments`). 전에는 `spawn('cmd', ['/c', 한 줄])` 이라
   노드가 안쪽 따옴표를 `\"` 로 바꿨고, curl 이 따옴표 박힌 파일 이름을 받아 **설치가 한 번도 되지 않았다.**

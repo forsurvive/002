@@ -2398,6 +2398,10 @@ process.stdin.on('end', () => {
   const boot = spawnSync(process.execPath, ['--input-type=module', '-e', 'await import(' + JSON.stringify(pathToFileURL(join(real, 'tools', 'server.mjs')).href) + '); await import(' + JSON.stringify(pathToFileURL(join(real, 'tools', 'launch.mjs')).href.replace('launch.mjs', 'claude-cli.mjs')) + '); console.log("loaded")'],
     { env: { ...process.env, SE2_DATA_DIR: join(BOX, 'realusb-data') }, encoding: 'utf8', timeout: 30000 });
   ok('USB 에 담은 폴더만으로 서버의 모듈이 모두 읽힌다', boot.status === 0 && boot.stdout.includes('loaded'), boot.stderr.slice(0, 300));
+  ok('--here — 그 폴더 안에서 Node · Claude Code 만 새로 받는다(앱 파일은 그대로)', ubSrc.includes("const out = here ? ROOT : resolve(o.out);") && ubSrc.includes('const files = here ?'));
+  const la2 = src(join(HERE, 'launch.mjs'));
+  ok('휴대판(폴더의 node)인데 Claude Code 가 없으면 PC 에 깔지 않고 폴더 안으로 받아 온다', la2.includes("process.execPath.toLowerCase().startsWith(join(HERE, 'node').toLowerCase())")
+    && la2.includes("await fetchClaude(dirname(HERE), 'latest', line)") && la2.indexOf('fetchClaude(dirname(HERE)') < la2.indexOf('installClaudeCode()'));
   ok('저장소 안에는 만들지 않는다', outside.status === 2 && /must be outside/.test(outside.stdout) && !existsSync(join(ROOT, 'tools', 'usbtest')));
 }
 
