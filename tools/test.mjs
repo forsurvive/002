@@ -2156,6 +2156,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('작품 목록은 백업 폴더를 작품으로 읽지 않는다', !src(join(HERE, 'store.mjs')).includes("join(DATA_DIR, 'backup'"));
   const sv = src(join(HERE, 'server.mjs'));
   ok('서버는 켤 때 잠그고 백업한 뒤에 선다', sv.indexOf('lockData(DATA_DIR)') > 0 && sv.indexOf('lockData(DATA_DIR)') < sv.indexOf('backupProjects(DATA_DIR)') && sv.indexOf('backupProjects(DATA_DIR)') < sv.indexOf('await boot(PORT)'));
+  const la = src(join(HERE, 'launch.mjs'));
+  ok('실행기로 띄운 개인판은 늘 127.0.0.1 에만 연다', la.includes("SE2_HOST: '127.0.0.1'") && la.includes("SE2_ALLOW_OPEN: ''"));
+  ok('담아 온 Claude Code 는 스스로 고치지 않는다(PC 에 새 판을 깔지 않게)', /via\.startsWith\('portable'\)\) process\.env\.DISABLE_AUTOUPDATER = '1'/.test(la));
+  eq('127.0.0.1 로 못박으면 바깥에 열리지 않는다', hosting.resolveHosting({ SE2_HOST: '127.0.0.1', SE2_PORT: '8801' }).exposed, false);
   ok('창을 닫아도 잠금을 걷고 나간다', sv.includes("'SIGHUP'") && sv.includes("process.on('exit', lock.release)"));
 }
 

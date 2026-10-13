@@ -40,6 +40,9 @@ if (!R.found) {
   process.exit(1);
 }
 line('  Claude Code : ' + R.cli + '  (via: ' + R.via + ')');
+// 폴더에 담아 온 실행기(USB 휴대판)는 스스로 고치지 않게 한다 — 저절로 고치면 새 판을 이 PC 의 사용자 폴더에 깔아 두고 간다.
+// 새 판은 만들기 도구로 USB 에 다시 담는다(docs/PERSONAL_USB.md §4).
+if (R.via.startsWith('portable')) process.env.DISABLE_AUTOUPDATER = '1';
 line();
 
 const before = await authStatus(R.cli);
@@ -74,6 +77,7 @@ if (process.env.SE2_LAUNCH_CHECK_ONLY) {
 
 const server = spawn(process.execPath, [join(HERE, 'server.mjs')], {
   stdio: 'inherit',
-  env: { ...process.env, SE2_OPEN_BROWSER: '1', SE2_PORT: String(PORT) },
+  // 더블클릭으로 띄운 개인판은 늘 이 PC 안(127.0.0.1)에만 연다 — 남아 있던 호스팅 설정(SE2_HOST 따위)이 바깥에 열지 못하게
+  env: { ...process.env, SE2_OPEN_BROWSER: '1', SE2_PORT: String(PORT), SE2_HOST: '127.0.0.1', SE2_ALLOW_OPEN: '' },
 });
 server.on('close', (c) => process.exit(c == null ? 0 : c));
