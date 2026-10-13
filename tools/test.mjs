@@ -988,6 +988,112 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
+  // 작업은 끊기지 않는다 — 나가도 · 여러 작품이 함께 · 한도에 닿아도 · 다시 켜도 (DESIGN §6-5, 사용자 지시 2026-10-13)
+  const jobs = await import('./jobs.mjs');
+  const call = await import('./call.mjs');
+  const MAT = [{ name: '자', text: '자료 본문' }];
+  const A = await post('project.create', { name: '나가도 가', spec: { form: '소설' }, materials: MAT });
+  const B = await post('project.create', { name: '나가도 나', spec: { form: '소설' }, materials: MAT });
+  await settle(A.pid, 60000);
+  await settle(B.pid, 60000);
+  const jobOf = async (pid, id) => (await stateOf(pid)).project.jobs.find((j) => j.id === id);
+
+  // 나가도 — 화면은 나갈 때 아무 문도 부르지 않는다. 서버에서는 다른 작품 · 첫 화면을 보는 동안에도 돈다
+  const app = src(join(ROOT, 'web', 'app.js'));
+  ok('화면 — 작품을 나갈 때 작업에 손대지 않는다', /function goHome\(\) \{ S\.pid = null; S\.project = null; S\.tab = '작업실'; pull\(true\); \}/.test(app));
+  let relA = null, relB = null;
+  const ja = jobs.start(A.pid, { kind: 'call', title: '가의 일', run: async () => { await new Promise((r) => { relA = r; }); return { ok: true }; } });
+  const jb = jobs.start(B.pid, { kind: 'call', title: '나의 일', run: async () => { await new Promise((r) => { relB = r; }); return { ok: true }; } });
+  await sleep(20);
+  const home = await (await fetch(base + '/api/state')).json();
+  ok('첫 화면 — 작품마다 도는 작업 수', home.projects.find((x) => x.id === A.pid).running === 1 && home.projects.find((x) => x.id === B.pid).running === 1);
+  ok('화면 — 카드에 «진행 중 n»', app.includes("p.running ? h('span', { class: 'mark', text: '진행 중 ' + p.running })"));
+  ok('여러 작품의 작업이 함께 돈다', (await jobOf(A.pid, ja.jobId)).status === 'running' && (await jobOf(B.pid, jb.jobId)).status === 'running');
+  relB();
+  await sleep(20);
+  ok('한 작품이 끝나도 다른 작품은 그대로 돈다', (await jobOf(B.pid, jb.jobId)).status === 'done' && (await jobOf(A.pid, ja.jobId)).status === 'running');
+  relA();
+  await sleep(20);
+  eq('나가 있던 작품의 작업도 끝까지 간다', (await jobOf(A.pid, ja.jobId)).status, 'done');
+
+  // 호출 자리를 기다리는 작업 — «차례 기다림»(여러 작품이 온 차례대로 나눠 쓴다)
+  const hold = [];
+  const seats = [];
+  for (let i = 0; i < call.MAX_CALLS; i++) seats.push(call.withSeat(null, () => new Promise((r) => hold.push(r))));
+  await sleep(10);
+  const jq = jobs.start(B.pid, { kind: 'call', title: '차례', run: async (ctx) => call.withSeat(ctx.signal, async () => ({ ok: true })) });
+  await sleep(20);
+  ok('자리가 없으면 «차례 기다림»이 적힌다', (await jobOf(B.pid, jq.jobId)).queued === true && (await jobOf(B.pid, jq.jobId)).status === 'running');
+  ok('화면 — 작업 줄에 «차례 기다림»', app.includes("if (j.status === 'running' && j.queued) return '차례 기다림'"));
+  for (const r of hold) r();
+  await Promise.all(seats);
+  await sleep(30);
+  const jqDone = await jobOf(B.pid, jq.jobId);
+  ok('자리를 얻으면 돌고 끝난다', jqDone.status === 'done' && !jqDone.queued);
+
+  // 한도에 닿았는데 아무도 고르지 않으면 — 저절로 «기다렸다 잇기»(API 로는 저절로 가지 않는다)
+  jobs.setAutoWait(30);
+  let asked = '';
+  const jl = jobs.start(A.pid, { kind: 'call', title: '한도', run: async (ctx) => { asked = await ctx.askLimit({ reason: 'quota-session', resetsAt: 0 }); return { ok: true }; } });
+  await sleep(10);
+  ok('물음이 매달려 멈춘다', !!(await jobOf(A.pid, jl.jobId)).ask);
+  await sleep(80);
+  ok('아무도 고르지 않으면 저절로 «기다렸다 잇기»', asked === 'wait' && (await jobOf(A.pid, jl.jobId)).status === 'done');
+  jobs.setAutoWait(30 * 60 * 1000);
+
+  // 논의의 말은 작업 앞에 얹는다 — 다시 띄워도 두 번 얹히지 않게
+  const th = await post('thread.create', { pid: A.pid, title: '말' });
+  const sent = await post('thread.send', { pid: A.pid, id: th.id, text: '먼저 얹히는 말' });
+  const afterSend = (await stateOf(A.pid)).project;
+  const tj = afterSend.jobs.find((j) => j.id === sent.jobId);
+  ok('논의 — 말이 작업 앞에 얹히고 작업은 그 말에 답한다', tj.params.text === null && afterSend.threads.find((t) => t.id === th.id).messages.some((m) => m.id === tj.params.askedId && m.text === '먼저 얹히는 말'));
+  await settle(A.pid);
+  const talked = (await stateOf(A.pid)).project.threads.find((t) => t.id === th.id).messages;
+  ok('논의 — 말 하나에 답 하나', talked.filter((m) => m.role === 'user').length === 1 && talked.filter((m) => m.role === 'assistant').length === 1);
+
+  // 다시 켜면 — 끊긴 작업을 그 기록 그대로 다시 띄운다
+  const state = await import('./state.mjs');
+  const dd = await post('doc.create', { pid: A.pid, title: '다시 켤 글' });
+  await post('doc.write', { pid: A.pid, id: dd.id, request: '한 문단' });
+  const up = await post('doc.update', { pid: A.pid, id: dd.id });
+  await settle(A.pid);
+  const bodyBefore = (await stateOf(A.pid)).project.docs.find((d) => d.id === dd.id).body;
+  // 재시작 전에 «진행 중»으로 적혀 있던 꼴(손잡이는 없다) · 사람이 멈춰 둔 것 · 말이 얹히지 않은 옛 논의 기록 · 매개변수 없는 옛 일
+  state.update(A.pid, (p) => {
+    const j = p.jobs.find((x) => x.id === up.jobId);
+    Object.assign(j, { status: 'running', endedAt: 0, step: '갱신', checkpoint: { reading: {} } });
+    p.jobs.push({ ...j, id: 'j_held', status: 'paused', ask: null });
+    p.jobs.push({ id: 'j_oldtalk', kind: 'talk', title: '옛 논의', targetId: th.id, status: 'running', params: { threadId: th.id, text: '옛 말' }, startedAt: 1, endedAt: 0, docIds: [] });
+    p.jobs.push({ id: 'j_bare', kind: 'call', title: '옛 일', status: 'running', startedAt: 1, endedAt: 0, docIds: [] });
+  });
+  globalThis.__SE2_MOCK_FN = ({ mockKey }) => (mockKey === 'F-UPDATE' ? '다시 켜서 쓴 글' : MOCK_FN({ mockKey }));
+  const revived = jobs.healStale(A.pid);
+  eq('다시 띄운 작업 수(진행 중 · 멈춤 둘)', revived, 2);
+  await sleep(60);
+  const after = (await stateOf(A.pid)).project;
+  const rj = after.jobs.find((j) => j.id === up.jobId);
+  ok('끊긴 작업이 그 기록 그대로 다시 돌아 끝난다', rj.status === 'done' && rj.revived === 1 && after.docs.find((d) => d.id === dd.id).body === '다시 켜서 쓴 글');
+  ok('앞 글은 이력에 남는다(새 판)', after.docs.find((d) => d.id === dd.id).versions.some((v) => v.body === bodyBefore));
+  ok('사람이 멈춰 둔 작업은 멈춘 채로 돌아온다', after.jobs.find((j) => j.id === 'j_held').status === 'paused' && jobs.liveCount(A.pid) >= 1);
+  ok('말이 다시 얹힐 옛 논의 기록은 되살리지 않는다', after.jobs.find((j) => j.id === 'j_oldtalk').status === 'stopped');
+  ok('매개변수 없는 옛 일은 지금처럼 «중지됨»', after.jobs.find((j) => j.id === 'j_bare').status === 'stopped');
+  ok('체크포인트는 화면에 내려 주지 않는다', after.jobs.every((j) => !('checkpoint' in j)));
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  await post('job.remove', { pid: A.pid, id: 'j_held' });
+
+  // 체크포인트 — 작업 기록에 남고(다시 켜면 거기서 잇는다), 끝나면 걷힌다
+  let resumed = null;
+  const jc = jobs.start(B.pid, { kind: 'call', title: '체크', run: async (ctx) => { resumed = ctx.resume; ctx.save({ reading: { k: '조각' } }); await sleep(30); return { ok: true }; } });
+  await sleep(10);
+  ok('체크포인트가 작업 기록에 남는다', state.get(B.pid).jobs.find((j) => j.id === jc.jobId).checkpoint.reading.k === '조각' && resumed === null);
+  await sleep(50);
+  ok('끝나면 체크포인트를 걷는다', state.get(B.pid).jobs.find((j) => j.id === jc.jobId).checkpoint === undefined);
+
+  await post('project.delete', { pid: A.pid });
+  await post('project.delete', { pid: B.pid });
+}
+
+{
   // ⑧-2 **개인판은 상점에 묶이지 않는다** (사용자 지시, 2026-09-23)
   // 「내가 이 pc에서 사용할 버전은 구독 사용량 소모 버전이어야 한다」 — 상점·잇기·열쇠·설치기를 이 폴더에서 걷었다.
   // 조각이 하나라도 남으면 그것이 언젠가 새 호출을 까닭 없이 잠그거나, 닿지 않는 곳을 두드린다.

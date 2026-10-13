@@ -160,8 +160,10 @@ function jobLine(j) {
     if (j.ask.say) return j.ask.say;   // 온라인판 — 서버가 사람 말로 적어 보낸 까닭(«AI 연결이 필요합니다» 등)
     const what = j.ask.reason === 'quota-week' ? '주간 한도' : '구독 한도';
     const when = atTime(j.ask.resetsAt);
-    return what + (when ? ' · ' + when + ' 에 풀림' : '');
+    return what + (when ? ' · ' + when + ' 에 풀림 — 그때 저절로 잇습니다' : ' — 30분마다 다시 해 봅니다');
   }
+  // 한 PC 의 호출 자리(기본 셋)를 여러 작품이 온 차례대로 나눠 쓴다 — 자리를 기다리는 동안
+  if (j.status === 'running' && j.queued) return '차례 기다림' + (j.step ? ' · ' + j.step : '') + ' · ' + since(j.stepAt || j.startedAt);
   if (j.status === 'running') return (j.step || '진행 중') + ' · ' + since(j.stepAt || j.startedAt);
   if (j.status === 'paused') return '멈춤' + (j.step ? ' · ' + j.step : '');
   if (j.status === 'done') return '완료';
@@ -415,6 +417,9 @@ function projectList() {
     },
     h('div', { class: 'name', text: p.name }),
     p.place ? h('span', { class: 'mark', text: p.place }) : null,
+    // 작품을 나가도 작업은 돈다 — 도는 작업 · 승인을 기다리는 레일이 있으면 카드에 보인다(DESIGN §6-5)
+    p.running ? h('span', { class: 'mark', text: '진행 중 ' + p.running }) : null,
+    p.waiting ? h('span', { class: 'mark', text: '승인 대기' }) : null,
     h('div', { class: 'when', text: when(p.updatedAt || p.createdAt) })))),
     brandMark('text-align:center;padding:56px 0 8px'));
 }

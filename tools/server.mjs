@@ -13,7 +13,7 @@ import * as model from './model.mjs';
 import * as jobs from './jobs.mjs';
 import * as engine from './engine.mjs';
 import { prepareAgents, agentsReady, runStudy, STUDY_TITLE } from './agents.mjs';
-import { killAllCalls, lastLimit } from './call.mjs';
+import { killAllCalls, lastLimit, useQueueHook } from './call.mjs';
 import * as auth from './auth.mjs';
 import { createOps } from './ops.mjs';
 import { baseTemplate, templateKeyOf } from './workflow.mjs';
@@ -61,6 +61,8 @@ const workflowOf = async (pid) => baseTemplate(templateKeyOf(state.get(pid)));
 const MOCK_MODELS = process.env.SE2_MOCK === '1' ? [{ id: 'mock-gpt', name: 'Mock GPT' }] : null;
 const LOCAL_DEPS = { ...engine.LOCAL, prepare: prepareThenStudy, workflow: workflowOf };
 jobs.useRunner((kind, params, ctx) => runKind(LOCAL_DEPS, kind, params, ctx));
+// 호출 고삐에서 자리를 기다리는 작업 — 작업 줄에 «차례 기다림»(여러 작품이 온 차례대로 나눠 쓴다, DESIGN §6-5)
+useQueueHook(jobs.queued);
 
 // 프로젝트를 만든 직후 그 프로젝트 전용 에이전트를 짓는다(소설이면 판정만 남기고 끝난다).
 function startAgentPrep(pid, request = '') {
@@ -213,10 +215,10 @@ async function handle(plan, req, res) {
     }
     if (req.method === 'GET' && url.pathname === '/api/state') {
       const pid = url.searchParams.get('pid') || '';
-      if (!pid) return send(res, 200, JSON.stringify({ ok: true, projects: state.list() }));
+      if (!pid) return send(res, 200, JSON.stringify({ ok: true, projects: listed() }));
       const st = await stateOf(pid);
       if (!st) return send(res, 200, JSON.stringify({ ok: false, error: '없음' }));
-      return send(res, 200, JSON.stringify({ ok: true, project: st, projects: state.list() }));
+      return send(res, 200, JSON.stringify({ ok: true, project: st, projects: listed() }));
     }
     if (req.method === 'GET' && url.pathname === '/api/download') {
       const d = await downloadOf(url.searchParams.get('pid'), url.searchParams.get('kind'), url.searchParams.get('id'), url.searchParams.get('fmt') === 'txt' ? 'txt' : 'md');
@@ -237,6 +239,11 @@ async function handle(plan, req, res) {
   } catch (e) {
     send(res, 500, JSON.stringify(bad((e && e.message) || e)));
   }
+}
+
+// 첫 화면의 작품 목록 — 작품마다 지금 도는 작업 수(나가도 돈다는 것이 보이게, DESIGN §6-5)
+function listed() {
+  return state.list().map((x) => ({ ...x, running: jobs.liveCount(x.id) }));
 }
 
 // 시험이 다른 계획(바깥에 연 꼴)으로 한 벌 더 띄워 볼 수 있게 계획을 받는다.

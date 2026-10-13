@@ -389,7 +389,8 @@ export function createOps(d) {
         path: model.threadPath(t).map((m) => m.id),
       })),
       trash: p.trash.map((e) => ({ id: e.id, at: e.at, kind: e.kind, from: e.from, title: e.title })),
-      jobs: p.jobs,
+      // 체크포인트(나눠 읽은 조각 따위)는 다시 켜서 이을 때만 쓴다 — 1.5초마다 내려 주지 않는다
+      jobs: Array.isArray(p.jobs) ? p.jobs.map(({ checkpoint, ...j }) => j) : p.jobs,
       model: p.model || '',
       models: MODELS,
       noCount: p.noCount !== false,

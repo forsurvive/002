@@ -85,12 +85,17 @@ let running = 0;
 
 export function callsRunning() { return running; }
 export function callsWaiting() { return WAITING.length; }
+// 자리를 기다리기 시작했다 / 얻었다 — 작업 실행기가 꽂아 작업 줄에 «차례 기다림»을 보인다(DESIGN §6-5). 여러 작품이 온 차례대로 나눠 쓴다
+let onQueue = null;
+export function useQueueHook(fn) { onQueue = typeof fn === 'function' ? fn : null; }
+const tell = (signal, on) => { if (onQueue && signal) { try { onQueue(signal, on); } catch { /* 알림이 고삐를 멈추지 않는다 */ } } };
 
 function acquire(signal) {
   if (running < MAX_CALLS) { running += 1; return Promise.resolve(true); }
+  tell(signal, true);
   return new Promise((resolve) => {
     const entry = { resolve, signal, done: false };
-    const take = (got) => { if (!entry.done) { entry.done = true; resolve(got); } };
+    const take = (got) => { if (!entry.done) { entry.done = true; tell(signal, false); resolve(got); } };
     entry.take = take;
     WAITING.push(entry);
     if (signal) {
