@@ -761,6 +761,20 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const withModel = call.buildCallArgs('/tmp/sp.txt', 'opus');
   ok('고른 모델이 실린다', withModel.includes('--model') && withModel[withModel.indexOf('--model') + 1] === 'opus');
   ok('--model 은 --tools 앞에 온다', withModel.indexOf('--model') < withModel.indexOf('--tools'));
+  // 호출 기록을 그 PC 에 남기지 않는다 — 실행기가 아는 깃발일 때만(옛 실행기는 모르는 깃발이면 호출을 거절한다)
+  const np = call.buildCallArgs('/tmp/sp.txt', 'opus', { noPersist: true });
+  ok('기록을 남기지 않는 깃발이 실린다', np.includes('--no-session-persistence') && np[np.length - 2] === '--tools');
+  ok('모르는 실행기에는 싣지 않는다', !withModel.includes('--no-session-persistence'));
+  if (process.platform !== 'win32') {
+    const { writeFileSync: wf, chmodSync } = await import('node:fs');
+    const cliCheck = await import('./claude-cli.mjs');
+    const newer = join(BOX, 'fake-claude-new'), older = join(BOX, 'fake-claude-old');
+    wf(newer, '#!/bin/sh\necho "  --no-session-persistence   Disable session persistence"\n'); chmodSync(newer, 0o755);
+    wf(older, '#!/bin/sh\necho "  --verbose"\n'); chmodSync(older, 0o755);
+    ok('새 실행기의 도움말에서 깃발을 알아본다', (await cliCheck.supportsNoPersist(newer)) === true);
+    ok('옛 실행기는 모르는 것으로 본다', (await cliCheck.supportsNoPersist(older)) === false);
+    ok('없는 실행기도 모르는 것으로 본다(죽지 않는다)', (await cliCheck.supportsNoPersist(join(BOX, 'no-such-cli'))) === false);
+  }
   ok('고를 수 있는 값', call.MODELS.includes('opus') && call.MODELS.includes('sonnet') && call.MODELS.includes('fable'));
   ok('«기본값»이라는 빈 칸은 없다', !call.MODELS.includes(''));
   ok('제어 호출도 열어 볼 수 있다', prompts.VIEW_CODES.length === prompts.EDITABLE_CODES.length + prompts.CONTROL_CODES.length);
@@ -1065,7 +1079,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   // 부르는 길은 그대로 구독(claude CLI)이다
   const callSrc = src(join(HERE, 'call.mjs'));
   // 온라인 운영자 구독(ai/subscription.mjs)만 실행기 자리 · 'sub' 를 넘긴다. 개인판은 넘기지 않으므로 탐색한 실행기 · 그 PC 의 auth.json 그대로.
-  ok('**부르는 길은 클로드 실행기 그대로다**', callSrc.includes("spawn(cli || CLI, buildCallArgs(spFile, model)") && callSrc.includes('childEnv(authMode ? { mode: authMode } : auth.read())'));
+  ok('**부르는 길은 클로드 실행기 그대로다**', callSrc.includes("spawn(cli || CLI, buildCallArgs(spFile, model, { noPersist })") && callSrc.includes('childEnv(authMode ? { mode: authMode } : auth.read())'));
   ok('처음 한 번 로그인과 설치는 그대로다', launchSrc.includes("'auth', 'login', '--claudeai'") && launchSrc.includes('await installClaudeCode()')
     && src(join(HERE, 'claude-cli.mjs')).includes("'https://claude.ai/install.cmd'"));
   // 지어진 에이전트를 고칠 수 있다(사용자 지시, 2026-09-22)
@@ -2161,6 +2175,56 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('담아 온 Claude Code 는 스스로 고치지 않는다(PC 에 새 판을 깔지 않게)', /via\.startsWith\('portable'\)\) process\.env\.DISABLE_AUTOUPDATER = '1'/.test(la));
   eq('127.0.0.1 로 못박으면 바깥에 열리지 않는다', hosting.resolveHosting({ SE2_HOST: '127.0.0.1', SE2_PORT: '8801' }).exposed, false);
   ok('창을 닫아도 잠금을 걷고 나간다', sv.includes("'SIGHUP'") && sv.includes("process.on('exit', lock.release)"));
+}
+
+// ---------------------------------------------------------------- USB 휴대판 — 만들기 도구 (망 없이 순수 부분만)
+{
+  const ub = await import('./usb-build.mjs');
+  const { createHash } = await import('node:crypto');
+  const { gzipSync } = await import('node:zlib');
+  const { writeFileSync: wf } = await import('node:fs');
+  const hex = 'a'.repeat(64);
+  eq('SHASUMS256 에서 윈도우 node.exe 의 해시를 찾는다', ub.shaFromSums('b'.repeat(64) + '  node-v22.zip\n' + hex + '  win-x64/node.exe\n', 'win-x64/node.exe'), hex);
+  eq('없는 이름은 빈 값', ub.shaFromSums(hex + '  win-x86/node.exe', 'win-x64/node.exe'), '');
+  const blob = Buffer.from('exe-body');
+  ok('npm integrity(sha512) 를 맞춰 본다', ub.integrityOk(blob, 'sha512-' + createHash('sha512').update(blob).digest('base64')) && !ub.integrityOk(Buffer.from('x'), 'sha512-' + createHash('sha512').update(blob).digest('base64')) && !ub.integrityOk(blob, ''));
+  // 손으로 지은 tar — 머리 512 + 몸 · 끝 두 칸
+  const entry = (name, body, type = '0') => {
+    const h = Buffer.alloc(512);
+    h.write(name, 0, 'utf8');
+    h.write(body.length.toString(8).padStart(11, '0') + '\0', 124, 'ascii');
+    h.write(type, 156, 'ascii');
+    return Buffer.concat([h, body, Buffer.alloc(Math.ceil(body.length / 512) * 512 - body.length)]);
+  };
+  const tar = Buffer.concat([entry('package/README.md', Buffer.from('hi')), entry('package/claude.exe', Buffer.alloc(700, 7)), Buffer.alloc(1024)]);
+  const got = ub.untarOne(tar, 'package/claude.exe');
+  ok('npm 묶음(tar)에서 claude.exe 하나를 꺼낸다', got && got.length === 700 && got[699] === 7);
+  eq('없는 파일은 null', ub.untarOne(tar, 'package/none.exe'), null);
+  ok('gzip 을 풀어 꺼내는 길도 같다', !!ub.untarOne((await import('node:zlib')).gunzipSync(gzipSync(tar)), 'package/claude.exe'));
+
+  const files = ub.appFiles();
+  ok('담는 앱 파일에 실행기 · 서버 · 화면 · Core · 단계 템플릿이 있다', ['스토리 엔진 개인판.cmd', 'tools/launch.mjs', 'tools/server.mjs', 'web/index.html', 'core/workflow/stages.mjs', 'config/workflows/ebook.json', 'tools/prompts.data.json'].every((f) => files.includes(f)));
+  ok('온라인판 · 시험 · 동봉물 · 원고는 담지 않는다', !files.some((f) => /^(online|migrations|data|node_modules)\//.test(f) || f === 'tools/test.mjs' || f.startsWith('tools/node/') || f.startsWith('tools/claude/')));
+  const ubSrc = src(join(HERE, 'usb-build.mjs'));
+  ok('받는 곳은 nodejs.org 와 앤트로픽의 npm 패키지뿐이다', (ubSrc.match(/https:\/\/[^'"\s]+/g) || []).every((u) => u.startsWith('https://nodejs.org/dist/') || u.startsWith('https://registry.npmjs.org/')) && ubSrc.includes("'@anthropic-ai/claude-code-win32-x64'"));
+  ok('해시가 맞지 않으면 쓰지 않는다', /sha256\(buf\) !== want\) throw/.test(ubSrc) && /!integrityOk\(tgz, dist\.integrity\)\) throw/.test(ubSrc));
+
+  // 업데이트 — 지난 목록에만 있던 앱 파일은 걷고, data/ 는 손대지 않는다
+  const fake = join(BOX, 'fakerepo'), usb = join(BOX, 'fakeusb');
+  for (const f of ['스토리 엔진 개인판.cmd', 'tools/server.mjs', 'web/index.html']) { mkdirSync(dirname(join(fake, f)), { recursive: true }); wf(join(fake, f), 'v1 ' + f); }
+  mkdirSync(join(fake, 'online'), { recursive: true }); wf(join(fake, 'online', 'x.mjs'), 'x');
+  ub.copyApp(usb, { root: fake });
+  wf(join(usb, ub.MANIFEST), JSON.stringify({ files: ['스토리 엔진 개인판.cmd', 'tools/server.mjs', 'web/index.html', 'tools/gone.mjs', 'data/projects/p.json'] }));
+  wf(join(usb, 'tools', 'gone.mjs'), 'old');
+  mkdirSync(join(usb, 'data', 'projects'), { recursive: true }); wf(join(usb, 'data', 'projects', 'p.json'), '{"id":"p"}');
+  wf(join(fake, 'tools', 'server.mjs'), 'v2');
+  ub.copyApp(usb, { root: fake });
+  ok('앱 파일은 새 판으로 바뀐다', readFileSync(join(usb, 'tools', 'server.mjs'), 'utf8') === 'v2');
+  ok('지난번에만 있던 앱 파일은 걷는다', !existsSync(join(usb, 'tools', 'gone.mjs')));
+  ok('원고(data/)는 목록에 있어도 지우지 않는다', existsSync(join(usb, 'data', 'projects', 'p.json')));
+  ok('온라인판은 USB 에 담기지 않는다', !existsSync(join(usb, 'online')));
+  const outside = spawnSync(process.execPath, [join(HERE, 'usb-build.mjs'), '--out', join(ROOT, 'tools', 'usbtest'), '--skip-download'], { encoding: 'utf8' });
+  ok('저장소 안에는 만들지 않는다', outside.status === 2 && /must be outside/.test(outside.stdout) && !existsSync(join(ROOT, 'tools', 'usbtest')));
 }
 
 // ---------------------------------------------------------------- 단계형 작업 흐름 (docs/WORKFLOW.md) — 순수 로직

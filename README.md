@@ -36,6 +36,9 @@
 
 - **API 키도 함께 옮겨집니다**(`data\auth.json`). 남에게 주는 USB 라면 먼저 설정 › 무엇으로 › [키 지우기] 를 누르십시오.
 - 두 PC 에서 번갈아 쓸 때는 마지막으로 쓴 쪽의 폴더를 들고 다니십시오. 두 폴더는 저절로 맞춰지지 않습니다.
+- **USB 에서 바로 켜기**: `node tools/usb-build.mjs --out <USB 의 폴더>` 로 Node 와 Claude Code 까지 담으면, 어느 윈도우 PC 에서든 설치 없이 그 폴더의 `.cmd` 로 켜집니다(같은 명령이 업데이트도 합니다). 자세한 것은 `docs/PERSONAL_USB.md`.
+- 같은 `data` 를 두 곳에서 동시에 열면 서지 않습니다(켠 채 뽑았으면 3분 뒤 풀립니다). 켤 때마다 작품 파일 한 벌이 `data\backup\projects\` 에 남습니다.
+- 내 PC 가 아니면 떠나기 전에 로그아웃하십시오 — 그 폴더에서 `tools\claude\claude.exe auth logout`.
 
 ## 폰으로
 
