@@ -1975,6 +1975,60 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
+  // 여러 문서로 나눠 생성(사용자 지시 2026-10-14 — DESIGN §6-12): 몇 개로 나눌지 요청이 없으면 AI 가 정한다
+  const split = await import('../core/generation/split.mjs');
+  const parts = split.parseParts('@@@ 문서: 서윤\n서윤 본문\n\n**@@@ 문서: «묘연»**\n묘연 본문\n@@@ 문서: 서윤\n둘째 서윤');
+  ok('«@@@ 문서: 제목» 줄로 나눈다 · 꾸밈은 걷고 · 같은 제목은 (2)', JSON.stringify(parts) === JSON.stringify([{ title: '서윤', body: '서윤 본문' }, { title: '묘연', body: '묘연 본문' }, { title: '서윤 (2)', body: '둘째 서윤' }]));
+  eq('표가 없으면 나누지 않는다(통째로 그 문서에)', split.parseParts('그냥 본문').length, 0);
+  const mp = store.blankProject('p_split', '나눔');
+  const cat = model.categoryCreate(mp, '인물');
+  const srcDoc = model.docCreate(mp, { title: '인물 설계', categoryId: cat.id, body: '나눌 원고' });
+  model.docWrite(mp, srcDoc.id, { multi: true });
+  ok('켜면 적고 · 갓 만든 빈 문서가 아니다', srcDoc.multi === true && !model.docIsFresh({ ...model.docCreate(mp, { title: '문서' }), multi: true }));
+  eq('처음 대상은 그 문서의 본문(나눌 원고)', split.splitTargets(mp, srcDoc).join(), srcDoc.id);
+  split.applyParts(mp, srcDoc.id, [{ title: '서윤', body: '가' }, { title: '묘연', body: '나' }]);
+  const kids = srcDoc.partIds.map((id) => model.findDoc(mp, id));
+  ok('**나눈 문서는 같은 카테고리에 서고 · 그 문서의 본문은 차례가 된다(앞 본문은 판으로)**', kids.map((x) => x.title).join() === '서윤,묘연' && kids.every((x) => x.categoryId === cat.id)
+    && srcDoc.body === split.indexBody(['서윤', '묘연']) && srcDoc.versions.some((v) => v.body === '나눌 원고'));
+  eq('다시 생성할 때 대상은 나눈 문서들', split.splitTargets(mp, srcDoc).join(), srcDoc.partIds.join());
+  const yun = kids[0].id;
+  split.applyParts(mp, srcDoc.id, [{ title: '서윤', body: '가2' }, { title: '할머니', body: '다' }]);
+  ok('**다시 나누면 같은 제목은 그 문서의 새 판 · 새 제목은 새 문서 · 빠진 문서는 지우지 않는다**', model.findDoc(mp, yun).body === '가2' && model.findDoc(mp, yun).versions.some((v) => v.body === '가')
+    && srcDoc.partIds.length === 3 && srcDoc.partIds[0] === yun && !!model.findDoc(mp, kids[1].id));
+
+  // 서버 — 한 번의 생성이 여러 문서로
+  const calls = [];
+  globalThis.__SE2_MOCK_FN = (x) => {
+    const P = String(x.prompt || '');
+    calls.push(P);
+    if (P.includes('«@@@ 문서: 제목»')) return '@@@ 문서: 1장 — 출발\n출발 본문\n@@@ 문서: 2장 — 갈림길\n갈림길 본문';
+    return MOCK_FN(x);
+  };
+  const sp = await post('project.create', { name: '나눠 쓰기', spec: { form: '소설' }, materials: [{ name: '자료', text: '자료 본문' }] });
+  await settle(sp.pid, 60000);
+  const d = await post('doc.create', { pid: sp.pid, title: '장 나누기' });
+  await post('doc.write', { pid: sp.pid, id: d.id, request: '장으로 나눠 쓴다', multi: true });
+  await post('doc.update', { pid: sp.pid, id: d.id });
+  let st = await settle(sp.pid, 60000);
+  const me = st.docs.find((x) => x.id === d.id);
+  const kidsS = (me.partIds || []).map((id) => st.docs.find((x) => x.id === id));
+  ok('**한 번의 생성이 여러 문서로 선다 — 그 문서는 차례 · 나눈 문서는 본문**', me.multi === true && kidsS.length === 2 && kidsS[0].title === '1장 — 출발' && kidsS[1].body === '갈림길 본문'
+    && me.body.includes('- 1장 — 출발') && calls.some((x) => x.includes('몇 개의 문서로 나눌지는 요청사항이 정했으면 그대로 따르고, 정하지 않았으면 내용에 맞게 스스로 정한다')));
+  const job = st.jobs.find((j) => j.kind === 'update' && j.targetId === d.id);
+  ok('작업 기록에 나눈 문서까지 남는다', job && kidsS.every((x) => job.docIds.includes(x.id)));
+  calls.length = 0;
+  await post('doc.update', { pid: sp.pid, id: d.id });
+  st = await settle(sp.pid, 60000);
+  ok('**다시 생성하면 나눈 문서들이 대상으로 실리고 · 같은 제목은 새 판으로**', calls.some((x) => x.includes('■ 대상') && x.includes('▶ 1장 — 출발') && x.includes('▶ 2장 — 갈림길'))
+    && st.docs.filter((x) => x.title === '1장 — 출발').length === 1);
+  await post('project.delete', { pid: sp.pid });
+  globalThis.__SE2_MOCK_FN = MOCK_FN;
+  const appX = src(join(ROOT, 'web', 'app.js'));
+  ok('**문서 창 — «여러 문서로 나눠 생성» 단추 · 나눈 문서 칩(개인판 · 보통 문서)**', appX.includes("d.src || S.me || d.kind !== 'doc' ? null : splitLine(d, byId),") && appX.includes("api('doc.write', { id: d.id, multi: !d.multi })")
+    && appX.includes("text: '여러 문서로 나눠 생성'") && appX.includes("h('span', { class: 'lab', text: '나눈 문서' })"));
+}
+
+{
   // 이야기 작품의 자동 실행(사용자 지시 2026-10-13 — DESIGN §5-2): 자료 분석부터 회차별 집필 계획 세부까지, 주기마다 모순 검사
   const story = await import('../core/rail/story.mjs');
   const railStory = await import('./rail-story.mjs');

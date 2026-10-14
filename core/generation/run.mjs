@@ -9,6 +9,7 @@ import * as model from '../domain/model.mjs';
 import * as wf from '../workflow/stages.mjs';
 import { saveCheckpoint } from './reading.mjs';
 import { summarizeRefs } from './summary.mjs';
+import { SPLIT_TASK, parseParts, applyParts, splitTargets } from './split.mjs';
 
 const KIND_CODE = { doc: 'F-UPDATE', check: 'F-CONTRA', review: 'F-REVIEW' };
 const seatsOf = (seatOf, project) => (seatOf ? (code) => seatOf(project, code) : null);
@@ -22,9 +23,12 @@ export async function runUpdate({ store, call, seatOf }, pid, docId, ctx, { mode
   if (!d) return { ok: false, error: '문서를 찾을 수 없습니다' };
   if (ctx) ctx.step(d.title);
 
-  const targetIds = d.kind === 'doc'
-    ? (d.body.trim() ? [d.id] : [])
-    : (d.targetIds || []).slice();
+  // 여러 문서로 나눠 생성(DESIGN §6-12) — 대상은 지난번에 나눈 문서들(없으면 그 문서의 본문), 할 일에 나눠 쓰는 꼴을 얹는다
+  const multi = d.kind === 'doc' && !!d.multi;
+  const targetIds = multi ? splitTargets(project, d)
+    : d.kind === 'doc'
+      ? (d.body.trim() ? [d.id] : [])
+      : (d.targetIds || []).slice();
   const refIds = [...new Set([...(d.refIds || []), ...(Array.isArray(extraRefIds) ? extraRefIds : [])])].filter((id) => id !== d.id && model.findDoc(project, id));
   const agentIds = (d.agentIds || []).slice();
   // 자리 사람을 뗐으면(DESIGN §6-8) 걸린 사람만 쓴다 — 아무도 없으면 자리 사람이 쓴다(에이전트는 필수 항목이 아니다, 2026-10-13)
@@ -32,6 +36,7 @@ export async function runUpdate({ store, call, seatOf }, pid, docId, ctx, { mode
   const common = {
     pid, refIds, targetIds, request: [d.request, requestOnce].filter((x) => String(x || '').trim()).join('\n\n'),
     finalFirst: d.kind === 'check', keepSeat: !off, dropSeat: off, modelPick,
+    ...(multi ? { taskExtra: SPLIT_TASK } : {}),
     signal: ctx && ctx.signal,
   };
 
@@ -49,8 +54,14 @@ export async function runUpdate({ store, call, seatOf }, pid, docId, ctx, { mode
   if (!r.ok) return r;
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
 
-  await store.update(pid, (p) => { model.docWrite(p, docId, { body: r.text }); });
-  if (ctx) ctx.addDoc(docId);
+  // 나눈 표가 있으면 문서들로 — 없으면(하나로 썼으면) 지금처럼 그 문서에
+  const parts = multi ? parseParts(r.text) : [];
+  let touched = [docId];
+  await store.update(pid, (p) => {
+    if (parts.length) touched = applyParts(p, docId, parts);
+    else model.docWrite(p, docId, { body: r.text });
+  });
+  if (ctx) for (const id of touched) ctx.addDoc(id);
   return { ok: true };
 }
 

@@ -347,6 +347,7 @@ export function createOps(d) {
           title: b.title, body: b.body, request: b.request,
           refIds: b.refIds, sumRefIds: Array.isArray(b.sumRefIds) ? b.sumRefIds : null, targetIds: b.targetIds, agentIds: b.agentIds,
           seatOff: b.seatOff == null ? null : !!b.seatOff,
+          multi: b.multi == null ? null : !!b.multi,   // 여러 문서로 나눠 생성(DESIGN §6-12)
           categoryId: b.categoryId === undefined ? undefined : b.categoryId,
         });
       });
@@ -483,6 +484,7 @@ export function createOps(d) {
         categoryId: d.categoryId, request: d.request, refIds: d.refIds, sumRefIds: d.sumRefIds || [], targetIds: d.targetIds,
         agentIds: d.agentIds || [],
         seatOff: !!d.seatOff,
+        ...(d.multi ? { multi: true } : {}), ...((d.partIds || []).length ? { partIds: d.partIds } : {}),   // 여러 문서로 나눠 생성(DESIGN §6-12)
         ...(d.material ? { material: true } : {}),   // 만들 때 넣은 자료(자동 실행의 시작 조건 — DESIGN §5-2)
         versions: (d.versions || []).map((v, i) => ({ i, at: v.at, title: v.title, body: v.body })),
         updatedAt: d.updatedAt,

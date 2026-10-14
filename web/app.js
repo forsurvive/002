@@ -1599,6 +1599,17 @@ function refIndex() {
   return m;
 }
 
+// «여러 문서로 나눠 생성» 줄 — 켜고 끄는 단추와, 지난번에 나눈 문서(누르면 열린다)
+function splitLine(d, byId) {
+  const parts = (d.partIds || []).filter((id) => byId.has(id));
+  return h('div', null,
+    h('div', { class: 'line', style: 'gap:6px;cursor:pointer', onmousedown: () => api('doc.write', { id: d.id, multi: !d.multi }) },
+      h('button', { class: 'ck' + (d.multi ? ' on' : '') }), h('span', { text: '여러 문서로 나눠 생성' })),
+    parts.length ? h('div', { class: 'line', style: 'margin-top:6px' },
+      h('span', { class: 'lab', text: '나눈 문서' }),
+      parts.map((id) => h('button', { class: 'chip', text: byId.get(id).title, onclick: () => { S.open = { type: 'doc', id, back: { open: { type: 'doc', id: d.id } } }; render(); } }))) : null);
+}
+
 // 그 문서를 지으려면 무엇이 있어야 하는가 — 없으면 그 이름들을 돌려준다.
 function missingFor(d) {
   // 합평회와 모순 검사는 «이번에 무엇을 보라»는 말이 있어야 선다 — 요청사항이 그 자리의 미션이다(사용자 지시).
@@ -1729,6 +1740,8 @@ function docPanel(close) {
       // 요약하여 참조(사용자 지시 2026-10-13 — DESIGN §6-11) — 생성할 때마다 요약해 싣는다(요약은 저장하지 않는다). 온라인판은 아직
       d.src || S.me ? null : refLine('요약하여 참조', d.sumRefIds || [], byId, (ids) => api('doc.write', { id: d.id, sumRefIds: ids }), d.id),
       d.src ? null : docAgentLine(d),
+      // 여러 문서로 나눠 생성(사용자 지시 2026-10-14 — DESIGN §6-12). 몇 개로 나눌지는 요청사항이 정하고, 없으면 AI 가 정한다. 온라인판은 아직
+      d.src || S.me || d.kind !== 'doc' ? null : splitLine(d, byId),
       d.src ? null : h('div', { class: 'line' }, S.open.err ? h('span', { class: 'notice', text: S.open.err }) : null, h('button', {
         class: 'btn', text: busy ? verb + ' 중' : verb, disabled: busy,
         onclick: async () => {

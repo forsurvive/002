@@ -109,7 +109,7 @@ export function docWrite(p, id, next = {}, { keepHistory = true } = {}) {
   }
   // «언제 손댔는가»는 참조·대상·에이전트·요청사항·그릇까지 센다.
   // 폰은 이 시각이 그대로면 문서를 다시 받아 오지 않는다 — 여기서 안 찍으면 폰 화면이 옛 값에 머문다.
-  const before = JSON.stringify([d.request, d.refIds, d.sumRefIds || [], d.targetIds, d.agentIds, d.categoryId, !!d.seatOff]);
+  const before = JSON.stringify([d.request, d.refIds, d.sumRefIds || [], d.targetIds, d.agentIds, d.categoryId, !!d.seatOff, !!d.multi]);
   if (next.title != null) d.title = str(next.title).trim() || '제목 없음';
   if (next.body != null && !d.src) d.body = str(next.body);   // 가리키는 문서는 고쳐 쓰지 않는다
   if (next.request != null) d.request = str(next.request);
@@ -123,11 +123,13 @@ export function docWrite(p, id, next = {}, { keepHistory = true } = {}) {
   if (next.agentIds != null) d.agentIds = next.agentIds.slice();
   // 그 문서 종류의 자리 사람을 뗐는가(DESIGN §6-8) — 붙어 있는 것이 기본이라 뗐을 때만 적는다
   if (next.seatOff != null) { if (next.seatOff) d.seatOff = true; else delete d.seatOff; }
+  // 여러 문서로 나눠 생성(DESIGN §6-12) — 켰을 때만 적는다. 나눈 문서(partIds)는 생성이 적는다(core/generation/split.mjs)
+  if (next.multi != null) { if (next.multi) d.multi = true; else delete d.multi; }
   if (next.categoryId !== undefined) {
     d.categoryId = next.categoryId && findCategory(p, next.categoryId) ? next.categoryId : null;
     d.orphanFrom = null; // 손으로 옮긴 순간 옛 그릇과의 연고가 끊긴다
   }
-  const touched = JSON.stringify([d.request, d.refIds, d.sumRefIds || [], d.targetIds, d.agentIds, d.categoryId, !!d.seatOff]) !== before;
+  const touched = JSON.stringify([d.request, d.refIds, d.sumRefIds || [], d.targetIds, d.agentIds, d.categoryId, !!d.seatOff, !!d.multi]) !== before;
   if (changed || touched) d.updatedAt = now();
   return d;
 }
@@ -151,7 +153,7 @@ export function docSetFinal(p, id, on) {
 // 차림표에서 만들어지기만 하고 아무것도 담기지 않은 문서 — 이름까지 그대로여야 «갓 만든 것»이다.
 export function docIsFresh(d) {
   return !!d && !str(d.body).trim() && !str(d.request).trim()
-    && !(d.refIds || []).length && !(d.sumRefIds || []).length && !(d.targetIds || []).length && !(d.agentIds || []).length && !d.seatOff
+    && !(d.refIds || []).length && !(d.sumRefIds || []).length && !(d.targetIds || []).length && !(d.agentIds || []).length && !d.seatOff && !d.multi
     && !(d.versions || []).length && !d.isFinal && !d.categoryId
     && d.title === DOC_NAME[d.kind || 'doc'];
 }
