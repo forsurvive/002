@@ -1671,7 +1671,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const first = seen[0]; const second = seen[1]; const merge = seen[2];
   ok('첫 합평은 갑이 한다', first.sys.includes('갑 — 뼈대를 본다') && !first.sys.includes('을 — 문장을 본다'));
   ok('둘째 합평은 을이 한다', second.sys.includes('을 — 문장을 본다') && !second.sys.includes('갑 — 뼈대를 본다'));
-  ok('합평에도 자리 사람이 남는다', first.sys.includes(prompts.BUILTIN['F-REVIEW'].name));
+  // 2026-10-14 사용자 지시 «새 문서 생성 시 자동 적용되는 에이전트가 없도록» — 새로 만든 합평회에는 자리 사람이 저절로 끼지 않는다(고른 사람만, DESIGN §6-8)
+  ok('**새 합평회에는 자리 사람이 저절로 끼지 않는다 — 고른 사람만 합평한다**', !first.sys.includes(prompts.BUILTIN['F-REVIEW'].name + ' — ') && !second.sys.includes(prompts.BUILTIN['F-REVIEW'].name + ' — '));
   ok('모으는 자리에는 사람을 걸지 않는다', !merge.sys.includes('갑 — 뼈대를 본다') && !merge.sys.includes('을 — 문장을 본다'));
   ok('모으는 자리가 두 합평을 받는다', merge.prompt.includes('▶ 갑의 합평') && merge.prompt.includes('▶ 을의 합평'));
   ok('모으는 자리에 원고도 함께 온다', merge.prompt.includes('원고 본문'));
@@ -1830,6 +1831,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   let used = '';
   globalThis.__SE2_MOCK_FN = (args) => { if (args.mockKey === 'F-UPDATE') used = args.model; return MOCK_FN(args); };
   const d = await post('doc.create', { pid, title: '자리 모델 문서' });
+  // 새 문서에는 저절로 걸린 사람이 없다(2026-10-14) — 그 자리를 내장 사람으로 골라 둔다(자리의 모델은 그 사람의 모델이다)
+  await post('doc.write', { pid, id: d.id, agentIds: ['seat:F-UPDATE'] });
   const update = async () => { used = ''; await post('doc.update', { pid, id: d.id }); await settle(pid); return used; };
   eq('정하지 않으면 작품의 모델로 부른다', await update(), 'opus');
 
@@ -2587,7 +2590,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 
   // 서버 — 상태 · peek · 실제 부르기
   const seen = [];
-  globalThis.__SE2_MOCK_FN = (a) => { seen.push({ key: a.mockKey, sys: String(a.systemPrompt || '') }); return MOCK_FN(a); };
+  globalThis.__SE2_MOCK_FN = (a) => { seen.push({ key: a.mockKey, sys: String(a.systemPrompt || ''), prompt: String(a.prompt || '') }); return MOCK_FN(a); };
   const sp = await post('project.create', { name: '사람 고르기', spec: { form: '소설' }, materials: [{ name: '자료', text: '자료 본문' }] });
   await settle(sp.pid, 60000);
   let st = (await stateOf(sp.pid)).project;
@@ -2602,13 +2605,15 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   await post('doc.write', { pid: sp.pid, id: dc.id, request: '한 문단', seatOff: true });
   st = (await stateOf(sp.pid)).project;
   ok('doc.write {seatOff} — 상태의 문서에 실린다', st.docs.find((x) => x.id === dc.id).seatOff === true);
-  // 2026-10-13 «문서를 생성할 때 에이전트를 필수 항목으로 두지 말도록 하자» — 아무도 없으면 막지 않고 자리 사람이 쓴다(DESIGN §6-8)
+  // 2026-10-13 «문서를 생성할 때 에이전트를 필수 항목으로 두지 말도록 하자» — 아무도 없어도 막지 않는다(DESIGN §6-8)
+  // 2026-10-14 «자동 적용되는 에이전트가 없도록» — 그때는 자리 사람도 쓰지 않는다: 에이전트 없이 그 문서 종류의 할 일 · 응답 꼴로만
   seen.length = 0;
   await post('doc.update', { pid: sp.pid, id: dc.id });
   st = await settle(sp.pid);
   const failed = (st.jobs || []).filter((j) => j.kind === 'update' && j.status === 'failed').pop();
   const alone = seen.find((x) => x.key === 'F-UPDATE');
-  ok('자리 사람을 떼고 아무도 없어도 생성한다 — 그때는 자리 사람이 쓴다(에이전트는 필수 항목이 아니다)', !failed && !!alone && alone.sys.startsWith('■ 에이전트\n' + nm('F-UPDATE') + ' — '), JSON.stringify(failed || (alone && alone.sys.slice(0, 80))));
+  ok('**자리 사람을 떼고 아무도 없어도 생성한다 — 그때는 에이전트 없이(«■ 에이전트» · 자리 작법이 없다 · 할 일은 그대로)**', !failed && !!alone && !alone.sys.includes('■ 에이전트')
+    && !alone.sys.includes(pick.promptFor(raw, 'F-UPDATE').craft.slice(0, 40)) && alone.prompt.includes(pick.promptFor(raw, 'F-UPDATE').task.slice(0, 30)), JSON.stringify(failed || (alone && alone.sys.slice(0, 80))));
   await post('doc.write', { pid: sp.pid, id: dc.id, agentIds: ['seat:F-CONTRA', mine.id] });
   seen.length = 0;
   await post('doc.update', { pid: sp.pid, id: dc.id });
@@ -2649,8 +2654,10 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 
   // 화면 — 문서 줄 · 고르기 창 · 누락 말
   const app = src(join(ROOT, 'web', 'app.js'));
-  ok('문서 줄 — 자리 사람도 칩(× 로 뗀다) · 떼고 붙이는 것은 seatOff', app.includes("const own = 'seat:' + KIND_SEAT[d.kind][0];")
-    && app.includes("api('doc.write', { id: d.id, seatOff: !next.includes(own), agentIds: next.filter((x) => x !== own) })") && app.includes("mark: a.id === own ? '자리' : '내장'"));
+  ok('문서 줄 — 고른 사람만 선다(옛 문서는 자리 칩을 보이고 × 로 뗀다) · 손대면 seatOff 와 고른 사람(내장 자리 포함)이 남는다', app.includes("const own = 'seat:' + KIND_SEAT[d.kind][0];")
+    && app.includes("const ids = [...(d.seatOff ? [] : [own]), ...(d.agentIds || [])];")
+    && app.includes("api('doc.write', { id: d.id, seatOff: true, agentIds: next })") && app.includes("crewIndex(d.seatOff ? undefined : own)") && app.includes("mark: a.id === own ? '자리' : '내장'"));
+  ok('**사람이 만드는 새 문서는 자리 사람 없이(seatOff) 선다 — 저절로 걸리는 에이전트가 없다**', src(join(HERE, 'ops.mjs')).includes('id = model.docCreate(p, { kind: b.kind, title: b.title, body, categoryId: b.categoryId, seatOff: true }).id;'));
   ok('고르기 창 — 내장 사람과 만든 사람 모두(고른 것만 켜진다) · 스레드는 늘 서는 자리 사람을 숨긴다', app.includes("const builtins = S.me ? [] : (p.builtins || []).filter((a) => !hide.has(a.id));")
     && app.includes("builtins.length ? [h('div', { class: 'lab', text: '내장' }), builtins.map(row)] : null") && app.includes("['seat:F-TALK', 'seat:F-THREADDOC']"));
   ok('화면도 에이전트를 필수 항목으로 보지 않는다(2026-10-13)', !app.includes("miss.push('에이전트')") && !app.includes('const noOne') && !src(join(ROOT, 'core', 'generation', 'run.mjs')).includes('필수 항목 누락 — 에이전트'));

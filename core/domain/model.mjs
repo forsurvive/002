@@ -153,7 +153,7 @@ export function docSetFinal(p, id, on) {
 // 차림표에서 만들어지기만 하고 아무것도 담기지 않은 문서 — 이름까지 그대로여야 «갓 만든 것»이다.
 export function docIsFresh(d) {
   return !!d && !str(d.body).trim() && !str(d.request).trim()
-    && !(d.refIds || []).length && !(d.sumRefIds || []).length && !(d.targetIds || []).length && !(d.agentIds || []).length && !d.seatOff && !d.multi
+    && !(d.refIds || []).length && !(d.sumRefIds || []).length && !(d.targetIds || []).length && !(d.agentIds || []).length && !d.multi
     && !(d.versions || []).length && !d.isFinal && !d.categoryId
     && d.title === DOC_NAME[d.kind || 'doc'];
 }

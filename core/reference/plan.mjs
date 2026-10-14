@@ -71,7 +71,7 @@ export function planCall(project, {
   noCount = null, finalFirst = false, keepSeat = false, dropSeat = false,
   extraTargets = [], modelPick = '', digests = null, reading = null, targetPart = null, continueFrom = null,
   extraDigests = null, talkCut = null, fixedDigests = null, webSearch = null, withImages = true,
-  summary = null, extraRefs = [],
+  summary = null, extraRefs = [], noSeat = false,
 } = {}, { pr, slotModel = '', seatOf = null } = {}) {
   // 아주 길어 나눠 읽은 요청사항 · 집필 기준 · 작품 요청사항 · 개요는 원문 자리에 옮긴 것을 싣는다
   const fx = fixedDigests || {};
@@ -142,6 +142,8 @@ export function planCall(project, {
   // 문서에서 자리 사람을 뗐으면(DESIGN §6-8) 자리의 이름 · 역할 · 작법 · 모델이 빠지고 걸린 사람들만 선다 — 할 일 · 응답 꼴은 그 자리 것 그대로.
   // 걸린 사람이 하나도 없으면 떼지 않는다(«■ 에이전트»를 비우지 않는다 — 부르는 쪽이 먼저 막는다).
   if (dropSeat && picked.length) { pr = { ...pr, name: '', role: '', craft: '' }; slotModel = ''; }
+  // 에이전트 없이(사용자 지시 2026-10-14 — 사람이 고르지 않았으면 저절로 걸리는 사람이 없다) — «■ 에이전트» · 자리 작법 · 자리 모델이 빠진다
+  if (noSeat && !picked.length) { pr = { ...pr, name: '', role: '', craft: '' }; slotModel = ''; keepSeat = false; }
   const crew = keepSeat && !(dropSeat && picked.length) ? [{ id: '', name: pr.name, role: pr.role, craft: '', model: '' }, ...picked] : picked;
   // 쓸 모델 — 부르는 쪽이 못 박았으면 그것이 먼저다(작가가 «어느 모델로 모을지»를 고른 때).
   // 아니면 «제 모델을 정해 둔 첫 사람», 그다음 그 자리(지어진 에이전트)에 정해 둔 것, 그도 없으면 프로젝트의 것.

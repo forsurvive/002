@@ -318,7 +318,8 @@ export function createOps(d) {
       }
       let id = null;
       const r = await state.update(b.pid, (p) => {
-        id = model.docCreate(p, { kind: b.kind, title: b.title, body, categoryId: b.categoryId }).id;
+        // 저절로 걸리는 에이전트는 없다 — 그 문서 종류의 자리 사람도 떼고 만든다(사용자 지시 2026-10-14, DESIGN §6-8)
+        id = model.docCreate(p, { kind: b.kind, title: b.title, body, categoryId: b.categoryId, seatOff: true }).id;
       });
       return r.ok === false ? r : ok({ id });
     },

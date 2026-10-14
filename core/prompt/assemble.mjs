@@ -128,7 +128,8 @@ export function buildSystem({ prompt, prev, next, crew = [], withFinalRule = tru
   const head = hands.length
     ? hands.map((c) => neutralize(s(c.name) + ' — ' + s(c.role))).join('\n')
     : s(p.name) + ' — ' + s(p.role);
-  parts.push('■ 에이전트\n' + head + (hands.length > 1 ? '\n이 글은 위 사람들이 함께 쓴다.' : ''));
+  // 에이전트 없이 부를 때(이름 · 역할이 비었고 걸린 사람도 없다)는 «■ 에이전트» 구획을 두지 않는다
+  if (hands.length || s(p.name).trim() || s(p.role).trim()) parts.push('■ 에이전트\n' + head + (hands.length > 1 ? '\n이 글은 위 사람들이 함께 쓴다.' : ''));
   if (prev || next) parts.push('■ 앞뒤\n앞: ' + (s(prev) || '없음') + ' / 뒤: ' + (s(next) || '없음'));
   const craft = [
     s(p.craft).trim(),

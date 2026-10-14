@@ -1835,8 +1835,8 @@ function crewIndex(own) {
   return m;
 }
 
-// 문서의 «에이전트» 줄 — 그 문서 종류의 자리 사람도 × 로 떼고, 고르기 창에서 내장 · 만든 사람 모두를 고른다(DESIGN §6-8).
-// 자리 사람은 목록에 넣지 않고 seatOff 를 뒤집는다. 합평회에 둘 이상 걸리면 모으는 자리가 늘 선다(뗄 수 없다).
+// 문서의 «에이전트» 줄 — 고르기 창에서 내장 · 만든 사람 모두를 고른다(DESIGN §6-8). 새 문서에는 저절로 걸린 사람이 없다(사용자 지시 2026-10-14).
+// 옛 문서(자리 사람이 붙은 채 만든 것)는 자리 칩을 보이고 × 로 뗀다. 손대면 고른 사람만 agentIds 에 남고 seatOff 가 선다. 합평회에 둘 이상 걸리면 모으는 자리가 늘 선다(뗄 수 없다).
 // 온라인판은 아직 잇지 않았다 — 지금처럼 자리 칩은 뗄 수 없고 만든 사람만 고른다.
 function docAgentLine(d) {
   const panel = d.kind === 'review' && (d.agentIds || []).length > 1;
@@ -1846,8 +1846,8 @@ function docAgentLine(d) {
   }
   const own = 'seat:' + KIND_SEAT[d.kind][0];
   const ids = [...(d.seatOff ? [] : [own]), ...(d.agentIds || [])];
-  return refLine('에이전트', ids, crewIndex(own),
-    (next) => api('doc.write', { id: d.id, seatOff: !next.includes(own), agentIds: next.filter((x) => x !== own) }), null, 'agent',
+  return refLine('에이전트', ids, crewIndex(d.seatOff ? undefined : own),
+    (next) => api('doc.write', { id: d.id, seatOff: true, agentIds: next }), null, 'agent',
     panel ? seatNames(['F-MERGE']) : []);
 }
 

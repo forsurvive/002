@@ -31,11 +31,13 @@ export async function runUpdate({ store, call, seatOf }, pid, docId, ctx, { mode
       : (d.targetIds || []).slice();
   const refIds = [...new Set([...(d.refIds || []), ...(Array.isArray(extraRefIds) ? extraRefIds : [])])].filter((id) => id !== d.id && model.findDoc(project, id));
   const agentIds = (d.agentIds || []).slice();
-  // 자리 사람을 뗐으면(DESIGN §6-8) 걸린 사람만 쓴다 — 아무도 없으면 자리 사람이 쓴다(에이전트는 필수 항목이 아니다, 2026-10-13)
-  const off = !!d.seatOff && model.agentsByIds(project, agentIds, seatsOf(seatOf, project)).length > 0;
+  // 자리 사람을 뗐으면(DESIGN §6-8) 걸린 사람만 쓴다 — 아무도 없으면 에이전트 없이 쓴다(사용자 지시 2026-10-14 «자동 적용되는 에이전트가 없도록»)
+  const picked = model.agentsByIds(project, agentIds, seatsOf(seatOf, project)).length;
+  const off = !!d.seatOff && picked > 0;
+  const bare = !!d.seatOff && !picked;
   const common = {
     pid, refIds, targetIds, request: [d.request, requestOnce].filter((x) => String(x || '').trim()).join('\n\n'),
-    finalFirst: d.kind === 'check', keepSeat: !off, dropSeat: off, modelPick,
+    finalFirst: d.kind === 'check', keepSeat: !off && !bare, dropSeat: off, noSeat: bare, modelPick,
     ...(multi ? { taskExtra: SPLIT_TASK } : {}),
     signal: ctx && ctx.signal,
   };
@@ -97,7 +99,7 @@ async function runPanelReview({ store, call, seatOf }, pid, d, agentIds, common,
   if (ctx && ctx.signal && ctx.signal.aborted) return { ok: false, error: '중지됨' };
   if (ctx) ctx.step(d.title + ' — 모으기');
   // 모으는 자리에는 사람을 걸지 않는다 — 누구의 편도 들지 않아야 한다.
-  return call({ ...common, code: 'F-MERGE', agentIds: [], extraTargets: said }, ctx);
+  return call({ ...common, code: 'F-MERGE', agentIds: [], noSeat: false, extraTargets: said }, ctx);
 }
 
 // 논의 한 마디 — 작가의 말을 얹고, 답을 받아 얹는다.
