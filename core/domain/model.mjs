@@ -196,14 +196,37 @@ export function categoryDelete(p, id) {
 }
 
 // 화면이 그리는 목록 — '새로 추가된 문서'가 맨 앞, 비어 있으면 아예 없다.
+// 문서 정렬(사용자 지시 2026-10-14 — DESIGN §3 작업실) — 작품마다 하나(p.docSort).
+// manual = 직접(p.docs 의 차례 — 끌어 놓아 바꾼다), name = 이름(숫자는 수로 — «2화»가 «10화» 앞), new · old = 고친 날짜(최근 먼저 · 오래된 먼저)
+export const DOC_SORTS = ['manual', 'name', 'new', 'old'];
+export const docSortOf = (p) => (DOC_SORTS.includes(p && p.docSort) ? p.docSort : 'manual');
+export function sortDocs(docs, how) {
+  const at = (d) => Number(d.updatedAt || d.createdAt || 0);
+  if (how === 'name') return docs.slice().sort((a, b) => str(a.title).localeCompare(str(b.title), 'ko', { numeric: true }));
+  if (how === 'new') return docs.slice().sort((a, b) => at(b) - at(a));
+  if (how === 'old') return docs.slice().sort((a, b) => at(a) - at(b));
+  return docs;
+}
+
 export function categoriesView(p) {
   const out = [];
+  const how = docSortOf(p);
+  const ids = (docs) => sortDocs(docs, how).map((d) => d.id);
   const loose = p.docs.filter((d) => !d.categoryId || !findCategory(p, d.categoryId));
-  if (loose.length) out.push({ id: INBOX, name: INBOX_NAME, virtual: true, docIds: loose.map((d) => d.id) });
+  if (loose.length) out.push({ id: INBOX, name: INBOX_NAME, virtual: true, docIds: ids(loose) });
   for (const c of p.categories) {
-    out.push({ id: c.id, name: c.name, virtual: false, docIds: p.docs.filter((d) => d.categoryId === c.id).map((d) => d.id) });
+    out.push({ id: c.id, name: c.name, virtual: false, docIds: ids(p.docs.filter((d) => d.categoryId === c.id)) });
   }
   return out;
+}
+
+// 직접 정렬 — 고른 문서들을 이 차례로(그 문서들이 있던 자리끼리 바꿔 앉힌다 — 다른 문서의 자리는 그대로)
+export function docOrder(p, ids = []) {
+  const want = ids.filter((id, i) => ids.indexOf(id) === i && findDoc(p, id));
+  const slots = p.docs.map((d, i) => (want.includes(d.id) ? i : -1)).filter((i) => i >= 0);
+  const moved = want.map((id) => findDoc(p, id));
+  slots.forEach((at, k) => { p.docs[at] = moved[k]; });
+  return want.length;
 }
 
 export function categoryDocIds(p, catId) {

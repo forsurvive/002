@@ -360,7 +360,8 @@ function railNotify() {
   if (S.pid === hit.id && S.open && S.open.type === 'rail') return;   // 이미 자동 실행 창을 보고 있다
   const say = hit.status === 'done' ? '자동 실행이 끝났습니다' : hit.status === 'failed' ? '자동 실행이 실패했습니다' : '자동 실행이 멈췄습니다';
   S.confirm = {
-    text: '«' + hit.name + '» ' + say + (hit.status !== 'done' && hit.why ? ' — ' + hit.why : ''),
+    text: '«' + hit.name + '» ' + say,
+    note: hit.status !== 'done' ? hit.why : '',
     acts: [{ label: '보기', class: 'btn', run: () => {
       S.confirm = null;
       if (S.pid !== hit.id) { S.pid = hit.id; S.project = null; S.tab = '작업실'; }
@@ -844,6 +845,7 @@ function workshop() {
   return h('div', null,
     prepBox(),
     h('div', { class: 'plus-wrap' },
+      sortBar(),
       h('button', { class: 'plus', text: '+', onclick: (e) => { stop(e); S.menu = !S.menu; render(); } }),
       S.menu ? plusMenu() : null),
     cats.map((c) => catSection(c, byId)),
@@ -864,6 +866,45 @@ function workshop() {
       },
     }))) : null,
     p.threads.length ? threadSection() : null);
+}
+
+// 문서 정렬(사용자 지시 2026-10-14 — DESIGN §3 작업실) — 직접 · 이름 · 고친 날짜(다시 누르면 최근 ↔ 오래된). 작품마다 서버에 남는다
+const SORT_NAME = { manual: '직접', name: '이름', new: '날짜 ↓', old: '날짜 ↑' };
+function sortBar() {
+  const now = S.project.docSort || 'manual';
+  const set = (v) => { if (v !== now) api('project.spec', { docSort: v }); };
+  return h('div', { class: 'sort-bar' },
+    h('span', { class: 'when', text: '정렬' }),
+    h('button', { class: now === 'manual' ? 'on' : '', text: SORT_NAME.manual, onclick: () => set('manual') }),
+    h('button', { class: now === 'name' ? 'on' : '', text: SORT_NAME.name, onclick: () => set('name') }),
+    h('button', { class: now === 'new' || now === 'old' ? 'on' : '', text: now === 'old' ? SORT_NAME.old : SORT_NAME.new,
+      title: '고친 날짜 — 다시 누르면 순서를 뒤집습니다', onclick: () => api('project.spec', { docSort: now === 'new' ? 'old' : 'new' }) }));
+}
+
+// 직접 정렬 — 줄을 끌어 같은 카테고리의 다른 줄 위(앞) · 아래(뒤)에 놓는다. 직접 정렬일 때만 끌린다
+function dragAttrs(c, d) {
+  if ((S.project.docSort || 'manual') !== 'manual' || S.project.readOnly) return {};
+  const half = (e) => { const r = e.currentTarget.getBoundingClientRect(); return e.clientY > r.top + r.height / 2; };
+  const clear = (n) => n.classList.remove('drop-before', 'drop-after');
+  return {
+    draggable: 'true',
+    ondragstart: (e) => { S.drag = { cat: c.id, id: d.id }; e.dataTransfer.effectAllowed = 'move'; },
+    ondragend: () => { S.drag = null; },
+    ondragover: (e) => {
+      if (!S.drag || S.drag.cat !== c.id || S.drag.id === d.id) return;
+      e.preventDefault();
+      clear(e.currentTarget); e.currentTarget.classList.add(half(e) ? 'drop-after' : 'drop-before');
+    },
+    ondragleave: (e) => clear(e.currentTarget),
+    ondrop: (e) => {
+      e.preventDefault(); clear(e.currentTarget);
+      const g = S.drag; S.drag = null;
+      if (!g || g.cat !== c.id || g.id === d.id) return;
+      const ids = c.docIds.filter((x) => x !== g.id);
+      ids.splice(ids.indexOf(d.id) + (half(e) ? 1 : 0), 0, g.id);
+      api('doc.order', { ids });
+    },
+  };
 }
 
 function plusMenu() {
@@ -907,6 +948,7 @@ function catSection(c, byId) {
     folded ? null : docs.map((d) => h('div', {
       class: 'row' + (d.isFinal ? ' final' : ''),
       onclick: () => { S.open = { type: 'doc', id: d.id }; render(); },
+      ...dragAttrs(c, d),
     },
     h('button', { class: 'ck' + (sel.has(d.id) ? ' on' : ''), onclick: (e) => { stop(e); toggleSel(key, d.id); } }),
     h('button', { class: 'tg' + (d.isFinal ? ' on' : ''), onclick: (e) => { stop(e); api('doc.final', { ids: [d.id], on: !d.isFinal }); } }),
@@ -2226,6 +2268,8 @@ function confirmLayer() {
     h('div', { class: 'panel narrow' },
       h('div', { class: 'panel-head' }, h('div', { class: 'name', text: S.confirm.text }), h('button', { class: 'x', text: '×', onclick: close })),
       h('div', { class: 'panel-body' },
+        // 긴 까닭은 머리줄이 아니라 여기에 — 줄을 바꿔 다 보인다(자동 실행 알림)
+        S.confirm.note ? h('div', { class: 'when', style: 'white-space:pre-wrap', text: S.confirm.note }) : null,
         h('div', { class: 'line' }, acts.map((a) => h('button', { class: a.class || 'btn', text: a.label, onclick: a.run }))))));
 }
 

@@ -147,6 +147,7 @@ export function createOps(d) {
       if (b.model != null) p.model = MODELS.includes(String(b.model)) ? String(b.model) : p.model;
       if (b.noCount != null) p.noCount = !!b.noCount;
       if (b.webSearch != null) p.webSearch = !!b.webSearch;   // 웹 검색(DESIGN §6-6) — 적혀 있지 않으면 전자책 켬 · 이야기 끔
+      if (b.docSort != null && model.DOC_SORTS.includes(String(b.docSort))) p.docSort = String(b.docSort);   // 문서 정렬(DESIGN §3 작업실)
       // 단계 흐름 설정 — 본문 단계 켜고 끄기 · 작업 중 강의 카드
       if (b.bodyStage != null) p.workflow = { ...(p.workflow || {}), body: !!b.bodyStage };
       if (b.stageCards != null) p.workflow = { ...(p.workflow || {}), cards: !!b.stageCards };
@@ -363,6 +364,9 @@ export function createOps(d) {
       return state.update(b.pid, (p) => { for (const id of arr(b.ids)) if (model.findDoc(p, id)) model.docWrite(p, id, { categoryId: to }); });
     },
 
+    // 직접 정렬 — 한 카테고리의 문서를 끌어 놓은 차례로(DESIGN §3 작업실)
+    'doc.order': async (b) => state.update(b.pid, (p) => { model.docOrder(p, arr(b.ids).map(String)); }),
+
     'doc.final': async (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.docSetFinal(p, id, !!b.on); }),
 
     'doc.delete': async (b) => state.update(b.pid, (p) => { for (const id of arr(b.ids)) model.docDelete(p, id); }),
@@ -472,6 +476,7 @@ export function createOps(d) {
     return {
       id: p.id, name: p.name, spec: p.spec, standard: p.standard, request: p.request,
       categories: model.categoriesView(p),
+      docSort: model.docSortOf(p),
       crew: (p.crew || []).map((a) => ({ id: a.id, name: a.name, role: a.role, craft: a.craft, model: a.model || '' })),
       // 문서 · 스레드에 걸 수 있는 내장 사람(DESIGN §6-8) — 고르기 창이 만든 사람과 함께 세운다. 작법은 peek 이 푼다
       builtins: engine.seatCodes && engine.seatAgent

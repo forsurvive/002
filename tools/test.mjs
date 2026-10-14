@@ -2029,6 +2029,50 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
+  // 문서 정렬(사용자 지시 2026-10-14 — DESIGN §3 작업실): 직접 · 이름 · 고친 날짜
+  const mp = store.blankProject('p_sort', '정렬');
+  const cat = model.categoryCreate(mp, '원고');
+  const mk = (title, at) => { const d = model.docCreate(mp, { title, categoryId: cat.id }); d.updatedAt = at; return d; };
+  const d10 = mk('10화', 300); const d2 = mk('2화', 100); const d1 = mk('1화', 200);
+  const order = () => model.categoriesView(mp).find((c) => c.id === cat.id).docIds.map((id) => model.findDoc(mp, id).title).join();
+  eq('적혀 있지 않으면 직접(만든 차례)', order(), '10화,2화,1화');
+  mp.docSort = 'name';
+  eq('**이름 — 숫자는 수로(«2화»가 «10화» 앞)**', order(), '1화,2화,10화');
+  mp.docSort = 'new';
+  eq('**날짜 ↓ — 최근에 고친 것 먼저**', order(), '10화,1화,2화');
+  mp.docSort = 'old';
+  eq('날짜 ↑ — 오래된 것 먼저', order(), '2화,1화,10화');
+  mp.docSort = 'manual';
+  const other = model.docCreate(mp, { title: '메모' });
+  model.docOrder(mp, [d1.id, d2.id, d10.id]);
+  ok('**직접 — 끌어 놓은 차례로 · 다른 문서의 자리는 그대로**', order() === '1화,2화,10화' && mp.docs[mp.docs.length - 1].id === other.id);
+  eq('없는 문서 · 겹친 id 는 거른다', model.docOrder(mp, [d2.id, 'd_없음', d2.id]), 1);
+  mp.docSort = 'weird';
+  eq('모르는 값은 직접으로 읽는다', model.docSortOf(mp), 'manual');
+
+  const sp = await post('project.create', { name: '정렬 작품', spec: { form: '소설' }, materials: [{ name: '자료', text: '자료 본문' }] });
+  await settle(sp.pid, 60000);
+  const a = await post('doc.create', { pid: sp.pid, title: '나' });
+  const b = await post('doc.create', { pid: sp.pid, title: '가' });
+  let st = (await stateOf(sp.pid)).project;
+  const inbox = () => st.categories.find((c) => c.virtual).docIds;
+  ok('상태에 정렬이 실린다(기본 직접)', st.docSort === 'manual' && inbox().join() === a.id + ',' + b.id);
+  await post('project.spec', { pid: sp.pid, docSort: 'name' });
+  st = (await stateOf(sp.pid)).project;
+  ok('**op project.spec {docSort} — 서버가 차례를 정해 내려 준다**', st.docSort === 'name' && inbox().join() === b.id + ',' + a.id);
+  await post('project.spec', { pid: sp.pid, docSort: 'nope' });
+  eq('모르는 값은 받지 않는다', (await stateOf(sp.pid)).project.docSort, 'name');
+  await post('project.spec', { pid: sp.pid, docSort: 'manual' });
+  await post('doc.order', { pid: sp.pid, ids: [b.id, a.id] });
+  st = (await stateOf(sp.pid)).project;
+  ok('**op doc.order — 직접 차례가 남는다**', inbox().join() === b.id + ',' + a.id);
+  await post('project.delete', { pid: sp.pid });
+  const appO = src(join(ROOT, 'web', 'app.js'));
+  ok('**작업실 — «정렬 [직접] [이름] [날짜]» · 직접일 때만 줄을 끌어 놓는다**', appO.includes('    h(\'div\', { class: \'plus-wrap\' },\n      sortBar(),') && appO.includes("api('project.spec', { docSort: now === 'new' ? 'old' : 'new' })")
+    && appO.includes("if ((S.project.docSort || 'manual') !== 'manual' || S.project.readOnly) return {};") && appO.includes("api('doc.order', { ids });") && appO.includes('...dragAttrs(c, d),'));
+}
+
+{
   // 이야기 작품의 자동 실행(사용자 지시 2026-10-13 — DESIGN §5-2): 자료 분석부터 회차별 집필 계획 세부까지, 주기마다 모순 검사
   const story = await import('../core/rail/story.mjs');
   const railStory = await import('./rail-story.mjs');

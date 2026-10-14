@@ -314,7 +314,16 @@ textarea { resize: vertical; min-height: 88px; line-height: 1.65; }
 .card .name { font-weight: 700; font-size: 17px; letter-spacing: -.018em; }
 .card .when { margin-top: 6px; }
 
-.plus-wrap { position: relative; display: flex; justify-content: flex-end; }
+.plus-wrap { position: relative; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+/* 문서 정렬 — 작업실 위 왼쪽. 고른 것은 파랑 */
+.sort-bar { margin-right: auto; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.sort-bar button { font-size: 13px; font-weight: 500; color: var(--dim); padding: 5px 10px; border-radius: var(--pill); }
+.sort-bar button:hover { color: var(--ink); }
+.sort-bar button.on { color: var(--blue); background: var(--blue-tint); }
+/* 직접 정렬 — 끌어 놓을 자리 */
+.row[draggable="true"] { cursor: grab; }
+.row.drop-before { box-shadow: inset 0 2px 0 var(--blue); }
+.row.drop-after { box-shadow: inset 0 -2px 0 var(--blue); }
 .menu {
   position: absolute; top: calc(100% + 10px); right: 0; z-index: 15;
   animation: menu-in .16s cubic-bezier(.2, .9, .3, 1); transform-origin: top right;
