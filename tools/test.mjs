@@ -1187,7 +1187,8 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   const callSrc = src(join(HERE, 'call.mjs'));
   // 온라인 운영자 구독(ai/subscription.mjs)만 실행기 자리 · 'sub' 를 넘긴다. 개인판은 넘기지 않으므로 탐색한 실행기 · 그 PC 의 auth.json 그대로.
   ok('**부르는 길은 클로드 실행기 그대로다**', callSrc.includes("spawn(cli || CLI, buildCallArgs(spFile, model, { noPersist, webSearch, streamInput: pics.length > 0 })") && callSrc.includes('childEnv(authMode ? { mode: authMode } : auth.read())'));
-  ok('처음 한 번 로그인과 설치는 그대로다', launchSrc.includes("'auth', 'login', '--claudeai'") && launchSrc.includes('await installClaudeCode()')
+  // 2026-10-17 — 처음 한 번의 로그인은 검은 창이 아니라 앱 첫 화면의 [로그인]이 같은 명령으로 띄운다(server.mjs 의 로그인 계획)
+  ok('처음 한 번 로그인(화면에서 — 같은 명령)과 설치는 그대로다', src(join(HERE, 'server.mjs')).includes("claude: { cli: CLI, args: ['auth', 'login', '--claudeai'], env: childEnv() },") && !launchSrc.includes("'auth', 'login', '--claudeai'") && launchSrc.includes('await installClaudeCode()')
     && src(join(HERE, 'claude-cli.mjs')).includes("'https://claude.ai/install.cmd'"));
   // 지어진 에이전트를 고칠 수 있다(사용자 지시, 2026-09-22)
   const lst = app.slice(app.indexOf('function agentList'), app.indexOf('async function openPrompt'));
@@ -2091,11 +2092,12 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 {
   // 2026-10-17 사용자 지시 — 로그인이 안 된 PC 에서도 앱이 열린다(검은 창의 Claude 로그인은 Enter 로 권하고 S 로 건너뛴다 · 실패해도 연다) · 첫 화면은 [로그인]으로 설정 창을 연다
   const laS = src(join(HERE, 'launch.mjs'));
-  ok('**검은 창 — 로그인이 없으면 [Enter] Claude 로그인 · [S] 건너뛰기를 묻는다(창 없이 띄웠으면 묻지 않는다)**', laS.includes("line('   NOT SIGNED IN ON THIS COMPUTER YET');")
-    && laS.includes("if (!process.stdin.isTTY) return false;") && laS.includes("rl.question('  Your choice (Enter = Claude login, S = skip): ', resolve)") && laS.includes('return /^\\s*s/i.test(String(a || \'\'));'));
-  ok('**건너뛰거나 Claude 로그인이 안 돼도 앱은 연다(멈추지 않는다)**', laS.includes("line('  Skipped. The app opens - sign in from Settings (Claude or ChatGPT).');")
-    && laS.includes("line('  The app opens anyway - sign in from Settings in the app');") && !laS.includes("line('  Close this window and double-click the launcher again.');")
-    && !/\[NOT LOGGED IN\] login exit code[\s\S]{0,200}process\.exit\(1\)/.test(laS));
+  // 같은 날 다시(사용자 제안 «엔터를 쳐서 앱을 여는 걸로 통일하고, 앱 첫 화면에서 로그인») — 검은 창은 로그인하지 않는다. Enter 로 앱을 연다
+  ok('**검은 창 — 로그인이 없으면 «Enter 를 누르면 앱이 열린다 · 첫 화면 [로그인]»만 보이고 Enter 를 기다린다(창 없이 · 점검이면 기다리지 않는다)**', laS.includes("line('   NOT SIGNED IN ON THIS COMPUTER YET');")
+    && laS.includes("line('   Press Enter - the app opens in your browser.');") && laS.includes("rl.question('  Press Enter to open the app... ', resolve)")
+    && laS.includes("if (process.env.SE2_LAUNCH_ANSWER != null || !process.stdin.isTTY) return;"));
+  ok('**검은 창은 로그인을 띄우지 않고 멈추지도 않는다 — Claude · ChatGPT 로그인은 앱 첫 화면에서**', !laS.includes("'auth', 'login'") && !laS.includes('codexLogin(') && !/NOT SIGNED IN ON THIS COMPUTER YET[sS]*process.exit(1)/.test(laS)
+    && !laS.includes("line('  Close this window and double-click the launcher again.');"));
   ok('검은 창의 글은 ASCII 만', !/[^\x00-\x7e]/.test(laS.split('\n').filter((l) => /line\('/.test(l)).join('\n').replace(/\/\/.*$/gm, '')));
   const appL = src(join(ROOT, 'web', 'app.js'));
   ok('**첫 화면 — AI 연결이 하나도 없으면 한 줄과 [로그인](설정 창 — Claude · ChatGPT 로그인 단추)**', appL.includes('    noAiLine(),') && appL.includes("if (!st || !a || st.claude || st.chatgpt || a.hasKey || a.hasOpenaiKey || a.hasGeminiKey) return null;")
@@ -3516,7 +3518,9 @@ process.stdin.on('end', () => {
   ok('«ChatGPT 구독» · «Gemini API 키»를 고르면 같은 한 자리(callModel)에서 그 길로 간다', engSrc.includes("const BY_MODE = { chatgpt: localCodexProvider, gemini: localGeminiProvider, openai: localOpenAIProvider };")
     && engSrc.includes("generator === localCliProvider ? BY_MODE[auth.read().mode] || generator : generator"));
   const la = src(join(HERE, 'launch.mjs'));
-  ok('ChatGPT 구독이면 실행기가 Codex 로그인을 본다(그 PC 에서 처음 한 번)', la.includes("auth.read().mode === 'chatgpt'") && la.includes('codexLogin(C.cli)') && la.includes('viaChatGPT || viaGemini ? { loggedIn: true }'));
+  // 2026-10-17 — 로그인은 앱 첫 화면에서(검은 창은 Codex 의 로그인 여부만 보고, 없으면 Enter 로 앱을 연다)
+  ok('ChatGPT 구독이면 실행기가 Codex 로그인을 본다 — 없으면 화면에서 로그인(검은 창은 띄우지 않는다)', la.includes("auth.read().mode === 'chatgpt'") && la.includes('chatgptIn = await codexLoggedIn(C.cli);')
+    && la.includes('let before = viaGemini ? { loggedIn: true } : viaChatGPT ? { loggedIn: chatgptIn } : await authStatus(R.cli);') && !la.includes('codexLogin(C.cli)'));
   ok('Codex 는 폴더에 담아 온 것 → PATH 순서로만 찾는다', /join\(HERE, 'codex', 'bin', EXE\), join\(HERE, 'codex', EXE\)/.test(src(join(HERE, 'codex-cli.mjs'))));
   ok('화면에 «ChatGPT 구독» 갈래', src(join(ROOT, 'web', 'app.js')).includes("chatgpt: 'ChatGPT 구독'"));
 }
@@ -3582,7 +3586,7 @@ process.stdin.on('end', () => {
   const homeRead = await fetch(base + '/api', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'auth.read' }) }).then((x) => x.json());
   ok('작품을 고르지 않은 채로도 «무엇으로»를 읽는다(pid 없이)', homeRead.ok && Array.isArray(homeRead.auth.modes) && homeRead.auth.modes.includes('gemini'));
   const la = src(join(HERE, 'launch.mjs'));
-  ok('Gemini API 키로 돌면 실행기 로그인을 묻지 않는다', la.includes('viaChatGPT || viaGemini ? { loggedIn: true }'));
+  ok('Gemini API 키로 돌면 실행기 로그인을 묻지 않는다', la.includes('let before = viaGemini ? { loggedIn: true } :'));
 }
 
 // ---------------------------------------------------------------- 클릭과 붙여 넣기로 등록 — 구독 로그인 · API 키 (2026-10-13 사용자 지시)
