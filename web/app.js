@@ -492,6 +492,7 @@ function projectList() {
     // 새 작품 «+» — 화면 한가운데(좁은 창에서도 잘리지 않게 줄을 따로 둔다)
     h('div', { class: 'new-row' }, h('button', { class: 'plus big', text: '+', title: W('새 작품'), onclick: newProjectOpen })),
     S.homeSay ? h('div', { class: 'new-row' }, h('div', { class: 'notice', text: S.homeSay })) : null,
+    noAiLine(),
     // 자유 가입판 — 이용권이 없으면 새 AI 작업이 서지 않는다는 것만 한 줄로(편집 · 열람 · 내보내기는 된다)
     S.me && S.me.edition === 'open' && S.me.pass === false ? h('div', { class: 'new-row' },
       h('a', { class: 'notice', href: '/account.html', text: '이용권이 없어 새 AI 작업은 멈춰 있습니다 — 내 계정 → 이용권' })) : null,
@@ -1230,6 +1231,18 @@ async function authWrite(body) {
   const r = await api('auth.write', body);
   if (r && r.ok && r.auth) { S.homeAuth = r.auth; render(); }
   return r;
+}
+
+// 첫 화면 — AI 연결이 하나도 없으면(구독 로그인 · API 키 모두 없음) 한 줄과 [로그인](사용자 지시 2026-10-17 — 검은 창에서 로그인을 건너뛰었거나 실패한 PC)
+function noAiLine() {
+  if (S.me) return null;
+  const st = loginState();
+  if (!S.homeAuth && !S.homeAuthAsked) { S.homeAuthAsked = true; api('auth.read').then((r) => { if (r && r.ok) { S.homeAuth = r.auth; render(); } }); }
+  const a = S.homeAuth;
+  if (!st || !a || st.claude || st.chatgpt || a.hasKey || a.hasOpenaiKey || a.hasGeminiKey) return null;
+  return h('div', { class: 'new-row' },
+    h('div', { class: 'notice', text: '이 PC 에 AI 연결이 아직 없습니다 — Claude 나 ChatGPT 로 로그인하면 바로 쓸 수 있습니다' }),
+    h('button', { class: 'btn', text: '로그인', onclick: settingsOpen }));
 }
 
 // 첫 화면의 [설정] — 작품을 만들기 전에도(개인판만. 온라인판은 «내 계정»)

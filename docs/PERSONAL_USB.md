@@ -16,7 +16,7 @@
 |---|---|
 | **폴더** | USB 의 아무 폴더 하나 — 앱 · `tools\node\node.exe`(휴대용 Node 22) · `tools\claude\claude.exe`(Claude Code) · `data\`(원고). 드라이브 문자(E: · F: …)가 PC 마다 달라도 돈다(박힌 경로가 없다 — DESIGN §6-3) |
 | **켜기** | 그 폴더의 `스토리 엔진 개인판.cmd` 더블클릭. 설치 · 관리자 권한 · 레지스트리 없음 |
-| **로그인** | 그 PC 에서 처음이면 검은 창이 브라우저 로그인을 띄운다(`claude auth login --claudeai`). 로그인 정보는 **그 PC 의 사용자 폴더**에 Claude Code 가 둔다 — USB 에는 없다 |
+| **로그인** | 그 PC 에서 처음이면 검은 창이 묻는다 — [Enter] 이 창에서 Claude 브라우저 로그인(`claude auth login --claudeai`) · [S] 건너뛰고 앱을 열어 화면의 [설정]에서 Claude · ChatGPT 로그인. 로그인이 실패해도 앱은 연다(2026-10-17). 로그인 정보는 **그 PC 의 사용자 폴더**에 각 실행기가 둔다 — USB 에는 없다 |
 | **안전** | `127.0.0.1` 에만 연다 · 같은 `data\` 를 두 곳에서 열지 않는다(잠금) · 뽑혀도 반쪽 파일이 남지 않는다(내려쓰기) · 켤 때마다 백업 한 벌 |
 | **만들기 · 업데이트** | 아무 PC 에서 `node tools\usb-build.mjs --out <USB 의 폴더>` 한 줄 — 받는 곳 · 버전 · 해시를 맞춰 본다(§4) |
 | **용도** | 프로젝트마다 «이야기» 또는 «전자책»(§7) |
@@ -103,10 +103,15 @@ USB 와 PC 에 폴더를 하나씩 두면 원고도 두 벌이 된다(저절로 
 
 ### 새 PC 에서
 1. USB 를 꽂고 그 폴더의 `스토리 엔진 개인판.cmd` 를 더블클릭한다. 검은 창은 쓰는 동안 닫지 않는다.
-2. 그 PC 에서 처음이면 브라우저 로그인 창이 뜬다 — claude.ai 계정으로 로그인하고 승인한다(Claude Code 는 USB 에 있어 설치하지 않는다).
+2. 그 PC 에서 처음이면 검은 창이 «NOT SIGNED IN ON THIS COMPUTER YET»을 보이고 묻는다(Claude Code 는 USB 에 있어 설치하지 않는다).
+   - **Enter** — 브라우저 로그인 창이 뜬다. claude.ai 계정으로 로그인하고 승인하면 앱이 뜬다.
+   - **S** — 건너뛴다. 앱이 열리고 첫 화면에 «이 PC 에 AI 연결이 아직 없습니다 — [로그인]»이 선다. [로그인] → [Claude 로그인] 또는 [ChatGPT 로그인](§8-4).
+     ChatGPT 계정만 있는 사람의 길이다(사용자 지시 2026-10-17 «로그인이 안 되어 있어도 간단히 등록»). 화면에서 ChatGPT 로그인을 마치면 그 길(ChatGPT 구독)로 돈다.
+   - Claude 로그인이 실패하거나 중간에 그만두어도 앱은 연다(«[NOT LOGGED IN] … The app opens anyway»). 화면에서 다시 로그인한다.
+   - 창 없이 띄웠으면(입력이 없는 자리) 묻지 않고 지금처럼 Claude 로그인을 띄운다. 점검은 `SE2_LAUNCH_ANSWER=s`(건너뜀)로 답을 미리 줄 수 있다.
 3. 브라우저가 `http://127.0.0.1:8801` 로 열린다.
 4. 다 쓰면 검은 창을 닫고, USB 를 «안전하게 제거»한 뒤 뽑는다.
-5. **내 PC 가 아니면** 떠나기 전에 로그아웃한다 — 그 PC 에 로그인 정보가 남기 때문이다(§6). USB 폴더에서 주소창에 `cmd` 를 쳐 창을 열고 `tools\claude\claude.exe auth logout`.
+5. **내 PC 가 아니면** 떠나기 전에 로그아웃한다 — 그 PC 에 로그인 정보가 남기 때문이다(§6). USB 폴더에서 주소창에 `cmd` 를 쳐 창을 열고 `tools\claude\claude.exe auth logout` · ChatGPT 로 로그인했으면 `tools\codex\bin\codex.exe logout`.
 
 ### 업데이트
 - 앱 · Node · Claude Code 모두: 처음 만들 때와 같은 명령을 다시 돌린다. 원고는 그대로다.

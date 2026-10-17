@@ -2089,6 +2089,20 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
+  // 2026-10-17 사용자 지시 — 로그인이 안 된 PC 에서도 앱이 열린다(검은 창의 Claude 로그인은 Enter 로 권하고 S 로 건너뛴다 · 실패해도 연다) · 첫 화면은 [로그인]으로 설정 창을 연다
+  const laS = src(join(HERE, 'launch.mjs'));
+  ok('**검은 창 — 로그인이 없으면 [Enter] Claude 로그인 · [S] 건너뛰기를 묻는다(창 없이 띄웠으면 묻지 않는다)**', laS.includes("line('   NOT SIGNED IN ON THIS COMPUTER YET');")
+    && laS.includes("if (!process.stdin.isTTY) return false;") && laS.includes("rl.question('  Your choice (Enter = Claude login, S = skip): ', resolve)") && laS.includes('return /^\\s*s/i.test(String(a || \'\'));'));
+  ok('**건너뛰거나 Claude 로그인이 안 돼도 앱은 연다(멈추지 않는다)**', laS.includes("line('  Skipped. The app opens - sign in from Settings (Claude or ChatGPT).');")
+    && laS.includes("line('  The app opens anyway - sign in from Settings in the app');") && !laS.includes("line('  Close this window and double-click the launcher again.');")
+    && !/\[NOT LOGGED IN\] login exit code[\s\S]{0,200}process\.exit\(1\)/.test(laS));
+  ok('검은 창의 글은 ASCII 만', !/[^\x00-\x7e]/.test(laS.split('\n').filter((l) => /line\('/.test(l)).join('\n').replace(/\/\/.*$/gm, '')));
+  const appL = src(join(ROOT, 'web', 'app.js'));
+  ok('**첫 화면 — AI 연결이 하나도 없으면 한 줄과 [로그인](설정 창 — Claude · ChatGPT 로그인 단추)**', appL.includes('    noAiLine(),') && appL.includes("if (!st || !a || st.claude || st.chatgpt || a.hasKey || a.hasOpenaiKey || a.hasGeminiKey) return null;")
+    && appL.includes("h('button', { class: 'btn', text: '로그인', onclick: settingsOpen })"));
+}
+
+{
   // 이야기 작품의 자동 실행(사용자 지시 2026-10-13 — DESIGN §5-2): 자료 분석부터 회차별 집필 계획 세부까지, 주기마다 모순 검사
   const story = await import('../core/rail/story.mjs');
   const railStory = await import('./rail-story.mjs');
