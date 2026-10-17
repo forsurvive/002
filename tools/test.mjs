@@ -2076,6 +2076,19 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
+  // 2026-10-17 사용자 지시 — 고치기 중에는 창 바깥을 눌러도 닫히지 않고, × 로 닫으면 [저장 후 닫기] / [취소] · 에이전트 고르기 창은 이름을 자르지 않는다
+  const appE = src(join(ROOT, 'web', 'app.js'));
+  const cssE = src(join(ROOT, 'web', 'style.css'));
+  ok('**고치는 중(고치기 · 본문을 치는 중)이면 창 바깥을 눌러도 닫히지 않는다**', appE.includes("const docEditing = () => !!(S.open && S.open.type === 'doc' && (S.open.edit || 'd-body' in S.typed));")
+    && appE.includes("onclick: (e) => { if (e.target.classList.contains('layer') && !docEditing()) close(); } }, panel);"));
+  ok('**고치는 중에 × · Esc 로 닫으면 «고치는 중입니다 — [저장 후 닫기] [취소]»를 묻는다(취소는 창에 남는다)**', /if \(!force && docEditing\(\)\) \{\s*S\.confirm = \{\s*text: '고치는 중입니다',/.test(appE)
+    && appE.includes("{ label: '저장 후 닫기', class: 'btn', run: async () => { S.confirm = null; if (S.saveOpen)") && appE.includes("{ label: '취소', class: 'btn-line', run: () => { S.confirm = null; render(); } },"));
+  ok('**× 는 클릭 이벤트를 넘긴다 — 참으로 부른 것만 묻지 않고 닫는다(× 도 묻는 길을 지난다)**', appE.includes('  force = force === true;') && appE.includes("await api('doc.delete', { ids: [d.id] }); close(true); } }),"));
+  ok('**에이전트 고르기 — 이름은 잘리지 않고(줄을 바꿔) 다 보인다 · 역할은 그 아래**', appE.includes("h('div', { class: 'pick-who' }, h('div', { class: 'name', text: a.name }), a.role ? h('div', { class: 'when', text: a.role }) : null)),")
+    && cssE.includes('.row .pick-who .name { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }'));
+}
+
+{
   // 이야기 작품의 자동 실행(사용자 지시 2026-10-13 — DESIGN §5-2): 자료 분석부터 회차별 집필 계획 세부까지, 주기마다 모순 검사
   const story = await import('../core/rail/story.mjs');
   const railStory = await import('./rail-story.mjs');

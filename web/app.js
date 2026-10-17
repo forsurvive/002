@@ -1585,7 +1585,24 @@ const LAYER_KEYS = ['d-title', 'd-body', 'd-req', 't-say', 'nd-name', 'pp-req',
   'pr-name', 'pr-role', 'pr-task', 'pr-craft',
   'ag-name', 'ag-role', 'ag-craft', 'st-once', 'st-ep'];
 
+// 문서를 고치는 중인가 — [고치기]를 눌렀거나 본문을 치는 중(사용자 지시 2026-10-17 «고치기 중에는 창 바깥을 눌러도 닫히지 않게»)
+const docEditing = () => !!(S.open && S.open.type === 'doc' && (S.open.edit || 'd-body' in S.typed));
+
 function closeLayer(force) {
+  // × 단추는 클릭 이벤트를 넘긴다 — 참(true)으로 부른 것만 «묻지 않고 닫기»다
+  force = force === true;
+  // 고치는 중에 × · Esc 로 닫으면 묻는다 — [저장 후 닫기] 또는 [취소](창에 남는다). 창 바깥을 누른 것은 아예 닫지 않는다(layerOne)
+  if (!force && docEditing()) {
+    S.confirm = {
+      text: '고치는 중입니다',
+      acts: [
+        { label: '저장 후 닫기', class: 'btn', run: async () => { S.confirm = null; if (S.saveOpen) { try { await S.saveOpen(); } catch { /* 저장이 미끄러져도 닫는다 */ } } closeLayer(true); } },
+        { label: '취소', class: 'btn-line', run: () => { S.confirm = null; render(); } },
+      ],
+    };
+    render();
+    return;
+  }
   // 새로 만드는 창은 닫으면 치던 글이 사라진다 — 그때는 그냥 닫지 않고 묻는다(사용자 지시).
   // 고치는 창은 닫을 때 저장되므로 묻지 않는다(잃는 것이 없다).
   const asking = S.askOpen;
@@ -1631,7 +1648,8 @@ function layerOne() {
             : t === 'prompt' ? promptPanel(close)
               : t === 'prepare' ? preparePanel(close)
                 : agentPanel(close);
-  return h('div', { class: 'layer', onclick: (e) => { if (e.target.classList.contains('layer')) close(); } }, panel);
+  // 창 바깥을 누르면 닫힌다 — 문서를 고치는 중에는 닫지 않는다(× 로 닫으면 묻는다)
+  return h('div', { class: 'layer', onclick: (e) => { if (e.target.classList.contains('layer') && !docEditing()) close(); } }, panel);
 }
 
 // 참조 칩이 가리킬 수 있는 것 — 문서(자료도 «자료» 카테고리의 문서다)
@@ -1756,7 +1774,7 @@ function docPanel(close) {
       h('button', { class: 'tg' + (d.isFinal ? ' on' : ''), onclick: () => api('doc.final', { ids: [d.id], on: !d.isFinal }) }),
       dlButton('doc:' + d.id, (fmt) => download('doc', d.id, fmt)),
       S.me ? h('button', { class: 'btn-text', text: S.open.runs ? '만든 기록 닫기' : '만든 기록', onclick: () => toggleRuns(d.id) }) : null,
-      h('button', { class: 'btn-text red', text: '삭제', onclick: async () => { await api('doc.delete', { ids: [d.id] }); close(); } }),
+      h('button', { class: 'btn-text red', text: '삭제', onclick: async () => { await api('doc.delete', { ids: [d.id] }); close(true); } }),
       h('button', { class: 'x', text: '×', onclick: close })),
     h('div', { class: 'panel-body doc-split' },
       h('div', { class: 'doc-main' },
@@ -2205,8 +2223,8 @@ function pickLayer() {
     const row = (a) => [
       h('div', { class: 'row', onclick: () => peekOne(a.id) },
         h('button', { class: 'ck' + (chosen.has(a.id) ? ' on' : ''), onclick: (e) => { stop(e); flip(a.id); } }),
-        h('div', { class: 'name', text: a.name }),
-        h('div', { class: 'when', text: a.role })),
+        // 이름은 다 보인다(사용자 지시 2026-10-17 — 잘리지 않게). 역할은 그 아래 줄에
+        h('div', { class: 'pick-who' }, h('div', { class: 'name', text: a.name }), a.role ? h('div', { class: 'when', text: a.role }) : null)),
       peekBox(a.id),
     ];
     return h('div', { class: 'layer two', onclick: (e) => { if (e.target.classList.contains('layer')) close(); } },

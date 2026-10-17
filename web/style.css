@@ -289,6 +289,10 @@ textarea { resize: vertical; min-height: 88px; line-height: 1.65; }
 .row:hover { background: var(--hover); }
 .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row.final .name { color: var(--red); font-weight: 600; }
+/* 에이전트 고르기 창 — 이름은 잘리지 않고 줄을 바꿔 다 보인다, 역할은 그 아래 */
+.row .pick-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.row .pick-who .name { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+.row .pick-who .when { white-space: normal; overflow-wrap: anywhere; }
 .mark {
   font-size: 11px; font-weight: 600; letter-spacing: .01em; background: var(--group);
   border-radius: 6px; padding: 3px 7px; color: var(--dim); flex: none;
