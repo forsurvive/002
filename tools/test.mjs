@@ -2088,7 +2088,22 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   eq('분량 줄', story.lengthLine('…\n분량: 12화, 화당 5,000자 안팎'), '12화, 화당 5,000자 안팎');
   ok('검사 주기 — 짧으면 한 번에 · 길수록 넓게 · 정해 두면 그대로', story.cycleSize(4) === 4 && story.cycleSize(12) === 3 && story.cycleSize(30) === 5 && story.cycleSize(100) === 8 && story.cycleSize(12, 2) === 2);
   eq('주기로 나눈다', JSON.stringify(story.cycles(7, 3)), '[[1,2,3],[4,5,6],[7]]');
-  ok('설정 — 기획안은 3~8개 · 다시 쓰기는 0~3번', JSON.stringify(story.cleanStorySettings({ plans: 20, reruns: 9, cap: -3 })) === JSON.stringify({ cap: 0, plans: 8, cycle: 0, reruns: 3, request: '' }));
+  ok('설정 — 기획안은 1~8개(2026-10-17 — 하나부터) · 다시 쓰기는 0~3번', JSON.stringify(story.cleanStorySettings({ plans: 20, reruns: 9, cap: -3 })) === JSON.stringify({ cap: 0, plans: 8, cycle: 0, reruns: 3, request: '' })
+    && story.cleanStorySettings({ plans: 0 }).plans === 1 && story.cleanStorySettings({ plans: 1 }).plans === 1);
+  // 기획안 하나 — 관점을 밀지 않고 · 기획서 선정을 건너뛰어 그 안으로 세계관을 다시 쓴다
+  {
+    const p1 = store.blankProject('p_one', '하나');
+    const matDoc = model.docCreate(p1, { title: '자료', body: '자료', material: true });
+    const r1 = { settings: { plans: 1 }, story: { docs: {}, done: [] } };
+    const walk = (key, body) => { const d = model.docCreate(p1, { title: key, body }); r1.story.docs[key] = d.id; r1.story.done.push(key); };
+    ['analysis', 'world', 'material'].forEach((k) => walk(k, k + ' 본문'));
+    const s1 = story.storyNext(p1, r1);
+    ok('**기획안이 하나면 «기획안 1»(관점 없이 · 자료 · 요청사항에 가장 잘 맞는 하나)**', s1.key === 'plan#1' && s1.title === '기획안 1' && s1.request.includes('자료와 요청사항에 가장 잘 맞는 기획안'));
+    walk('plan#1', '기획안 본문');
+    const s2 = story.storyNext(p1, r1);
+    ok('**하나면 기획서 선정을 건너뛰고 그 안에 맞춰 세계관을 다시 쓴다**', s2.key === 'world_rev' && s2.once.startsWith('«기획안 1»에 맞춰') && s2.extraRefs.join() === r1.story.docs['plan#1']
+      && !story.storyProgress(p1, r1).some((x) => x.label === '기획서 선정') && !!matDoc);
+  }
   ok('**작품 규격(형식)과 자료가 없으면 시작하지 않는다**', railStory.missing({ spec: {}, docs: [] }).join() === '작품 규격(형식),자료' && railStory.missing({ spec: { form: '소설' }, docs: [{ id: 'd1', material: true }] }).length === 0);
 
   const seenS = [];
@@ -2199,7 +2214,7 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
   ok('**자동 실행 요청사항 — 시작하기 전에 적는 칸(전자책 · 이야기 모두) · 도는 동안은 설정에서 고친다**', (railJs.match(/railRequestBox\(\),/g) || []).length === 2
     && railJs.includes("const request = typedVal('rail-request', railSettingsNow().request || '');") && (railJs.match(/railRequestEdit\(ro\)/g) || []).length === 2);
   ok('**이야기 작품에도 [자동 실행] — 한 가지 진행 · 시작/이어 하기/처음부터 다시 · 진행 표 · 설정(상한 · 기획안 수 · 검사 주기 · 다시 쓰기)**', railJs.includes('if (railStory()) return storyRailPanel(close);')
-    && railJs.includes("return !S.me && !!S.project && !!S.project.workflow;") && ["text: '시작'", "text: '처음부터 다시'", "'기획안 수'", "'모순 검사 주기'", "'모순이 남으면 그 주기를 다시 쓰는 횟수'"].every((x) => railJs.includes(x)));
+    && railJs.includes("return !S.me && !!S.project && !!S.project.workflow;") && ["text: '시작'", "text: '처음부터 다시'", "'기획안 수(하나면 기획서 선정을 건너뜁니다)'", "'모순 검사 주기'", "'모순이 남으면 그 주기를 다시 쓰는 횟수'"].every((x) => railJs.includes(x)));
   ok('**끝나거나 멈추면 한 번 알린다(본 시각은 이 브라우저에)**', appJs.includes('function railNotify()') && appJs.includes("'자동 실행이 끝났습니다'") && /S\.last = sig;\s*railNotify\(\);/.test(appJs)
     && src(join(HERE, 'server.mjs')).includes('railNotice: rail.notice(x.id)'));
 }

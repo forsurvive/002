@@ -309,7 +309,7 @@ function storySettingsBox(ro) {
           textbox('rail-cap', '예: 120', s.cap ? String(s.cap) : '', { style: 'width:120px', inputmode: 'numeric' }),
           ro ? null : h('button', { class: 'btn-line', text: '저장', onclick: () => railSet({ cap: Number(typedVal('rail-cap', s.cap || '')) || 0 }) }))),
       r ? railRequestEdit(ro) : null,
-      pick('기획안 수', 'plans', [3, 4, 5, 6, 7, 8].map((n) => [n, String(n)])),
+      pick('기획안 수(하나면 기획서 선정을 건너뜁니다)', 'plans', [1, 2, 3, 4, 5, 6, 7, 8].map((n) => [n, String(n)])),
       pick('모순 검사 주기', 'cycle', [[0, '자동'], [1, '1화'], [2, '2화'], [3, '3화'], [5, '5화'], [10, '10화']]),
       pick('모순이 남으면 그 주기를 다시 쓰는 횟수', 'reruns', [0, 1, 2, 3].map((n) => [n, String(n)]))) : null);
 }

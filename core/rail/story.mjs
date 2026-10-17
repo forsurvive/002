@@ -22,7 +22,7 @@ export const REQUEST_MAX = 4000;
 // 걸음의 이번 요청사항 앞에 자동 실행 요청사항을 얹는다(전자책 레일도 같은 꼴 — tools/rail.mjs)
 export const withRailRequest = (request, once = '') => [String(request || '').trim() ? '자동 실행 요청사항(모든 걸음에 걸린다): ' + String(request).trim() : '', once]
   .filter((x) => String(x || '').trim()).join('\n\n');
-export const PLAN_MIN = 3;
+export const PLAN_MIN = 1;   // 하나면 견줄 것이 없으므로 기획서 선정을 건너뛴다(사용자 지시 2026-10-17)
 export const PLAN_MAX = 8;
 const LEAD_MAX = 10;
 const UNIT_MAX = 200;
@@ -123,7 +123,9 @@ const ASK = {
   select: (n) => '참조한 기획안 ' + n + '개를 작품 요청사항 · 집필 기준, 그리고 자료 분석이 밝힌 자료의 의도에 비추어 견주고, 이 작품으로 쓸 기획안 하나를 고른다.\n'
     + '기획안마다 맞는 점과 어긋나는 점을 짧게 적고, 고른 까닭을 적는다. 고르지 않은 기획안에서 살릴 만한 요소가 있으면 «살릴 것»에 따로 적는다(고른 기획안을 해치지 않는 것만).\n'
     + '맨 끝 줄에 «선정: 기획안 N» 한 줄만 적는다(N 은 기획안의 번호).',
-  worldRev: (n) => '선정된 «기획안 ' + n + '»과 «기획서 선정»의 «살릴 것»에 맞춰 이 세계관을 다시 쓴다. 기획안과 어긋나는 설정은 바로잡고, 세계의 결함과 문턱이 기획안의 도식과 맞물리게 하며, 이 이야기에 쓰이지 않는 설정은 덜어 낸다(덜어 낸 것은 끝에 목록으로 남긴다).',
+  // 기획안이 하나면 관점을 밀지 않는다 — 자료 · 요청사항에 가장 잘 맞는 하나를 쓴다
+  planOne: '자료와 요청사항에 가장 잘 맞는 기획안 — 여러 관점을 견주어 가장 좋은 이야기 하나를 세운다',
+  worldRev: (n, one = false) => (one ? '«기획안 1»에' : '선정된 «기획안 ' + n + '»과 «기획서 선정»의 «살릴 것»에') + ' 맞춰 이 세계관을 다시 쓴다. 기획안과 어긋나는 설정은 바로잡고, 세계의 결함과 문턱이 기획안의 도식과 맞물리게 하며, 이 이야기에 쓰이지 않는 설정은 덜어 낸다(덜어 낸 것은 끝에 목록으로 남긴다).',
   cast: '선정된 기획안에 맞춰 이 이야기에 나올 수 있는 인물을 넉넉히 짓는다(주요 인물이 될 후보는 기획안이 요구하는 수보다 많이).\n'
     + '인물마다 이름 · 주인공의 무엇을 표상하는지 · 원형의 가면 · 원하는 것과 두려워하는 것 · 개성 · 과거 · 세계관 · 내면의 악마 · 동기와 목표 · 말투 한 줄을 적는다. 같은 태도의 인물은 합칠 후보로 표시한다.',
   outline: '선정된 기획안의 도식을 따라 대략적인 플롯을 세운다 — 네 파트(설정 · 반응 · 공격 · 해결)마다 설정 · 위기 · 단서 · 도전의 칸과 결말(변화의 증명).\n'
@@ -194,18 +196,20 @@ export function storyNext(p, rail = {}, { busy = () => false } = {}) {
   const K = set.plans;
   const planKeys = Array.from({ length: K }, (_, i) => 'plan#' + (i + 1));
   for (let i = 0; i < K; i++) {
-    const look = PERSPECTIVES[i % PERSPECTIVES.length];
-    s = make(planKeys[i], '기획안 ' + (i + 1) + ' — ' + look.split(' — ')[0], seat('N-PLAN'), ids('analysis', 'world', 'material'), ASK.plan(look));
+    const look = K === 1 ? ASK.planOne : PERSPECTIVES[i % PERSPECTIVES.length];
+    s = make(planKeys[i], '기획안 ' + (i + 1) + (K === 1 ? '' : ' — ' + look.split(' — ')[0]), seat('N-PLAN'), ids('analysis', 'world', 'material'), ASK.plan(look));
     if (s) return s;
   }
-  // ⑤ 기획서 선정 — 요청사항 · 기준 · 자료의 의도로 견준다(합평하는 눈과 도식 짓는 눈이 함께)
-  s = make('select', '기획서 선정', seat('F-REVIEW', 'N-PLAN'), ids('analysis', planKeys), ASK.select(K));
-  if (s) return s;
-  const chosen = pickedPlan(bodyOf(doc('select')), K);
+  // ⑤ 기획서 선정 — 요청사항 · 기준 · 자료의 의도로 견준다(합평하는 눈과 도식 짓는 눈이 함께). 하나뿐이면 건너뛰고 그것을 쓴다
+  if (K > 1) {
+    s = make('select', '기획서 선정', seat('F-REVIEW', 'N-PLAN'), ids('analysis', planKeys), ASK.select(K));
+    if (s) return s;
+  }
+  const chosen = K === 1 ? 1 : pickedPlan(bodyOf(doc('select')), K);
   if (!chosen || !doc('plan#' + chosen)) return { do: 'stuck', why: '«기획서 선정»의 맨 끝에서 «선정: 기획안 N»을 읽지 못했습니다 — 그 줄을 적고 이어 하세요' };
   const plan = 'plan#' + chosen;
   // ⑥ 세계관 다시(선정된 기획안에 맞춰 — 새 판) · ⑦ 인물 풀 · ⑧ 대략 플롯 · ⑨ 주요 인물
-  s = redo('world_rev', 'world', '세계관', ASK.worldRev(chosen), ids(plan, 'select'), { label: '세계관 다시 씀(기획안 ' + chosen + '에 맞춰)' })
+  s = redo('world_rev', 'world', '세계관', ASK.worldRev(chosen, K === 1), ids(plan, 'select'), { label: '세계관 다시 씀(기획안 ' + chosen + '에 맞춰)' })
     || make('cast', '인물 풀', seat('N-CAST'), ids(plan, 'select', 'world', 'material', 'analysis'), ASK.cast)
     || make('outline', '대략 플롯', seat('N-GRID'), ids(plan, 'select', 'world', 'cast', 'material'), ASK.outline)
     || make('leads', '주요 인물', seat('N-CAST'), ids('cast', 'outline', plan), ASK.leads);
@@ -277,7 +281,7 @@ export function storyProgress(p, rail = {}) {
   const all = (pre) => [...done].filter((k) => k.startsWith(pre)).length;
   const rows = [
     ['자료 분석', has('analysis')], ['세계관', has('world')], ['서사 재료', has('material')],
-    ['기획안 ' + set.plans + '개', all('plan#') >= set.plans], ['기획서 선정', has('select')], ['세계관 다시', has('world_rev')],
+    ['기획안 ' + set.plans + '개', all('plan#') >= set.plans], ...(set.plans > 1 ? [['기획서 선정', has('select')]] : []), ['세계관 다시', has('world_rev')],
     ['인물 풀', has('cast')], ['대략 플롯', has('outline')], ['주요 인물', has('leads')], ['인물 설계', has('plot')],
     ['상세 플롯', has('plot')], ['상세 플롯 합평', has('plot_review')], ['상세 플롯 다시', has('plot_rev')],
     ['회차 계획', has('episodes')], ['회차 계획 합평', has('episodes_review')], ['회차 계획 다시(확정본)', has('episodes_rev')],
