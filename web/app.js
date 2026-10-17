@@ -493,6 +493,7 @@ function projectList() {
     h('div', { class: 'new-row' }, h('button', { class: 'plus big', text: '+', title: W('새 작품'), onclick: newProjectOpen })),
     S.homeSay ? h('div', { class: 'new-row' }, h('div', { class: 'notice', text: S.homeSay })) : null,
     noAiLine(),
+    browserLine(),
     // 자유 가입판 — 이용권이 없으면 새 AI 작업이 서지 않는다는 것만 한 줄로(편집 · 열람 · 내보내기는 된다)
     S.me && S.me.edition === 'open' && S.me.pass === false ? h('div', { class: 'new-row' },
       h('a', { class: 'notice', href: '/account.html', text: '이용권이 없어 새 AI 작업은 멈춰 있습니다 — 내 계정 → 이용권' })) : null,
@@ -1244,6 +1245,33 @@ function noAiLine() {
     h('div', { class: 'notice', text: '이 PC 에 AI 연결이 아직 없습니다 — Claude 나 ChatGPT 로 로그인하면 바로 쓸 수 있습니다' }),
     h('button', { class: 'btn', text: '로그인', onclick: settingsOpen }));
 }
+
+// 첫 화면 — 기본 브라우저가 Chrome 이 아니면(Chrome 은 깔려 있을 때) 한 줄과 [Chrome을 기본으로 설정] · [이대로 쓰기](사용자 지시 2026-10-17, DESIGN §6-13).
+// 앱도 로그인 창도 기본 브라우저로 열린다. 윈도우는 프로그램이 기본 브라우저를 바꾸지 못하게 해 두었다 — Windows 설정의 그 화면을 열어 주고, 마지막 클릭은 사람이 한다.
+// [이대로 쓰기]는 이 브라우저에 그 기본값(ProgId)으로 적어 둔다 — 기본 브라우저가 또 바뀌면 다시 묻는다. 설정 창에서 돌아오면(창이 다시 앞에 오면) 다시 읽는다
+const BROWSER_SKIP_KEY = 'se-browser-skip';
+function browserLine() {
+  if (S.me) return null;
+  if (S.browser === undefined) { S.browser = null; quiet('browser.status').then((r) => { S.browser = r && r.ok ? r.browser : false; render(); }); }
+  const b = S.browser;
+  if (!b || !b.supported || b.isChrome || !b.chrome || S.browserSkip) return null;
+  let skipped = false;
+  try { skipped = localStorage.getItem(BROWSER_SKIP_KEY) === b.progId; } catch { skipped = false; }
+  if (skipped) return null;
+  return h('div', { class: 'new-row' },
+    h('div', { class: 'notice', text: '기본 브라우저가 ' + b.name + ' 입니다 — 로그인 창도 그 브라우저로 열립니다. 로그인해 둔 Chrome 을 기본으로 두면 편합니다' }),
+    h('button', { class: 'btn', text: 'Chrome을 기본으로 설정', onclick: async () => {
+      const r = await quiet('browser.settings');
+      S.browserSay = r && r.ok ? 'Windows 설정 창에서 Chrome 화면 맨 위의 [기본값 설정]을 누르고 돌아오세요' : ((r && r.error) || 'Windows 설정을 열지 못했습니다');
+      render();
+    } }),
+    h('button', { class: 'btn-line', text: '이대로 쓰기', onclick: () => { S.browserSkip = true; try { localStorage.setItem(BROWSER_SKIP_KEY, b.progId); } catch { /* 이번 창에서만 */ } render(); } }),
+    S.browserSay ? h('div', { class: 'when', style: 'flex-basis:100%;text-align:center', text: S.browserSay }) : null);
+}
+window.addEventListener('focus', () => {
+  if (!S.browserSay || S.me) return;
+  quiet('browser.status', { fresh: true }).then((r) => { if (r && r.ok) { S.browser = r.browser; if (r.browser.isChrome) S.browserSay = ''; render(); } });
+});
 
 // 첫 화면의 [설정] — 작품을 만들기 전에도(개인판만. 온라인판은 «내 계정»)
 function settingsOpen() {

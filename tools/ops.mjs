@@ -465,6 +465,9 @@ export function createOps(d) {
     'login.code': async (b) => (d.login ? d.login.code(b.code) : bad('여기서는 할 수 없습니다')),
     'login.status': async () => (d.loginStatus ? ok(await d.loginStatus()) : bad('여기서는 할 수 없습니다')),
     'auth.key': async (b) => (d.keySet ? d.keySet(b.key) : bad('여기서는 할 수 없습니다')),
+    // 기본 브라우저(개인판 · 윈도우만 — tools/browser.mjs) — 읽기 · Windows 설정의 «기본 앱» 열기. 바꾸는 것은 사람이 그 창에서 한다
+    'browser.status': async (b) => (d.browser ? ok({ browser: d.browser.status(!!b.fresh) }) : bad('여기서는 할 수 없습니다')),
+    'browser.settings': async () => (d.browser ? d.browser.open() : bad('여기서는 할 수 없습니다')),
     // 고를 수 있는 모델 — ChatGPT(Codex 제 목록) · Gemini(카탈로그의 표시 이름). 개인판만 넣는다(온라인판은 빈 목록)
     'auth.models': async () => ok({ models: d.authModels ? await d.authModels() : { chatgpt: [], gemini: [], openai: [] } }),
   };

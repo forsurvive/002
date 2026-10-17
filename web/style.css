@@ -195,7 +195,7 @@ a.btn-line, a.btn-text { text-decoration: none; display: inline-block; }
 /* 첫 화면 — 좁은 창에서는 단추 줄이 제목 아래로 내려간다(오른쪽 끝에서 잘리지 않게) */
 .home-top { flex-wrap: wrap; align-items: flex-start; }
 .top.home-top > .home-acts { flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-end; }   /* .top > .line(한 줄 고정)을 이긴다 */
-.new-row { display: flex; justify-content: center; margin: 0 0 22px; }
+.new-row { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 8px 10px; margin: 0 0 22px; }
 .plus.big { width: 46px; height: 46px; }
 @media (max-width: 760px) { .top.home-top > .home-acts { flex-basis: 100%; justify-content: flex-start; } }   /* 좁은 창 — 단추 줄은 제목 아래 한 줄로 */
 .btn-red {

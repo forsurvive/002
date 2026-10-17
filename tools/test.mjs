@@ -2105,6 +2105,23 @@ globalThis.__SE2_MOCK_FN = MOCK_FN;
 }
 
 {
+  // 기본 브라우저 — Chrome 으로 이끈다(사용자 지시 2026-10-17, DESIGN §6-13). 시험은 Windows 설정을 열지 않는다(browser.settings 를 부르지 않는다)
+  const br = await import('./browser.mjs');
+  eq('reg query 의 ProgId 를 읽는다', br.parseProgId('HKEY_CURRENT_USER\\...\\UserChoice\r\n    ProgId    REG_SZ    ChromeHTML\r\n'), 'ChromeHTML');
+  ok('ProgId → 이름 · Chrome 인가', br.browserName('MSEdgeHTM') === 'Microsoft Edge' && br.browserName('ChromeHTML') === 'Google Chrome' && br.isChromeProgId('ChromeHTML') && !br.isChromeProgId('MSEdgeHTM') && br.browserName('Odd.Id') === 'Odd.Id');
+  ok('**Windows 설정 «기본 앱»의 Chrome 화면 — 모든 사용자 · 이 사용자에 따라 열쇠가 다르다**', br.settingsUri('machine') === 'ms-settings:defaultapps?registeredAppMachine=Google Chrome' && br.settingsUri('user') === 'ms-settings:defaultapps?registeredAppUser=Google Chrome');
+  ok('윈도우가 아니면 읽지 않는다', JSON.stringify(br.browserStatus({ platform: 'linux' })) === '{"supported":false}');
+  const bs = await post('browser.status', {});
+  ok('op browser.status — 윈도우면 기본값과 Chrome 여부를 돌려준다', bs.ok && (process.platform !== 'win32' ? bs.browser.supported === false : typeof bs.browser.isChrome === 'boolean' && typeof bs.browser.chrome === 'boolean'));
+  const appB = src(join(ROOT, 'web', 'app.js'));
+  ok('**첫 화면 — Chrome 이 있는데 기본이 아니면 한 줄과 [Chrome을 기본으로 설정] · [이대로 쓰기](그때의 기본값으로 적어 둔다)**', appB.includes('    browserLine(),')
+    && appB.includes("if (!b || !b.supported || b.isChrome || !b.chrome || S.browserSkip) return null;") && appB.includes("text: 'Chrome을 기본으로 설정'") && appB.includes("const r = await quiet('browser.settings');")
+    && appB.includes("localStorage.setItem(BROWSER_SKIP_KEY, b.progId)") && appB.includes("quiet('browser.status', { fresh: true })"));
+  ok('모의 실행은 Windows 설정을 열지 않는다', src(join(HERE, 'server.mjs')).includes("open: () => (MOCK_RUN ? { ok: true, mock: true } : openDefaultAppsSettings()),"));
+  ok('검은 창 — 기본 브라우저 한 줄(ASCII)', src(join(HERE, 'launch.mjs')).includes("line('  Browser     : ' + (B.progId ? browserName(B.progId) : 'unknown')"));
+}
+
+{
   // 이야기 작품의 자동 실행(사용자 지시 2026-10-13 — DESIGN §5-2): 자료 분석부터 회차별 집필 계획 세부까지, 주기마다 모순 검사
   const story = await import('../core/rail/story.mjs');
   const railStory = await import('./rail-story.mjs');

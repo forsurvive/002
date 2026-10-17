@@ -29,6 +29,7 @@ import { normalizeProject, saveProject, newId, DATA_DIR } from './store.mjs';
 import { acquire as lockData } from './datalock.mjs';
 import * as images from './images.mjs';
 import { backupProjects } from './backup.mjs';
+import { browserStatus, openDefaultAppsSettings, browserName, isChromeProgId } from './browser.mjs';
 import { runKind } from '../core/generation/kinds.mjs';
 import { resolveHosting, hostOf, originOk, gateOk, isNavigation, GATE_REALM } from './hosting.mjs';
 
@@ -145,9 +146,18 @@ async function keySet(raw) {
   return ok({ company: which, verified: !!t.verified, reason: t.reason || '', auth: auth.view() });
 }
 
+// 기본 브라우저(DESIGN §6-13) — 모의 실행은 Windows 설정을 열지 않는다. SE2_FAKE_BROWSER(ProgId)를 주면 그것을 기본으로 친다(화면 점검)
+function browserOps() {
+  const fake = MOCK_RUN && process.env.SE2_FAKE_BROWSER;
+  return {
+    status: (fresh) => (fake ? { supported: true, progId: fake, name: browserName(fake), isChrome: isChromeProgId(fake), chrome: true } : browserStatus({ fresh })),
+    open: () => (MOCK_RUN ? { ok: true, mock: true } : openDefaultAppsSettings()),
+  };
+}
+
 const { OPS, stateOf, downloadOf } = createOps({ state, jobs, engine, auth, limit: lastLimit, prepared, startAgentPrep, workflow: workflowOf, importProject, purposeChoice: true, images,
   // ChatGPT 는 그 PC 의 Codex 가 아는 목록(없으면 빈 목록 — 화면은 «Codex 기본»만), Gemini 는 카탈로그
-  login, loginStatus, keySet, rail,
+  login, loginStatus, keySet, rail, browser: browserOps(),
   authModels: async () => ({ chatgpt: MOCK_MODELS || await codexModels(CODEX.cli), gemini: geminiChoices(), openai: keyChoices('openai') }) });
 
 export const OP_NAMES = Object.keys(OPS);

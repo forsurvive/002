@@ -948,6 +948,19 @@ callOnce 를 지나지 않고 곧장 부르는 에이전트 준비(`agents.prepa
 - 다시 생성하면 — 나눈 문서들이 «대상»으로 실리고(처음에는 그 문서의 본문 — 나눌 원고), **같은 제목은 그 문서의 새 판**, 새 제목은 새 문서. 이번에 빠진 지난 문서는 지우지 않는다(목록에 남는다).
 - 참조 · 요약하여 참조 · 에이전트 · 요청사항은 그 문서의 것을 그대로 쓴다. 작업 기록에는 나눈 문서까지 남는다. 온라인판은 아직(그 DB 에 `multi` · `partIds` 가 없어 줄을 그리지 않는다).
 
+## 6-13. 기본 브라우저 — Chrome 으로 이끈다 (사용자 지시, 2026-10-17)
+
+> «크롬이 기본 브라우저가 아니면 크롬을 기본 브라우저로 설정할 수 있도록 유도하는 기능도 넣어줘.»
+
+- 앱(`start`)도, 로그인 창(`claude auth login` · `codex login`)도 **기본 브라우저**로 열린다 — 로그인해 둔 Chrome 이 기본이면 승인 한 번으로 끝난다.
+- 읽기(`tools/browser.mjs`, 윈도우만): `HKCU\…\UrlAssociations\https\UserChoice` 의 `ProgId`(ChromeHTML · MSEdgeHTM · …)와 Chrome 이 깔린 자리(Program Files — 모든 사용자 · LocalAppData — 이 사용자 · App Paths). 30초 기억.
+- **바꾸지는 않는다** — 윈도우는 프로그램이 기본 브라우저를 바꾸는 것을 막아 두었다(UserChoice 를 해시로 지킨다). Windows 설정의 «기본 앱»에서 Chrome 의 화면을 열어 주고(`ms-settings:defaultapps?registeredAppMachine|User=Google Chrome` — 그 열쇠를 모르는 판은 기본 앱 첫 화면), 마지막 클릭은 사람이 한다.
+- 첫 화면(개인판) — Chrome 이 깔려 있는데 기본이 아니면 «기본 브라우저가 ○○ 입니다 — 로그인 창도 그 브라우저로 열립니다 …» 한 줄과 [Chrome을 기본으로 설정] · [이대로 쓰기].
+  [Chrome을 기본으로 설정] → op `browser.settings`(그 화면 열기) → «Windows 설정 창에서 Chrome 화면 맨 위의 [기본값 설정]을 누르고 돌아오세요». 창이 다시 앞에 오면 다시 읽어(`browser.status {fresh}`) Chrome 이면 줄이 사라진다.
+  [이대로 쓰기]는 이 브라우저에 그때의 기본값(ProgId)으로 적어 둔다 — 기본 브라우저가 또 바뀌면 다시 묻는다. Chrome 이 없으면 아무것도 보이지 않는다.
+- 검은 창 — «Browser : Microsoft Edge (Chrome is installed - make it the default from the app home screen)» 한 줄(ASCII).
+- 모의 실행은 Windows 설정을 열지 않는다. `SE2_FAKE_BROWSER`(ProgId)를 주면 그것을 기본으로 친다(화면 점검). 온라인판에는 없다.
+
 ## 7. 시험
 
 `tools\node\node.exe tools\test.mjs` — 시험 스스로 `SE2_MOCK=1` 과 임시 `SE2_DATA_DIR` 을 켠다. 순수 로직 + 같은 프로세스에서 띄운 실제 서버 + 화면이 부르는 op 를 서버 표와 맞춰 보는 배선 시험 + 팔레트 + 화면이 쓰는 반 이름 맞춤.

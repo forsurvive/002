@@ -13,6 +13,7 @@ import { resolveCliDetailed, authStatus, installClaudeCode, INSTALL_URL } from '
 import { resolveCodex, codexLoggedIn, codexAccount } from './codex-cli.mjs';
 import { fetchClaude, codexIntoFolder } from './usb-build.mjs';
 import * as auth from './auth.mjs';
+import { browserStatus, browserName } from './browser.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.SE2_PORT || 8801);
@@ -61,6 +62,9 @@ line('  Claude Code : ' + R.cli + '  (via: ' + R.via + ')');
 // 폴더에 담아 온 실행기(USB 휴대판)는 스스로 고치지 않게 한다 — 저절로 고치면 새 판을 이 PC 의 사용자 폴더에 깔아 두고 간다.
 // 새 판은 만들기 도구로 USB 에 다시 담는다(docs/PERSONAL_USB.md §4).
 if (R.via.startsWith('portable')) process.env.DISABLE_AUTOUPDATER = '1';
+// 기본 브라우저 — 앱도 로그인 창도 그 브라우저로 열린다. Chrome 이 깔려 있는데 기본이 아니면 앱 첫 화면이 바꾸는 길을 연다(DESIGN §6-13)
+const B = browserStatus();
+if (B.supported) line('  Browser     : ' + (B.progId ? browserName(B.progId) : 'unknown') + (B.isChrome || !B.chrome ? '' : '  (Chrome is installed - make it the default from the app home screen)'));
 line();
 
 // ChatGPT 구독으로 돌게 골라 두었으면(설정 › 무엇으로) 클로드 대신 Codex 의 로그인을 본다(docs/PERSONAL_USB.md §8). 로그인은 앱 첫 화면에서 한다
